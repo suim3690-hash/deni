@@ -1,7 +1,11 @@
-import Home from './pages/Home'
+import { useState } from 'react'
+import ChildRegistration from './pages/ChildRegistration'
+import RegisteredHome from './pages/RegisteredHome'
+import type { RegisteredChild } from './services/children'
 
 function App() {
-  return <Home />
+  const [child, setChild] = useState<RegisteredChild | null>(null)
+  return child ? <RegisteredHome child={child} /> : <ChildRegistration onGoHome={setChild} />
 }
 
 export default App
