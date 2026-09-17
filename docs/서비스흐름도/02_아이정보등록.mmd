@@ -1,0 +1,25 @@
+%% TKS_002 | FR-004~006 | 권한 및 중복 재시도는 공통 정책 적용
+flowchart TD
+    subgraph USER["사용자 · 보호자"]
+        U1(["아이 정보 등록 요청"])
+        U2["정보 수정 또는 안내 확인"]
+    end
+    subgraph SERVICE["시스템 · ThinQ Kids SafeGuard"]
+        S1{"등록 요청을 처리할 수 있는가?"}
+        S2{"아이 정보가 유효한가?"}
+        S3["아이 정보 저장"]
+        S4{"저장 성공?"}
+        S5(["TKS_003 프로필 적용으로 연결"])
+        S6["입력 오류 안내"]
+        S7["등록 실패 안내 · 완료 처리하지 않음"]
+    end
+    U1 --> S1
+    S1 -->|예| S2
+    S1 -->|권한 등 오류| S7
+    S2 -->|예| S3 --> S4
+    S2 -->|빈 값 또는 미래 날짜 등| S6 --> U2
+    U2 -->|수정 후 등록 요청| U1
+    S4 -->|예| S5
+    S4 -->|아니오| S7 --> U2
+    style USER fill:#eef5ff,stroke:#3973ac
+    style SERVICE fill:#effaf3,stroke:#398353

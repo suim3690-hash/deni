@@ -1,25 +1,11 @@
 import { useState } from 'react'
-import ChildRegister from './pages/ChildRegister'
-import Home from './pages/Home'
-
-type Screen = 'register' | 'home'
+import ChildRegistration from './pages/ChildRegistration'
+import RegisteredHome from './pages/RegisteredHome'
+import type { RegisteredChild } from './services/children'
 
 function App() {
-  const [screen, setScreen] = useState<Screen>('register')
-  const [childName, setChildName] = useState('')
-
-  if (screen === 'home') {
-    return <Home childName={childName} />
-  }
-
-  return (
-    <ChildRegister
-      onRegistered={(name) => {
-        setChildName(name)
-        setScreen('home')
-      }}
-    />
-  )
+  const [child, setChild] = useState<RegisteredChild | null>(null)
+  return child ? <RegisteredHome child={child} /> : <ChildRegistration onGoHome={setChild} />
 }
 
 export default App
