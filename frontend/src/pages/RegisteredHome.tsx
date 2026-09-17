@@ -39,11 +39,36 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
 
   useEffect(() => {
     let current = true
-    getDashboard(child).then(
-      (result) => { if (current) setDashboard(result) },
-      () => { if (current) setLoadError(true) },
-    )
-    return () => { current = false }
+    let inFlight = false
+    const refresh = async () => {
+      if (!current || inFlight || document.visibilityState === 'hidden') return
+      inFlight = true
+      try {
+        const result = await getDashboard(child)
+        if (current) {
+          setDashboard(result)
+          setLoadError(false)
+        }
+      } catch {
+        if (current) setLoadError(true)
+      } finally {
+        inFlight = false
+      }
+    }
+
+    void refresh()
+    // The backend updates activeHazards after a device detection. Refresh the
+    // dashboard while this screen is open so a newly active hazard appears.
+    const pollTimer = import.meta.env.VITE_API_BASE_URL ? window.setInterval(() => void refresh(), 5000) : null
+    const refreshWhenVisible = () => { if (document.visibilityState === 'visible') void refresh() }
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    window.addEventListener('focus', refreshWhenVisible)
+    return () => {
+      current = false
+      if (pollTimer !== null) window.clearInterval(pollTimer)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+      window.removeEventListener('focus', refreshWhenVisible)
+    }
   }, [child])
 
   useEffect(() => {
@@ -91,7 +116,9 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
     setCommandPending(true)
     try {
       const operationState = await sendDeviceCommand(device.deviceId, action, dashboard.isMock)
-      setDashboard({ ...dashboard, device: { ...device, operationState } })
+      setDashboard((current) => current?.device?.deviceId === device.deviceId
+        ? { ...current, device: { ...current.device, operationState } }
+        : current)
     } catch {
       setCommandError(action === 'resume' ? '기기를 다시 시작하지 못했어요. 위험물 처리 상태와 연결을 확인해 주세요.' : '기기를 일시정지하지 못했어요. 연결 상태를 확인해 주세요.')
     } finally {
@@ -118,7 +145,7 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
                     <span className="shrink-0 rounded-full bg-[#ffe8e9] px-2 py-[3px] text-[10px] font-semibold text-[#b42330]">{isPaused ? '일시정지 중' : '상태 확인 중'}</span>
                   </div>
                   <p className="mt-1 text-[12px] leading-[1.4]">
-                    {activeHazard.locationLabel} <strong className="text-[#b42330]">위험 완구({activeHazard.objectName}) 1개</strong>가 감지되어 로봇청소기 운행이 {isPaused ? '즉시 정지되었습니다.' : '정지 확인 중입니다.'}
+                    {activeHazard.locationLabel} <strong className="text-[#b42330]">위험 물체({activeHazard.objectName}) 1개</strong>가 감지되어 로봇청소기 운행이 {isPaused ? '즉시 정지되었습니다.' : '정지 확인 중입니다.'}
                   </p>
                 </div>
               </div>
