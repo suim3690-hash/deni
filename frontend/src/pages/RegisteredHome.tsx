@@ -18,7 +18,12 @@ import { stageLabels, stageTitles } from '../lib/stages'
 
 type Modal = 'device' | 'hazards' | 'avoidance' | null
 
-export default function RegisteredHome({ child }: { child: RegisteredChild }) {
+interface Props {
+  child: RegisteredChild
+  onUpdateChild: (child: RegisteredChild) => void
+}
+
+export default function RegisteredHome({ child, onUpdateChild }: Props) {
   const [dashboard, setDashboard] = useState<DashboardSnapshot | null>(null)
   const [loadError, setLoadError] = useState(false)
   const [modal, setModal] = useState<Modal>(null)
@@ -95,7 +100,7 @@ export default function RegisteredHome({ child }: { child: RegisteredChild }) {
   }
 
   if (selectedHazard) return <HazardLocation hazard={selectedHazard} detail={hazardDetail} error={hazardError} errorStatus={hazardErrorStatus} isMock={dashboard?.isMock ?? false} onBack={() => setSelectedHazard(null)} onRetry={() => void openHazardDetail(selectedHazard)} />
-  if (showSafetyProfile) return <SafetyProfileDetail child={child} onBack={() => setShowSafetyProfile(false)} />
+  if (showSafetyProfile) return <SafetyProfileDetail child={child} onBack={() => setShowSafetyProfile(false)} onUpdateChild={onUpdateChild} />
   if (showReport && report) return <GrowthReport child={child} month={report.month} onBack={() => setShowReport(false)} />
 
   return (

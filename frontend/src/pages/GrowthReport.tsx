@@ -1,4 +1,6 @@
-import { ArrowLeft, ArrowRight, Calendar, CheckCircle2, ChevronDown, Info, ShieldCheck, Smile, Sparkles } from 'lucide-react'
+import { useState } from 'react'
+import { ArrowLeft, ArrowRight, Calendar, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Info, ShieldCheck, Sparkles, X } from 'lucide-react'
+import MonthlyFeedbackButton from '../components/MonthlyFeedbackButton'
 import type { RegisteredChild } from '../services/children'
 import { stageByOrder, stageCriteriaDescriptions, stageCriteriaTitles, stageFocusLabels, stageLabels, stageLowerBoundMonths, stageOrder } from '../lib/stages'
 
@@ -25,10 +27,39 @@ function formatMonthDay(date: Date) {
   return `${date.getMonth() + 1}/${date.getDate()}`
 }
 
-export default function GrowthReport({ child, month, onBack }: Props) {
+function monthKey(year: number, monthIndex1: number) {
+  return `${year}-${String(monthIndex1).padStart(2, '0')}`
+}
+
+function mockAvoidanceCount(key: string) {
+  let hash = 0
+  for (const char of key) hash = (hash * 31 + char.charCodeAt(0)) % 97
+  return (hash % 12) + 5
+}
+
+export default function GrowthReport({ child, month: initialMonth, onBack }: Props) {
   const stage = child.safetyProfile.stage
-  const monthNumber = Number(month.slice(5))
-  const yearNumber = Number(month.slice(0, 4))
+  const today = new Date()
+  const currentMonthKey = monthKey(today.getFullYear(), today.getMonth() + 1)
+
+  const [selectedMonth, setSelectedMonth] = useState(initialMonth)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [pickerYear, setPickerYear] = useState(Number(selectedMonth.slice(0, 4)))
+  const [pendingMonth, setPendingMonth] = useState(selectedMonth)
+
+  const monthNumber = Number(selectedMonth.slice(5))
+  const yearNumber = Number(selectedMonth.slice(0, 4))
+
+  function openPicker() {
+    setPickerYear(Number(selectedMonth.slice(0, 4)))
+    setPendingMonth(selectedMonth)
+    setPickerOpen(true)
+  }
+
+  function confirmPicker() {
+    setSelectedMonth(pendingMonth)
+    setPickerOpen(false)
+  }
 
   const prevStage = stage ? stageByOrder[stageOrder[stage] - 1] ?? null : null
   const nextStage = stage ? stageByOrder[stageOrder[stage] + 1] ?? null : null
@@ -51,9 +82,9 @@ export default function GrowthReport({ child, month, onBack }: Props) {
             <button type="button" onClick={onBack} aria-label="홈으로 돌아가기" className="grid size-9 place-items-center focus-visible:outline-[#a50034]"><ArrowLeft size={20} /></button>
             <h1 className="text-[18px] font-bold tracking-[-0.45px]">우리 아이 성장 리포트</h1>
           </div>
-          <span className="flex shrink-0 items-center gap-1.5 rounded-full border border-[#e5e7eb] bg-white px-[13px] py-[7px] text-[12px] font-semibold text-[#374151] shadow-sm">
+          <button type="button" onClick={openPicker} className="flex shrink-0 items-center gap-1.5 rounded-full border border-[#e5e7eb] bg-white px-[13px] py-[7px] text-[12px] font-semibold text-[#374151] shadow-sm focus-visible:outline-[#a50034]">
             <Calendar size={12} aria-hidden="true" />{yearNumber}년 {monthNumber}월<ChevronDown size={11} aria-hidden="true" />
-          </span>
+          </button>
         </header>
 
         <main className="space-y-[14px] px-4 pt-[8px]">
@@ -68,7 +99,7 @@ export default function GrowthReport({ child, month, onBack }: Props) {
           <section aria-label="이번 달 안전 요약" className="rounded-[24px] p-5 text-white shadow-[0_8px_20px_rgba(165,0,52,0.22)]" style={{ backgroundImage: 'linear-gradient(92deg, #ca1048 5%, #fb90b0 99%)' }}>
             <div className="flex items-start justify-between">
               <span className="flex items-center gap-1.5 rounded-full bg-black/20 px-3 py-1 text-[11px] font-semibold backdrop-blur-md"><ShieldCheck size={12} aria-hidden="true" />월간 정기 안전 결산</span>
-              <span className="grid size-10 place-items-center rounded-full border border-white/20 bg-white/15"><Smile size={20} aria-hidden="true" /></span>
+              <MonthlyFeedbackButton shapeClassName="size-10 rounded-full border border-white/20" idleBgClassName="bg-white/15" iconSize={20} />
             </div>
             <h2 className="pt-[11px] text-[22px] font-extrabold tracking-[-0.55px]">{child.name} 님의 {monthNumber}월 리포트</h2>
             <p className="pb-[13px] pt-1 text-[12.5px] leading-[1.6] text-white/85">
@@ -206,6 +237,53 @@ export default function GrowthReport({ child, month, onBack }: Props) {
           <p className="py-2 text-center text-[11px] text-[#9ca3af]">LG ThinQ AI 센서 기록을 바탕으로 매일 밤 동기화됩니다</p>
         </main>
       </div>
+
+      {pickerOpen && (
+        <div className="fixed inset-0 z-30 flex items-center justify-center bg-[#0f172a]/45 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setPickerOpen(false) }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="month-picker-title" className="w-full max-w-[358px] rounded-[24px] bg-white p-5 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <h2 id="month-picker-title" className="text-[17px] font-bold text-[#0f172a]">조회 월 선택</h2>
+                <span className="rounded-full bg-[#fff1f1] px-2 py-[2px] text-[11px] font-semibold text-[#be1845]">성장 리포트</span>
+              </div>
+              <button type="button" onClick={() => setPickerOpen(false)} aria-label="닫기" className="grid size-7 place-items-center text-[#808080] focus-visible:outline-[#a50034]"><X size={16} /></button>
+            </div>
+
+            <div className="mt-4 flex items-center justify-between px-1">
+              <button type="button" onClick={() => setPickerYear((year) => year - 1)} aria-label="이전 연도" className="grid size-7 place-items-center rounded-full text-[#474747] hover:bg-[#f3f4f6] focus-visible:outline-[#a50034]"><ChevronLeft size={18} /></button>
+              <span className="text-[15px] font-semibold text-[#111827]">{pickerYear}년</span>
+              <button type="button" onClick={() => setPickerYear((year) => Math.min(year + 1, today.getFullYear()))} disabled={pickerYear >= today.getFullYear()} aria-label="다음 연도" className="grid size-7 place-items-center rounded-full text-[#afafaf] hover:bg-[#f3f4f6] disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-[#a50034]"><ChevronRight size={18} /></button>
+            </div>
+
+            <div className="mt-3 grid grid-cols-3 gap-2.5">
+              {Array.from({ length: 12 }, (_, index) => index + 1).map((monthIndex) => {
+                const key = monthKey(pickerYear, monthIndex)
+                const isFuture = key > currentMonthKey
+                const isCurrentRealMonth = key === currentMonthKey
+                const isPending = key === pendingMonth
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    disabled={isFuture}
+                    onClick={() => setPendingMonth(key)}
+                    className={`rounded-[17px] border p-2.5 text-center disabled:cursor-not-allowed ${isPending ? 'border-[#b50031] bg-[#b50031] shadow-md' : isFuture ? 'border-[#eaeaea] bg-[#fcfcfd]' : 'border-[#c5c7cb] bg-[#fcfcfd] hover:border-[#b50031]'}`}
+                  >
+                    <p className={`text-[15px] font-bold ${isPending ? 'text-white' : isFuture ? 'text-[#c2c2c2]' : 'text-[#111827]'}`}>{monthIndex}월</p>
+                    <p className={`mt-0.5 text-[10px] font-bold ${isPending ? 'text-white' : isFuture ? 'text-[#c6c6c6]' : 'text-[#a1a8b4]'}`}>
+                      {isFuture ? '예정' : isCurrentRealMonth ? `${mockAvoidanceCount(key)}건 (현재)` : `${mockAvoidanceCount(key)}건 회피`}
+                    </p>
+                  </button>
+                )
+              })}
+            </div>
+
+            <button type="button" onClick={confirmPicker} className="mt-4 flex h-[49px] w-full items-center justify-center rounded-[19px] bg-[#c6002b] text-[16px] font-bold text-white shadow-[0_4px_4px_rgba(0,0,0,0.25)] focus-visible:outline-[#a50034]">
+              선택 완료 <ArrowRight size={18} className="ml-1.5" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

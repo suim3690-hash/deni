@@ -3,20 +3,13 @@ import Header from '../components/Header'
 import babyFaceIcon from '../assets/icons/baby-face.svg'
 import calendarIcon from '../assets/icons/calendar.svg'
 import checkIcon from '../assets/icons/check.svg'
-import { registerChild, type RegisteredChild } from '../services/children'
+import { computeSafetyProfile, localToday, registerChild, type RegisteredChild } from '../services/children'
+import { stageByOrder, stageDisplayNames, stageOrder, stageRegistrationAgeLabels, stageTitles } from '../lib/stages'
 
 type RegistrationStatus = 'editing' | 'loading' | 'success' | 'failure'
 
 interface ChildRegistrationProps {
   onGoHome: (child: RegisteredChild) => void
-}
-
-function localToday() {
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  const day = String(now.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
 }
 
 export default function ChildRegistration({ onGoHome }: ChildRegistrationProps) {
@@ -28,6 +21,7 @@ export default function ChildRegistration({ onGoHome }: ChildRegistrationProps) 
   const requestKey = useRef(crypto.randomUUID())
 
   const isReadOnly = status === 'loading' || status === 'success'
+  const previewStage = birthDate && birthDate <= localToday() ? computeSafetyProfile(birthDate).stage : null
 
   function resetAfterEdit() {
     setStatus('editing')
@@ -168,6 +162,29 @@ export default function ChildRegistration({ onGoHome }: ChildRegistrationProps) 
                   />
                 </div>
               </div>
+            </div>
+
+            <div className="mt-4 space-y-2">
+              <p className="px-0.5 text-[11px] font-medium text-[#334155]">성장 단계 안내</p>
+              {[1, 2, 3].map((order) => {
+                const stage = stageByOrder[order]
+                const isActive = previewStage === stage
+                return (
+                  <div key={stage} className={`flex items-start gap-2.5 rounded-xl border p-2.5 transition-colors ${isActive ? 'border-[#a50034] bg-[#fff1f2]' : 'border-[#f1f5f9] bg-white'}`}>
+                    <span className={`mt-0.5 grid size-6 shrink-0 place-items-center rounded-full text-[11px] font-bold ${isActive ? 'bg-[#a50034] text-white' : 'bg-[#f1f5f9] text-[#94a3b8]'}`}>
+                      {stageOrder[stage]}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className={`text-[13px] font-bold ${isActive ? 'text-[#a50034]' : 'text-[#334155]'}`}>{stageDisplayNames[stage]}</span>
+                        <span className="text-[11px] text-[#94a3b8]">{stageRegistrationAgeLabels[stage]}</span>
+                        {isActive && <span className="rounded-full bg-[#a50034] px-1.5 py-[1px] text-[9px] font-bold text-white">우리 아이 단계</span>}
+                      </div>
+                      <p className="mt-0.5 text-[11px] leading-[1.4] text-[#64748b]">{stageTitles[stage]}</p>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
 
             <button

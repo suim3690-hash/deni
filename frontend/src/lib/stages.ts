@@ -36,6 +36,18 @@ export const stageLabels: Record<Stage, string> = {
   ACTIVE_CHILD: '유아 활동기',
 }
 
+export const stageDisplayNames: Record<Stage, string> = {
+  INFANT: '영아기',
+  TODDLER: '유아기',
+  ACTIVE_CHILD: '유아활동기',
+}
+
+export const stageRegistrationAgeLabels: Record<Stage, string> = {
+  INFANT: '0~12개월',
+  TODDLER: '12~36개월',
+  ACTIVE_CHILD: '만 3~7세',
+}
+
 export const stageTitles: Record<Stage, string> = {
   INFANT: '바닥을 탐색하는 시기예요',
   TODDLER: '두발로 집안을 탐험하는 시기에요',

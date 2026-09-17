@@ -1,11 +1,14 @@
-import { AlertTriangle, ArrowLeft, BatteryWarning, Blocks, Check, Coins, Info, ListChecks, Magnet, Pencil, Settings, Smile } from 'lucide-react'
+import { useState, type FormEvent } from 'react'
+import { AlertTriangle, ArrowLeft, BatteryWarning, Blocks, Check, Coins, Info, ListChecks, Magnet, Pencil, Settings, Smile, X } from 'lucide-react'
 import floorPlanPreview from '../assets/figma/safety-profile/floor-plan.png'
-import type { RegisteredChild } from '../services/children'
+import MonthlyFeedbackButton from '../components/MonthlyFeedbackButton'
+import { localToday, updateChild, type RegisteredChild } from '../services/children'
 import { stageAgeRangeLabels, stageBannerSubtitles, stageCriteriaDescriptions, stageCriteriaTitles, stageLabels, stageOrder, stageTitles } from '../lib/stages'
 
 interface Props {
   child: RegisteredChild
   onBack: () => void
+  onUpdateChild: (child: RegisteredChild) => void
 }
 
 const hazardItems = [
@@ -15,10 +18,54 @@ const hazardItems = [
   { icon: Magnet, name: '작은 자석', detail: '1개 (장천공 주의)', danger: true },
 ]
 
-export default function SafetyProfileDetail({ child, onBack }: Props) {
+export default function SafetyProfileDetail({ child, onBack, onUpdateChild }: Props) {
   const profile = child.safetyProfile
   const stage = profile.stage
   const isSupported = profile.status === 'APPLIED' && stage !== null
+
+  const [isEditing, setIsEditing] = useState(false)
+  const [editName, setEditName] = useState(child.name)
+  const [editBirthDate, setEditBirthDate] = useState(child.birthDate)
+  const [saving, setSaving] = useState(false)
+  const [editError, setEditError] = useState('')
+
+  function startEditing() {
+    setEditName(child.name)
+    setEditBirthDate(child.birthDate)
+    setEditError('')
+    setIsEditing(true)
+  }
+
+  async function handleEditSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (saving) return
+
+    const trimmedName = editName.trim()
+    if (!trimmedName) {
+      setEditError('아이 이름 또는 애칭을 입력해 주세요.')
+      return
+    }
+    if (!editBirthDate) {
+      setEditError('생년월일을 선택해 주세요.')
+      return
+    }
+    if (editBirthDate > localToday()) {
+      setEditError('미래 날짜는 생년월일로 선택할 수 없어요.')
+      return
+    }
+
+    setEditError('')
+    setSaving(true)
+    try {
+      const updated = await updateChild(child.childId, { name: trimmedName, birthDate: editBirthDate })
+      onUpdateChild(updated)
+      setIsEditing(false)
+    } catch {
+      setEditError('정보를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <div className="min-h-screen bg-[#f2f6fa] text-[#0f172a]">
@@ -36,7 +83,7 @@ export default function SafetyProfileDetail({ child, onBack }: Props) {
           <section aria-label="성장 단계 안내" className="min-h-[185px] rounded-[24px] bg-gradient-to-r from-[#d9064d] via-[#ee4f7e] to-[#fa80a5] p-5 text-white shadow-[0_6px_15px_rgba(174,0,57,0.14)]">
             <div className="flex items-start justify-between">
               <span className="rounded-full bg-white/20 px-[10px] py-[5px] text-[11px] font-medium">✦ {isSupported ? '현재 Safety Profile 자동 적용 중' : '지원 범위 밖'}</span>
-              <span className="grid size-[44px] place-items-center rounded-[14px] bg-white/20"><Smile size={22} aria-hidden="true" /></span>
+              <MonthlyFeedbackButton shapeClassName="size-[44px] rounded-[14px]" iconSize={22} />
             </div>
             <h2 className="-mt-1 max-w-[260px] text-[21px] font-bold leading-[1.2]">
               {isSupported && stage ? stageTitles[stage] : '현재 지원하는 연령이 아니에요'}
@@ -47,29 +94,76 @@ export default function SafetyProfileDetail({ child, onBack }: Props) {
           </section>
 
           <section aria-label="우리 아이 정보" className="rounded-[24px] border border-[#f1f5f9] bg-white p-[21px] shadow-[0_1px_1px_rgba(0,0,0,0.05)]">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Smile size={20} className="text-[#0f172a]" aria-hidden="true" />
-                <h2 className="text-[16px] font-medium">우리 아이 정보</h2>
-              </div>
-              <span className="flex items-center gap-1 text-[12px] font-medium text-[#2563eb]">수정하기 <Pencil size={13} /></span>
-            </div>
-            <div className="mt-4 flex items-center justify-between rounded-[16px] border border-[#f1f5f9] bg-[#f8fafc]/80 p-[15px]">
-              <div className="flex items-center">
-                <div className="relative grid size-12 shrink-0 place-items-center rounded-full bg-[#fecdd3]">
-                  <Smile size={22} className="text-[#e11d48]" aria-hidden="true" />
-                  <span className="absolute -bottom-0.5 -right-0.5 grid size-4 place-items-center rounded-full border-2 border-white bg-[#10b981]"><Check size={10} className="text-white" strokeWidth={3} /></span>
+            {isEditing ? (
+              <form onSubmit={handleEditSubmit} noValidate>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-[16px] font-medium">우리 아이 정보 수정</h2>
+                  <button type="button" onClick={() => setIsEditing(false)} aria-label="수정 취소" className="grid size-6 place-items-center text-[#64748b] focus-visible:outline-[#a50034]"><X size={16} /></button>
                 </div>
-                <div className="pl-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[16px] font-medium">{child.name}</span>
-                    <span className="rounded-[6px] bg-[#ffe4e6] px-2 py-[2px] text-[11px] font-bold text-[#e11d48]">{profile.ageMonths}개월</span>
+                <div className="mt-4 flex flex-col gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="edit-child-name" className="text-[12px] font-medium text-[#334155]">아이 이름 또는 애칭</label>
+                    <input
+                      id="edit-child-name"
+                      type="text"
+                      autoComplete="off"
+                      value={editName}
+                      onChange={(event) => setEditName(event.target.value)}
+                      disabled={saving}
+                      aria-invalid={!!editError && !editName.trim()}
+                      className="h-[45px] w-full rounded-xl border border-[#e2e8f0] bg-white px-[15px] text-[14px] text-[#1e293b] focus:outline-none focus:ring-2 focus:ring-[#a50034]/20 disabled:opacity-60"
+                    />
                   </div>
-                  <p className="text-[12px] text-[#64748b]">생년월일 <span className="text-[#334155]">{child.birthDate.replaceAll('-', '.')}</span></p>
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="edit-child-birthday" className="text-[12px] font-medium text-[#334155]">생년월일</label>
+                    <input
+                      id="edit-child-birthday"
+                      type="date"
+                      value={editBirthDate}
+                      max={localToday()}
+                      onChange={(event) => setEditBirthDate(event.target.value)}
+                      disabled={saving}
+                      aria-invalid={!!editError && (!editBirthDate || editBirthDate > localToday())}
+                      className="h-[45px] w-full rounded-xl border border-[#e2e8f0] bg-white px-[15px] text-[14px] text-[#1e293b] focus:outline-none focus:ring-2 focus:ring-[#a50034]/20 disabled:opacity-60"
+                    />
+                    <p className="text-[11px] leading-[1.4] text-[#94a3b8]">생년월일 기준으로 성장 단계가 재산정되어 Safety Profile이 자동 적용돼요.</p>
+                  </div>
                 </div>
-              </div>
-              <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-[#eff6ff] px-[10px] py-1 text-[12px] font-medium text-[#2563eb]"><span className="size-1.5 rounded-full bg-[#3b82f6]" />{isSupported && stage ? stageLabels[stage] : '지원 범위 밖'}</span>
-            </div>
+
+                {editError && <p role="alert" className="mt-2 text-[12px] text-[#a50034]">{editError}</p>}
+
+                <button type="submit" disabled={saving} className="mt-4 flex h-[45px] w-full items-center justify-center rounded-xl bg-gradient-to-r from-[#dc3f6e] to-[#f2789c] text-[15px] font-bold text-white disabled:cursor-wait disabled:opacity-80">
+                  {saving ? '저장 중…' : '수정 완료'}
+                </button>
+                <button type="button" onClick={() => setIsEditing(false)} disabled={saving} className="mt-2 w-full text-center text-[12px] text-[#94a3b8] disabled:opacity-60">취소</button>
+              </form>
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Smile size={20} className="text-[#0f172a]" aria-hidden="true" />
+                    <h2 className="text-[16px] font-medium">우리 아이 정보</h2>
+                  </div>
+                  <button type="button" onClick={startEditing} className="flex items-center gap-1 text-[12px] font-medium text-[#2563eb] focus-visible:outline-[#a50034]">수정하기 <Pencil size={13} /></button>
+                </div>
+                <div className="mt-4 flex items-center justify-between rounded-[16px] border border-[#f1f5f9] bg-[#f8fafc]/80 p-[15px]">
+                  <div className="flex items-center">
+                    <div className="relative grid size-12 shrink-0 place-items-center rounded-full bg-[#fecdd3]">
+                      <Smile size={22} className="text-[#e11d48]" aria-hidden="true" />
+                      <span className="absolute -bottom-0.5 -right-0.5 grid size-4 place-items-center rounded-full border-2 border-white bg-[#10b981]"><Check size={10} className="text-white" strokeWidth={3} /></span>
+                    </div>
+                    <div className="pl-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[16px] font-medium">{child.name}</span>
+                        <span className="rounded-[6px] bg-[#ffe4e6] px-2 py-[2px] text-[11px] font-bold text-[#e11d48]">{profile.ageMonths}개월</span>
+                      </div>
+                      <p className="text-[12px] text-[#64748b]">생년월일 <span className="text-[#334155]">{child.birthDate.replaceAll('-', '.')}</span></p>
+                    </div>
+                  </div>
+                  <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-[#eff6ff] px-[10px] py-1 text-[12px] font-medium text-[#2563eb]"><span className="size-1.5 rounded-full bg-[#3b82f6]" />{isSupported && stage ? stageLabels[stage] : '지원 범위 밖'}</span>
+                </div>
+              </>
+            )}
           </section>
 
           <section aria-label="스마트 안심 케어 맵" className="rounded-[24px] border border-[#f1f5f9] bg-white p-[17px] shadow-sm">

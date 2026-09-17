@@ -5,7 +5,7 @@ import type { RegisteredChild } from './services/children'
 
 function App() {
   const [child, setChild] = useState<RegisteredChild | null>(null)
-  return child ? <RegisteredHome child={child} /> : <ChildRegistration onGoHome={setChild} />
+  return child ? <RegisteredHome child={child} onUpdateChild={setChild} /> : <ChildRegistration onGoHome={setChild} />
 }
 
 export default App
