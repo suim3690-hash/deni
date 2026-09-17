@@ -49,15 +49,15 @@ export const stageRegistrationAgeLabels: Record<Stage, string> = {
 }
 
 export const stageTitles: Record<Stage, string> = {
-  INFANT: '바닥을 탐색하는 시기예요',
+  INFANT: '아기가 바닥을 탐색하는 시기예요',
   TODDLER: '두발로 집안을 탐험하는 시기에요',
-  ACTIVE_CHILD: '활동 범위가 넓어지는 시기예요',
+  ACTIVE_CHILD: '아이의 활동 반경이 넓어지는 시기예요',
 }
 
 export const stageBannerSubtitles: Record<Stage, string> = {
-  INFANT: '바닥 이물질 및 삼킴 위험물 집중 감지 모드',
+  INFANT: '바닥 삼킴 위험물 탐지 강화 모드',
   TODDLER: '모서리 충돌 방지 및 바닥 전선 걸림 집중 감지 모드',
-  ACTIVE_CHILD: '활동 반경 확대에 따른 광범위 위험 탐지 모드',
+  ACTIVE_CHILD: '생활공간 전체 위험요소 점검 모드',
 }
 
 export const stageCriteriaTitles: Record<Stage, string> = {

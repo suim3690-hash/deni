@@ -14,9 +14,17 @@ import reportIcon from '../assets/figma/home/imgContainer1.svg'
 import powerButton from '../assets/figma/home/power-button.png'
 import type { RegisteredChild } from '../services/children'
 import { getDashboard, getHazardDetail, HazardDetailError, sendDeviceCommand, type DashboardHazard, type DashboardSnapshot, type HazardDetail } from '../services/dashboard'
-import { stageLabels, stageTitles } from '../lib/stages'
+import { stageBannerSubtitles, stageTitles } from '../lib/stages'
 
 type Modal = 'device' | 'hazards' | 'avoidance' | null
+
+const demoHazard: DashboardHazard = {
+  hazardId: 'demo-hazard',
+  objectName: '레고 브릭',
+  riskLevel: 'VERY_HIGH',
+  locationLabel: '거실 러그 위',
+  detectedAt: new Date().toISOString(),
+}
 
 interface Props {
   child: RegisteredChild
@@ -202,7 +210,7 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
                     </div>
                   </div>
                   <div className="relative mt-2 flex items-center justify-center">
-                    <button type="button" onClick={() => (activeHazard ? void openHazardDetail(activeHazard) : setModal('hazards'))} className="flex h-[38px] w-[205px] items-center justify-center rounded-full bg-[#b9003d] text-[14px] font-semibold text-white focus-visible:outline-[#a50034]">
+                    <button type="button" onClick={() => (activeHazard ? void openHazardDetail(activeHazard) : dashboard?.isMock ? void openHazardDetail(demoHazard) : setModal('hazards'))} className="flex h-[38px] w-[205px] items-center justify-center rounded-full bg-[#b9003d] text-[14px] font-semibold text-white focus-visible:outline-[#a50034]">
                       실시간 위험 감지 맵 <ArrowRight size={15} className="ml-1" />
                     </button>
                     <button type="button" onClick={handleDeviceCommand} disabled={commandPending} aria-label={isPaused ? '청소 재개' : '청소 일시정지'} className={`absolute right-0 grid size-[46px] place-items-center rounded-full border shadow-sm disabled:cursor-wait disabled:opacity-60 ${isPaused ? 'border-[#c7d9fb] bg-[#eaf2fe]' : 'border-[#f3d2da] bg-[#fdeef1]'}`}>
@@ -231,7 +239,7 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
               {isSupported && profile.stage ? stageTitles[profile.stage] : '현재 지원하는 연령이 아니에요'}
             </h2>
             <p className="mt-1 max-w-[280px] text-[12px] leading-[1.4] text-white/95">
-              {isSupported && profile.stage ? dashboard?.isMock && profile.stage === 'TODDLER' ? '모서리 충돌 방지 및 바닥 전선 걸림 집중 감지 모드' : `${child.name}의 ${stageLabels[profile.stage]} 안전 프로필을 등록했어요.` : '안전 프로필이 적용되지 않았어요.'}
+              {isSupported && profile.stage ? stageBannerSubtitles[profile.stage] : '안전 프로필이 적용되지 않았어요.'}
             </p>
             <div className="mt-3 flex justify-end border-t border-white/25 pt-2">
               <button type="button" onClick={() => setShowSafetyProfile(true)} className="text-[11px] underline underline-offset-2 focus-visible:outline-white">상세 보기 &gt;</button>
