@@ -1,0 +1,62 @@
+%% Source: docs/메뉴구조도.md | generated from source table
+%% Logical hierarchy: LG 드니 -> 1Depth -> 2Depth -> 3Depth -> 화면
+%% FR label is inside the bottom of each screen node; not an extra menu
+%%{init: {"theme": "base", "themeVariables": {"fontFamily": "Malgun Gothic, sans-serif", "fontSize": "16px", "lineColor": "#94a3b8"}, "flowchart": {"htmlLabels": true, "curve": "linear", "nodeSpacing": 24, "rankSpacing": 58, "useMaxWidth": false}}}%%
+flowchart TB
+    ROOT["LG 드니"]:::root
+    M1["1Depth<br/>홈"]:::menu
+    M2["2Depth<br/>대시보드"]:::menu
+    M3["3Depth<br/>기기·안전 현황"]:::menu
+    SCR_001["<span style='display:inline-block;min-width:190px;white-space:nowrap'>홈<br/>SCR-001<br/><small>FR-001~003<br/>FR-020</small></span>"]:::base
+    M4["1Depth<br/>아이"]:::menu
+    M5["2Depth<br/>아이 프로필"]:::menu
+    M6["3Depth<br/>기본 정보"]:::menu
+    SCR_002["<span style='display:inline-block;min-width:190px;white-space:nowrap'>아이 정보 등록<br/>SCR-002<br/><small>FR-004~006</small></span>"]:::base
+    M7["3Depth<br/>성장단계"]:::menu
+    SCR_003["<span style='display:inline-block;min-width:190px;white-space:nowrap'>Safety Profile<br/>적용 결과<br/>SCR-003<br/><small>FR-007~010<br/>FR-037</small></span>"]:::base
+    M8["1Depth<br/>안전 케어"]:::menu
+    M9["2Depth<br/>위험 확인"]:::menu
+    M10["3Depth<br/>감지 위치"]:::menu
+    SCR_004["<span style='display:inline-block;min-width:190px;white-space:nowrap'>실시간 위험 감지<br/>&amp; 맵<br/>SCR-004<br/><small>FR-020~021<br/>FR-023</small></span>"]:::core
+    M11["3Depth<br/>위험 정보"]:::menu
+    SCR_005["<span style='display:inline-block;min-width:190px;white-space:nowrap'>위험 상세<br/>SCR-005<br/><small>FR-021~023</small></span>"]:::core
+    M12["2Depth<br/>안전 조치"]:::menu
+    M13["3Depth<br/>처리 안내"]:::menu
+    SCR_006["<span style='display:inline-block;min-width:190px;white-space:nowrap'>안전 처리<br/>SCR-006<br/><small>FR-024~026<br/>FR-028<br/>FR-030</small></span>"]:::core
+    M14["3Depth<br/>처리 현황"]:::menu
+    SCR_007["<span style='display:inline-block;min-width:190px;white-space:nowrap'>안전 처리 결과<br/>SCR-007<br/><small>FR-025<br/>FR-027<br/>FR-029~031</small></span>"]:::core
+    M15["1Depth<br/>리포트"]:::menu
+    M16["2Depth<br/>월간 리포트"]:::menu
+    M17["3Depth<br/>성장·안전 기록"]:::menu
+    SCR_008["<span style='display:inline-block;min-width:190px;white-space:nowrap'>월간 성장 리포트<br/>SCR-008<br/><small>FR-038~040</small></span>"]:::core
+    ROOT --> M1
+    M1 --> M2
+    M2 --> M3
+    M3 --> SCR_001
+    ROOT --> M4
+    M4 --> M5
+    M5 --> M6
+    M6 --> SCR_002
+    M5 --> M7
+    M7 --> SCR_003
+    ROOT --> M8
+    M8 --> M9
+    M9 --> M10
+    M10 --> SCR_004
+    M9 --> M11
+    M11 --> SCR_005
+    M8 --> M12
+    M12 --> M13
+    M13 --> SCR_006
+    M12 --> M14
+    M14 --> SCR_007
+    ROOT --> M15
+    M15 --> M16
+    M16 --> M17
+    M17 --> SCR_008
+    classDef root fill:#172033,stroke:#172033,color:#ffffff,stroke-width:2px;
+    classDef menu fill:#ffffff,stroke:#cbd5e1,color:#334155;
+    classDef core fill:#ede4ff,stroke:#8854d0,color:#492477,stroke-width:2px;
+    classDef base fill:#fff3bd,stroke:#c69b21,color:#654d00,stroke-width:2px;
+    classDef later fill:#e8ebef,stroke:#a5adb9,color:#59616e;
+    linkStyle default stroke:#94a3b8,stroke-width:1.5px;
