@@ -91,7 +91,7 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
   const connection = loadError ? 'UNKNOWN' : device?.connectionState ?? 'UNKNOWN'
   const isOnline = connection === 'ONLINE'
   const isOffline = connection === 'OFFLINE'
-  const profile = child.safetyProfile
+  const profile = dashboard?.currentProfile ?? child.safetyProfile
   const isSupported = profile.status === 'APPLIED' && profile.stage !== null
   const report = dashboard?.reportSummary
   const isPaused = device?.operationState === 'PAUSED'

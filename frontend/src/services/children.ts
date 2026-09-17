@@ -13,6 +13,44 @@ export interface RegisteredChild extends ChildRegistrationInput {
   }
 }
 
+export interface SafetyCriterion {
+  code: string
+  title: string
+  description: string
+}
+
+export type SafetyProfileData = RegisteredChild['safetyProfile'] & {
+  childId: string
+  stageLabel: string | null
+  criteria: SafetyCriterion[]
+}
+
+type SupportedStage = NonNullable<RegisteredChild['safetyProfile']['stage']>
+
+const mockStageLabels: Record<SupportedStage, string> = {
+  INFANT: '바닥 탐색 시기',
+  TODDLER: '걸음마 시기',
+  ACTIVE_CHILD: '유아 활동기',
+}
+
+const mockCriteria: Record<SupportedStage, SafetyCriterion[]> = {
+  INFANT: [{
+    code: 'CHOKING',
+    title: '바닥 이물질·삼킴 위험 탐지 강화',
+    description: '바닥에 떨어진 작은 물체와 삼킴 위험 물건을 중심으로 집중 모니터링합니다.',
+  }],
+  TODDLER: [{
+    code: 'MOVEMENT_HAZARD',
+    title: '모서리·문턱·전선 등 이동 위험 탐지 강화',
+    description: '가구 모서리, 바닥 문턱, 콘센트와 전선 걸림 위험을 집중 모니터링합니다.',
+  }],
+  ACTIVE_CHILD: [{
+    code: 'WIDE_AREA_HAZARD',
+    title: '활동 반경에 따른 광범위 위험 탐지',
+    description: '집 전체 활동 반경에서 낙상과 충돌 위험을 폭넓게 모니터링합니다.',
+  }],
+}
+
 const mockResults = new Map<string, RegisteredChild>()
 let failedOnce = false
 
@@ -71,6 +109,18 @@ async function mockUpdateChild(childId: string, input: ChildRegistrationInput): 
   }
 }
 
+async function mockGetSafetyProfile(childId: string, birthDate: string): Promise<SafetyProfileData> {
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  const profile = computeSafetyProfile(birthDate)
+  const stage = profile.stage
+  return {
+    childId,
+    ...profile,
+    stageLabel: stage ? mockStageLabels[stage] : null,
+    criteria: stage ? mockCriteria[stage] : [],
+  }
+}
+
 export async function registerChild(input: ChildRegistrationInput, idempotencyKey: string): Promise<RegisteredChild> {
   const baseUrl = import.meta.env.VITE_API_BASE_URL
   if (!baseUrl) return mockRegisterChild(input, idempotencyKey)
@@ -100,4 +150,13 @@ export async function updateChild(childId: string, input: ChildRegistrationInput
 
   if (!response.ok) throw new Error(`Update failed: ${response.status}`)
   return response.json() as Promise<RegisteredChild>
+}
+
+export async function getSafetyProfile(childId: string, birthDate: string): Promise<SafetyProfileData> {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL
+  if (!baseUrl) return mockGetSafetyProfile(childId, birthDate)
+
+  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/children/${encodeURIComponent(childId)}/safety-profile`)
+  if (!response.ok) throw new Error(`Safety profile request failed: ${response.status}`)
+  return response.json() as Promise<SafetyProfileData>
 }

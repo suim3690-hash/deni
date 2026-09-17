@@ -25,9 +25,9 @@ export const stageLowerBoundMonths: Record<Stage, number> = {
 }
 
 export const stageAgeRangeLabels: Record<Stage, string> = {
-  INFANT: '0~12개월',
-  TODDLER: '12~36개월',
-  ACTIVE_CHILD: '36~96개월',
+  INFANT: '0~11개월',
+  TODDLER: '12~35개월',
+  ACTIVE_CHILD: '36~95개월',
 }
 
 export const stageLabels: Record<Stage, string> = {
@@ -43,9 +43,9 @@ export const stageDisplayNames: Record<Stage, string> = {
 }
 
 export const stageRegistrationAgeLabels: Record<Stage, string> = {
-  INFANT: '0~12개월',
-  TODDLER: '12~36개월',
-  ACTIVE_CHILD: '만 3~7세',
+  INFANT: '0~11개월',
+  TODDLER: '12~35개월',
+  ACTIVE_CHILD: '36~95개월 (만 3~7세)',
 }
 
 export const stageTitles: Record<Stage, string> = {

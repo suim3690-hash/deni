@@ -41,12 +41,11 @@ export default function HazardLocation({ hazard, detail, error, errorStatus, isM
   const [manualPhase, setManualPhase] = useState<'idle' | 'moving' | 'removed' | 'done'>('idle')
   const restricted = errorStatus === 403 || errorStatus === 404
   const riskLabel = isMock ? '삼킴 고위험' : detail?.riskLevel === 'VERY_HIGH' ? '매우 높은 위험' : detail?.riskLevel === 'HIGH' ? '높은 위험' : '위험 감지'
-  const showSuccessBanner = autoTransport || manualPhase === 'done'
-  const showMovingAlert = !autoTransport && (manualPhase === 'moving' || manualPhase === 'removed')
+  const showSuccessBanner = (autoTransport && transportPhase === 'done') || manualPhase === 'done'
+  const showMovingAlert = (autoTransport && transportPhase === 'moving') || manualPhase === 'moving' || manualPhase === 'removed'
 
   useEffect(() => {
     if (!autoTransport) return
-    setTransportPhase('moving')
     const timer = setTimeout(() => setTransportPhase('done'), 3000)
     return () => clearTimeout(timer)
   }, [autoTransport])
@@ -61,6 +60,12 @@ export default function HazardLocation({ hazard, detail, error, errorStatus, isM
       return () => clearTimeout(timer)
     }
   }, [manualPhase])
+
+  function toggleAutoTransport() {
+    const enabled = !autoTransport
+    if (enabled) setTransportPhase('moving')
+    setAutoTransport(enabled)
+  }
 
   return (
     <div className="min-h-screen bg-[#f0f5fd] text-[#1e293b]">
@@ -149,7 +154,7 @@ export default function HazardLocation({ hazard, detail, error, errorStatus, isM
               <strong className="flex items-center gap-2 text-[15px]"><ShieldCheck size={19} className="text-[#2958c7]" />위험 구역 진입시 자동 이송 모드</strong>
               <button
                 type="button"
-                onClick={() => setAutoTransport((value) => !value)}
+                onClick={toggleAutoTransport}
                 aria-pressed={autoTransport}
                 aria-label={autoTransport ? '자동 이송 모드 켜짐' : '자동 이송 모드 꺼짐'}
                 className={`flex h-[24px] w-[46px] shrink-0 items-center rounded-full p-1 transition-colors focus-visible:outline-[#a50034] ${autoTransport ? 'justify-end bg-[#b9003d]' : 'justify-start bg-[#d1d5db]'}`}

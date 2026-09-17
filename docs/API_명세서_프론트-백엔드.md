@@ -2,7 +2,7 @@
 
 > 협의안 v0.1 · 2026-09-17  
 > 대상: [3차 화면 설계](https://www.figma.com/design/VRe73HbPynTknNZkfMNuAp/%EA%B8%B0%ED%9A%8D-%EB%A9%98%ED%86%A0%EB%A7%81?node-id=1103-789)의 아이 등록, 홈, Safety Profile, 위험 상세·안전 처리, 월간 리포트  
-> **주의:** 현재 백엔드에는 컨트롤러가 없다. 아래 경로와 JSON 필드는 구현 완료 목록이 아니라 프론트–백엔드 합의를 위한 제안 계약이다.
+> **주의:** 아래 경로와 JSON 필드에는 구현된 API와 미구현 제안 계약이 함께 포함돼 있다. 실제 구현 완료 목록과 DB 구조·제한은 [백엔드 README](../backend/README.md)를 기준으로 확인한다.
 
 ## 1. 구현 기준
 
@@ -45,7 +45,7 @@
 | --- | --- | --- | --- | --- |
 | 아이 등록 `정보 등록하고 Safety Care 시작하기` | `POST /children` | 이름, 생년월일 | 아이 ID, 프로필 적용 상태·단계 | 제출 중 중복 클릭 방지 → 성공 시 다음 화면, 실패 시 입력 유지 |
 | 등록 실패 `다시 시도하기` | `POST /children` | 동일 입력·동일 `Idempotency-Key` | 최초 요청의 저장 결과 | 중복 아이 생성 없이 결과 확인 |
-| 홈 진입·새로고침 | `GET /dashboard` | 없음 | 현재 아이·기기, 연결·운행 상태, 최근 위험 알림, 리포트 요약 | 온라인/오프라인·배터리·위험 카드 표시. 조회 실패를 오프라인으로 단정하지 않음 |
+| 홈 진입·새로고침 | `GET /dashboard` | 인증 연결 전에는 임시 `childId` query | 현재 아이·기기, 연결·운행 상태, 최근 위험 알림, 리포트 요약 | 온라인/오프라인·배터리·위험 카드 표시. 조회 실패를 오프라인으로 단정하지 않음 |
 | 홈 상태 자동 갱신·명령 후 확인 | `GET /devices/{deviceId}/status` | 기기 ID | 연결 상태, 실제 운행 상태, 배터리, 확인 시각 | 저장된 화면 상태가 아닌 실제 기기 상태로 갱신 |
 | 홈 `일시 정지` | `POST /devices/{deviceId}/commands/pause` | 요청 식별키 | 명령 ID, `REQUESTED` | 실제 정지 확인 후 `일시 정지` 표시 |
 | 홈 `다시 시작` | `POST /devices/{deviceId}/commands/resume` | 요청 식별키 | 명령 ID 또는 `409` | 위험물 미처리 시 재개 거부. 실제 운행 확인 후 `작동 중` 표시 |
@@ -117,6 +117,9 @@
 #### `GET /api/v1/dashboard`
 
 현재 로그인 보호자의 MVP 기본 아이·기기를 조회한다. 여러 아이·기기 선택 정책은 추후 확정한다.
+현재 인증이 구현되지 않은 개발 단계에서는 다른 테스트 아이와 데이터가 섞이지 않도록
+`GET /api/v1/dashboard?childId={childId}`로 호출한다. 인증과 보호자-아이 관계가 구현되면
+서버 세션에서 기본 아이를 식별하고 이 임시 query는 제거한다.
 
 ```json
 {
@@ -172,6 +175,9 @@
 #### `GET /api/v1/hazards?deviceId={deviceId}&status=ACTIVE`
 
 `200 OK` 응답은 `{ "items": [...] }` 형식이다. 각 항목에는 `hazardId`, `objectName`, `riskLevel`, `detectedAt`, `location.label`, `location.marker`를 포함한다. 위험 건이 없으면 `items: []`를 반환한다. 선택한 항목은 아래 상세 API로 다시 조회한다.
+
+하드웨어·탐지 모델 통합 전에는 외부용 위험 등록 API를 노출하지 않는다. 백엔드는 향후 기기 메시지
+소비자가 호출할 저장 서비스와 조회 API만 제공하며, 임의의 샘플 탐지 데이터를 생성하지 않는다.
 
 #### `GET /api/v1/hazards/{hazardId}`
 

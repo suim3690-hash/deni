@@ -1,9 +1,9 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { AlertTriangle, ArrowLeft, BatteryWarning, Blocks, Check, Coins, Info, ListChecks, Magnet, Pencil, Settings, Smile, X } from 'lucide-react'
 import floorPlanPreview from '../assets/figma/safety-profile/floor-plan.png'
 import MonthlyFeedbackButton from '../components/MonthlyFeedbackButton'
-import { localToday, updateChild, type RegisteredChild } from '../services/children'
-import { stageAgeRangeLabels, stageBannerSubtitles, stageCriteriaDescriptions, stageCriteriaTitles, stageLabels, stageOrder, stageTitles } from '../lib/stages'
+import { getSafetyProfile, localToday, updateChild, type RegisteredChild, type SafetyProfileData } from '../services/children'
+import { stageAgeRangeLabels, stageBannerSubtitles, stageLabels, stageOrder, stageTitles } from '../lib/stages'
 
 interface Props {
   child: RegisteredChild
@@ -19,7 +19,19 @@ const hazardItems = [
 ]
 
 export default function SafetyProfileDetail({ child, onBack, onUpdateChild }: Props) {
-  const profile = child.safetyProfile
+  const [profileReloadKey, setProfileReloadKey] = useState(0)
+  const profileRequestKey = `${child.childId}:${child.birthDate}:${profileReloadKey}`
+  const [profileRequest, setProfileRequest] = useState<{
+    key: string
+    detail: SafetyProfileData | null
+    error: string
+  } | null>(null)
+  const profileRequestIsCurrent = profileRequest?.key === profileRequestKey
+  const profileDetail = profileRequestIsCurrent ? profileRequest.detail : null
+  const profileLoading = !profileRequestIsCurrent
+  const profileError = profileRequestIsCurrent ? profileRequest.error : ''
+
+  const profile = profileDetail ?? child.safetyProfile
   const stage = profile.stage
   const isSupported = profile.status === 'APPLIED' && stage !== null
 
@@ -28,6 +40,24 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild }: Pr
   const [editBirthDate, setEditBirthDate] = useState(child.birthDate)
   const [saving, setSaving] = useState(false)
   const [editError, setEditError] = useState('')
+
+  useEffect(() => {
+    let current = true
+
+    void getSafetyProfile(child.childId, child.birthDate)
+      .then((result) => {
+        if (current) setProfileRequest({ key: profileRequestKey, detail: result, error: '' })
+      })
+      .catch(() => {
+        if (current) setProfileRequest({
+          key: profileRequestKey,
+          detail: null,
+          error: 'Safety Profile을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.',
+        })
+      })
+
+    return () => { current = false }
+  }, [child.childId, child.birthDate, profileRequestKey])
 
   function startEditing() {
     setEditName(child.name)
@@ -229,16 +259,31 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild }: Pr
                 <span className="grid size-8 shrink-0 place-items-center rounded-full bg-[#10b981] text-[14px] font-bold text-white">{stage ? stageOrder[stage] : '-'}</span>
                 <div className="pl-2.5">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[14px] font-medium">{stage ? `${stageOrder[stage]}. ${stageLabels[stage]}` : '현재 지원하는 연령이 아니에요'}</span>
+                    <span className="text-[14px] font-medium">{stage ? `${stageOrder[stage]}. ${profileDetail?.stageLabel ?? stageLabels[stage]}` : '현재 지원하는 연령이 아니에요'}</span>
                     {isSupported && <span className="rounded-full bg-[#10b981] px-2 py-[2px] text-[9px] text-white">현재 적용</span>}
                   </div>
                   {stage && <p className="text-[12px] font-bold text-[#047857]">{stageAgeRangeLabels[stage]} · {profile.ageMonths}개월 현재</p>}
                 </div>
               </div>
-              <div className="mt-3 border-t border-[#a7f3d0]/70 pt-3 text-[12px]">
-                <p className="font-medium text-[#0f172a]">{stage ? stageCriteriaTitles[stage] : '지원되는 성장 단계가 아니에요'}</p>
-                {stage && <p className="mt-0.5 leading-[1.5] text-[#475569]">{stageCriteriaDescriptions[stage]}</p>}
-              </div>
+              {profileLoading ? (
+                <p role="status" className="mt-3 border-t border-[#a7f3d0]/70 pt-3 text-[12px] text-[#475569]">안전점검 기준을 불러오고 있어요.</p>
+              ) : profileError ? (
+                <div role="alert" className="mt-3 border-t border-[#a7f3d0]/70 pt-3 text-[12px] text-[#9f1239]">
+                  <p>{profileError}</p>
+                  <button type="button" onClick={() => setProfileReloadKey((value) => value + 1)} className="mt-2 font-bold underline underline-offset-2 focus-visible:outline-[#a50034]">다시 시도</button>
+                </div>
+              ) : profileDetail?.criteria.length ? (
+                <div className="mt-3 border-t border-[#a7f3d0]/70 pt-3 text-[12px]">
+                  {profileDetail.criteria.map((criterion, index) => (
+                    <div key={criterion.code} className={index > 0 ? 'mt-3 border-t border-[#d1fae5] pt-3' : ''}>
+                      <p className="font-medium text-[#0f172a]">{criterion.title}</p>
+                      <p className="mt-0.5 leading-[1.5] text-[#475569]">{criterion.description}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-3 border-t border-[#a7f3d0]/70 pt-3 text-[12px] text-[#475569]">지원되는 안전점검 기준이 없어요.</p>
+              )}
             </div>
 
             <div className="flex items-start gap-2.5 rounded-2xl border border-[#dbeafe] bg-[#eff6ff]/60 p-[13px]">

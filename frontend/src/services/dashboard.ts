@@ -22,6 +22,12 @@ export interface DashboardHazard {
   detectedAt: string
 }
 
+export interface DashboardProfile {
+  status: RegisteredChild['safetyProfile']['status']
+  stage: RegisteredChild['safetyProfile']['stage']
+  ageMonths: number
+}
+
 export interface HazardDetail extends DashboardHazard {
   riskReason: string | null
   captureImageUrl: string | null
@@ -41,6 +47,7 @@ export class HazardDetailError extends Error {
 export interface DashboardData {
   child: { childId: string; name: string }
   device: DashboardDevice | null
+  currentProfile: DashboardProfile
   activeHazards: DashboardHazard[]
   reportSummary: { reportId: string | null; month: string; available: boolean } | null
   obstacleCount?: number | null
@@ -62,6 +69,7 @@ function mockDashboard(child: RegisteredChild): DashboardSnapshot {
   return {
     isMock: true,
     child: { childId: child.childId, name: child.name },
+    currentProfile: child.safetyProfile,
     device: {
       deviceId: 'preview-device',
       connectionState,
@@ -148,7 +156,8 @@ export async function getDashboard(child: RegisteredChild): Promise<DashboardSna
   const baseUrl = import.meta.env.VITE_API_BASE_URL
   if (!baseUrl) return mockDashboard(child)
 
-  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/dashboard`)
+  const query = new URLSearchParams({ childId: child.childId })
+  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/dashboard?${query}`)
   if (!response.ok) throw new Error(`Dashboard request failed: ${response.status}`)
   const data = await response.json() as DashboardData
   return { ...data, isMock: false }

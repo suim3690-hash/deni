@@ -3,7 +3,7 @@ import ChildRegistration from './pages/ChildRegistration'
 import RegisteredHome from './pages/RegisteredHome'
 import type { RegisteredChild } from './services/children'
 
-const mockChildSessionKey = 'deni:registered-child:v1'
+const childSessionKey = 'deni:registered-child:v1'
 
 function isRegisteredChild(value: unknown): value is RegisteredChild {
   if (!value || typeof value !== 'object') return false
@@ -18,16 +18,15 @@ function isRegisteredChild(value: unknown): value is RegisteredChild {
     && (profile.appliedAt === null || typeof profile.appliedAt === 'string')
 }
 
-function restoreMockChild(): RegisteredChild | null {
-  // Once the API is connected, the registered child must be restored from the
-  // authenticated server session instead of trusting browser storage.
-  if (import.meta.env.VITE_API_BASE_URL) return null
+function restoreRegisteredChild(): RegisteredChild | null {
+  // This only remembers which child was selected until authentication can
+  // restore the guardian's default child from the server session.
   try {
-    const saved = sessionStorage.getItem(mockChildSessionKey)
+    const saved = sessionStorage.getItem(childSessionKey)
     if (!saved) return null
     const child: unknown = JSON.parse(saved)
     if (isRegisteredChild(child)) return child
-    sessionStorage.removeItem(mockChildSessionKey)
+    sessionStorage.removeItem(childSessionKey)
   } catch {
     // Storage can be unavailable in private or restricted browser contexts.
   }
@@ -35,15 +34,13 @@ function restoreMockChild(): RegisteredChild | null {
 }
 
 function App() {
-  const [child, setChild] = useState<RegisteredChild | null>(restoreMockChild)
+  const [child, setChild] = useState<RegisteredChild | null>(restoreRegisteredChild)
 
   function persistChild(registeredChild: RegisteredChild) {
-    if (!import.meta.env.VITE_API_BASE_URL) {
-      try {
-        sessionStorage.setItem(mockChildSessionKey, JSON.stringify(registeredChild))
-      } catch {
-        // Registration still works when the browser refuses session storage.
-      }
+    try {
+      sessionStorage.setItem(childSessionKey, JSON.stringify(registeredChild))
+    } catch {
+      // Registration still works when the browser refuses session storage.
     }
     setChild(registeredChild)
   }
