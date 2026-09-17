@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, ArrowRight, Smile, X } from 'lucide-react'
 import Header from '../components/Header'
+import HazardLocation from './HazardLocation'
 import homeIcon from '../assets/figma/home/imgButtonNavItemActive.svg'
 import deviceIcon from '../assets/figma/home/imgIcon.svg'
 import careIcon from '../assets/figma/home/imgIcon1.svg'
@@ -12,7 +13,7 @@ import powerButton from '../assets/figma/home/power-button.png'
 import pauseButton from '../assets/figma/home/pause-button.png'
 import resumeButton from '../assets/figma/home/resume-button.png'
 import type { RegisteredChild } from '../services/children'
-import { getDashboard, getHazardDetail, sendDeviceCommand, type DashboardHazard, type DashboardSnapshot, type HazardDetail } from '../services/dashboard'
+import { getDashboard, getHazardDetail, HazardDetailError, sendDeviceCommand, type DashboardHazard, type DashboardSnapshot, type HazardDetail } from '../services/dashboard'
 
 const stageLabels = {
   INFANT: '바닥 탐색 시기',
@@ -26,7 +27,7 @@ const stageTitles = {
   ACTIVE_CHILD: '활동 범위가 넓어지는 시기예요',
 }
 
-type Modal = 'device' | 'profile' | 'hazards' | 'hazardDetail' | 'avoidance' | 'report' | null
+type Modal = 'device' | 'profile' | 'hazards' | 'avoidance' | 'report' | null
 
 export default function RegisteredHome({ child }: { child: RegisteredChild }) {
   const [dashboard, setDashboard] = useState<DashboardSnapshot | null>(null)
@@ -36,6 +37,8 @@ export default function RegisteredHome({ child }: { child: RegisteredChild }) {
   const [commandError, setCommandError] = useState('')
   const [hazardDetail, setHazardDetail] = useState<HazardDetail | null>(null)
   const [hazardError, setHazardError] = useState('')
+  const [hazardErrorStatus, setHazardErrorStatus] = useState<number | null>(null)
+  const [selectedHazard, setSelectedHazard] = useState<DashboardHazard | null>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
@@ -67,13 +70,17 @@ export default function RegisteredHome({ child }: { child: RegisteredChild }) {
 
   async function openHazardDetail(hazard: DashboardHazard) {
     if (!dashboard) return
+    setSelectedHazard(hazard)
     setHazardDetail(null)
     setHazardError('')
-    setModal('hazardDetail')
+    setHazardErrorStatus(null)
+    setModal(null)
     try {
       setHazardDetail(await getHazardDetail(hazard, dashboard.isMock))
-    } catch {
-      setHazardError('위험 상세 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.')
+    } catch (error) {
+      const status = error instanceof HazardDetailError ? error.status : null
+      setHazardErrorStatus(status)
+      setHazardError(status === 403 ? '이 위험 정보를 볼 권한이 없어요.' : status === 404 ? '해당 위험 감지 건을 찾을 수 없어요.' : '위험 상세 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.')
     }
   }
 
@@ -95,6 +102,8 @@ export default function RegisteredHome({ child }: { child: RegisteredChild }) {
       setCommandPending(false)
     }
   }
+
+  if (selectedHazard) return <HazardLocation hazard={selectedHazard} detail={hazardDetail} error={hazardError} errorStatus={hazardErrorStatus} isMock={dashboard?.isMock ?? false} onBack={() => setSelectedHazard(null)} onRetry={() => void openHazardDetail(selectedHazard)} />
 
   return (
     <div className="min-h-screen bg-[#f0f5fd] text-[#1e293b]">
@@ -238,7 +247,7 @@ export default function RegisteredHome({ child }: { child: RegisteredChild }) {
         <div className="fixed inset-0 z-20 flex items-end justify-center bg-[#0f172a]/40 p-4 sm:items-center" onMouseDown={(event) => { if (event.target === event.currentTarget) setModal(null) }}>
           <section role="dialog" aria-modal="true" aria-labelledby="home-dialog-title" className="w-full max-w-[370px] rounded-[20px] bg-white p-5 shadow-xl">
             <div className="flex items-start justify-between">
-              <h2 id="home-dialog-title" className="text-[18px] font-semibold">{modal === 'profile' ? 'Safety Profile' : modal === 'hazards' ? '실시간 위험 감지' : modal === 'hazardDetail' ? '위험 물체 위치 확인' : modal === 'avoidance' ? '우회 청소' : modal === 'report' ? '우리 아이 맞춤 성장 리포트' : '기기 연결 상태'}</h2>
+              <h2 id="home-dialog-title" className="text-[18px] font-semibold">{modal === 'profile' ? 'Safety Profile' : modal === 'hazards' ? '실시간 위험 감지' : modal === 'avoidance' ? '우회 청소' : modal === 'report' ? '우리 아이 맞춤 성장 리포트' : '기기 연결 상태'}</h2>
               <button ref={closeButtonRef} type="button" onClick={() => setModal(null)} aria-label="닫기" className="rounded-full p-1 text-[#475569] focus-visible:outline-[#a50034]"><X size={20} /></button>
             </div>
             {modal === 'profile' ? (
@@ -247,20 +256,6 @@ export default function RegisteredHome({ child }: { child: RegisteredChild }) {
                 <p>월령: <strong className="text-[#1e293b]">{profile.ageMonths}개월</strong></p>
                 <p>성장 단계: <strong className="text-[#1e293b]">{isSupported && profile.stage ? stageLabels[profile.stage] : '지원 범위 밖'}</strong></p>
                 <p className="pt-2 text-[12px]">기기에 안전 기준이 적용됐는지는 서버 연결 후 확인할 수 있어요.</p>
-              </div>
-            ) : modal === 'hazardDetail' ? (
-              <div className="mt-4 space-y-3 text-[14px] leading-6 text-[#475569]">
-                {hazardError ? <p role="alert" className="text-[#b42330]">{hazardError}</p> : hazardDetail ? (
-                  <>
-                    <p>감지 물체: <strong className="text-[#1e293b]">{hazardDetail.objectName}</strong></p>
-                    <p>위치: <strong className="text-[#1e293b]">{hazardDetail.locationLabel}</strong></p>
-                    <p>감지 시각: {new Date(hazardDetail.detectedAt).toLocaleString('ko-KR')}</p>
-                    {hazardDetail.riskReason && <p>위험 사유: {hazardDetail.riskReason}</p>}
-                    {hazardDetail.mapImageUrl ? <div className="relative overflow-hidden rounded-xl"><img src={hazardDetail.mapImageUrl} alt="위험물 감지 위치 지도" className="w-full" />{hazardDetail.marker && <span className="absolute size-3 rounded-full border-2 border-white bg-[#b9003d]" style={{ left: `${hazardDetail.marker.x * 100}%`, top: `${hazardDetail.marker.y * 100}%` }} aria-label="위험물 위치" />}</div> : <p className="rounded-xl bg-[#f0f5fd] p-3 text-[12px]">지도 이미지는 아직 제공되지 않았어요. 위에 표시된 위치를 확인해 주세요.</p>}
-                    {hazardDetail.captureImageUrl && <img src={hazardDetail.captureImageUrl} alt={`${hazardDetail.objectName} 감지 사진`} className="max-h-48 w-full rounded-xl object-contain" />}
-                    {dashboard?.isMock && <p className="text-[12px] text-[#94a3b8]">화면 확인용 예시 위험 정보입니다.</p>}
-                  </>
-                ) : <p>위험물 위치를 확인하고 있어요.</p>}
               </div>
             ) : modal === 'avoidance' ? (
               <p className="mt-4 text-[14px] leading-6 text-[#475569]">우회 청소는 기기가 위험물을 피해 안전하게 이동하는 방식이 확정된 뒤 사용할 수 있어요. 현재 로봇청소기는 정지 상태를 유지합니다. 위치를 확인하고 위험물을 직접 치워 주세요.</p>

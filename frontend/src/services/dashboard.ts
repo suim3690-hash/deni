@@ -29,6 +29,15 @@ export interface HazardDetail extends DashboardHazard {
   marker: { x: number; y: number } | null
 }
 
+export class HazardDetailError extends Error {
+  readonly status: number
+
+  constructor(status: number) {
+    super(`Hazard detail request failed: ${status}`)
+    this.status = status
+  }
+}
+
 export interface DashboardData {
   child: { childId: string; name: string }
   device: DashboardDevice | null
@@ -87,7 +96,7 @@ export async function getHazardDetail(hazard: DashboardHazard, isMock: boolean):
   const baseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
   if (!baseUrl) throw new Error('API URL is missing')
   const response = await fetch(`${baseUrl}/api/v1/hazards/${encodeURIComponent(hazard.hazardId)}`)
-  if (!response.ok) throw new Error(`Hazard request failed: ${response.status}`)
+  if (!response.ok) throw new HazardDetailError(response.status)
   const data = await response.json() as {
     hazardId: string; object?: { name?: string }; riskLevel: string; riskReason?: string | null
     detectedAt: string; location?: { label?: string; mapImageUrl?: string | null; marker?: { x: number; y: number } | null }
