@@ -1,0 +1,159 @@
+import { AlertTriangle, ArrowLeft, BatteryWarning, Blocks, Check, Coins, Info, ListChecks, Magnet, Pencil, Settings, Smile } from 'lucide-react'
+import floorPlanPreview from '../assets/figma/safety-profile/floor-plan.png'
+import type { RegisteredChild } from '../services/children'
+import { stageAgeRangeLabels, stageBannerSubtitles, stageCriteriaDescriptions, stageCriteriaTitles, stageLabels, stageOrder, stageTitles } from '../lib/stages'
+
+interface Props {
+  child: RegisteredChild
+  onBack: () => void
+}
+
+const hazardItems = [
+  { icon: Coins, name: '100원 동전', detail: '1개 (소파 밑)', danger: false },
+  { icon: Blocks, name: '레고 브릭', detail: '2개 (놀이매트 옆)', danger: false },
+  { icon: BatteryWarning, name: '단추형 건전지', detail: '1개 (최고위험)', danger: true },
+  { icon: Magnet, name: '작은 자석', detail: '1개 (장천공 주의)', danger: true },
+]
+
+export default function SafetyProfileDetail({ child, onBack }: Props) {
+  const profile = child.safetyProfile
+  const stage = profile.stage
+  const isSupported = profile.status === 'APPLIED' && stage !== null
+
+  return (
+    <div className="min-h-screen bg-[#f2f6fa] text-[#0f172a]">
+      <div className="mx-auto min-h-screen max-w-[402px] pb-[40px]">
+        <header className="sticky top-0 z-10 flex items-center justify-between border-b border-[#f1f5f9] bg-white/95 px-4 pb-[13px] pt-3 backdrop-blur-md">
+          <div className="flex items-center gap-2.5">
+            <button type="button" onClick={onBack} aria-label="홈으로 돌아가기" className="grid size-6 place-items-center focus-visible:outline-[#a50034]"><ArrowLeft size={20} /></button>
+            <h1 className="text-[16px] font-bold tracking-[-0.4px]">성장단계 연동 Safety Care</h1>
+            <span className="rounded-full bg-[#dbeafe]/90 px-2 py-[2px] text-[11px] font-bold text-[#2563eb]">Beta</span>
+          </div>
+          <Settings size={20} className="text-[#0f172a]" aria-hidden="true" />
+        </header>
+
+        <main className="space-y-4 px-4 pt-4">
+          <section aria-label="성장 단계 안내" className="min-h-[185px] rounded-[24px] bg-gradient-to-r from-[#d9064d] via-[#ee4f7e] to-[#fa80a5] p-5 text-white shadow-[0_6px_15px_rgba(174,0,57,0.14)]">
+            <div className="flex items-start justify-between">
+              <span className="rounded-full bg-white/20 px-[10px] py-[5px] text-[11px] font-medium">✦ {isSupported ? '현재 Safety Profile 자동 적용 중' : '지원 범위 밖'}</span>
+              <span className="grid size-[44px] place-items-center rounded-[14px] bg-white/20"><Smile size={22} aria-hidden="true" /></span>
+            </div>
+            <h2 className="-mt-1 max-w-[260px] text-[21px] font-bold leading-[1.2]">
+              {isSupported && stage ? stageTitles[stage] : '현재 지원하는 연령이 아니에요'}
+            </h2>
+            <p className="mt-1 max-w-[280px] text-[12px] leading-[1.4] text-white/95">
+              {isSupported && stage ? stageBannerSubtitles[stage] : '안전 프로필이 적용되지 않았어요.'}
+            </p>
+          </section>
+
+          <section aria-label="우리 아이 정보" className="rounded-[24px] border border-[#f1f5f9] bg-white p-[21px] shadow-[0_1px_1px_rgba(0,0,0,0.05)]">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Smile size={20} className="text-[#0f172a]" aria-hidden="true" />
+                <h2 className="text-[16px] font-medium">우리 아이 정보</h2>
+              </div>
+              <span className="flex items-center gap-1 text-[12px] font-medium text-[#2563eb]">수정하기 <Pencil size={13} /></span>
+            </div>
+            <div className="mt-4 flex items-center justify-between rounded-[16px] border border-[#f1f5f9] bg-[#f8fafc]/80 p-[15px]">
+              <div className="flex items-center">
+                <div className="relative grid size-12 shrink-0 place-items-center rounded-full bg-[#fecdd3]">
+                  <Smile size={22} className="text-[#e11d48]" aria-hidden="true" />
+                  <span className="absolute -bottom-0.5 -right-0.5 grid size-4 place-items-center rounded-full border-2 border-white bg-[#10b981]"><Check size={10} className="text-white" strokeWidth={3} /></span>
+                </div>
+                <div className="pl-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[16px] font-medium">{child.name}</span>
+                    <span className="rounded-[6px] bg-[#ffe4e6] px-2 py-[2px] text-[11px] font-bold text-[#e11d48]">{profile.ageMonths}개월</span>
+                  </div>
+                  <p className="text-[12px] text-[#64748b]">생년월일 <span className="text-[#334155]">{child.birthDate.replaceAll('-', '.')}</span></p>
+                </div>
+              </div>
+              <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-[#eff6ff] px-[10px] py-1 text-[12px] font-medium text-[#2563eb]"><span className="size-1.5 rounded-full bg-[#3b82f6]" />{isSupported && stage ? stageLabels[stage] : '지원 범위 밖'}</span>
+            </div>
+          </section>
+
+          <section aria-label="스마트 안심 케어 맵" className="rounded-[24px] border border-[#f1f5f9] bg-white p-[17px] shadow-sm">
+            <h2 className="mb-3 flex items-center gap-2 text-[15px] font-bold"><span className="size-[10px] rounded-full bg-[#2563eb]" />스마트 안심 케어 맵</h2>
+            <div className="overflow-hidden rounded-[20px] border border-black/10">
+              <img src={floorPlanPreview} alt="집안 위험물 감지 위치가 표시된 예시 지도" className="block w-full" />
+            </div>
+            <p className="mt-2 text-center text-[11px] text-[#94a3b8]">지도는 화면 확인용 예시입니다.</p>
+          </section>
+
+          {isSupported && (
+            <section aria-label="영유아 바닥 삼킴 위험물 사전 탐지" className="space-y-3 pt-1">
+              <div className="flex items-center justify-between px-1">
+                <div className="flex items-center gap-2">
+                  <span className="size-2 shrink-0 rounded-full bg-[#e11d48]" />
+                  <h2 className="text-[16px] font-medium">영유아 바닥 삼킴 위험물 사전 탐지</h2>
+                </div>
+                <span className="shrink-0 rounded-full border border-[#fecdd3] bg-[#ffe4e6] px-3 py-[5px] text-[10px] font-bold text-[#be123c]">Baby Safe Scan</span>
+              </div>
+
+              <div className="flex items-center gap-3 rounded-[24px] border border-[#fecdd3] bg-[#fff1f2] p-[17px]">
+                <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-[#e11d48] shadow-[0_4px_6px_-1px_#fecdd3]"><AlertTriangle size={22} className="text-white" fill="currentColor" stroke="white" aria-hidden="true" /></span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[14px] font-medium text-[#4c0519]">삼킴 위험도</span>
+                    <span className="rounded-full bg-[#e11d48] px-2 py-[2px] text-[10px] text-white">매우 높음</span>
+                  </div>
+                  <p className="text-[12px] leading-[1.4] text-[#9f1239]">영유아 입에 들어가기 쉬운 직경 3cm 이하 고위험 물체 {hazardItems.length}건 감지됨</p>
+                </div>
+              </div>
+
+              <div className="rounded-[24px] border border-[#f1f5f9] bg-white p-[17px] shadow-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-[12px] font-medium text-[#1e293b]">발견된 위험물 리스트 (총 {hazardItems.length}개 항목)</span>
+                  <span className="text-[12px] font-medium text-[#e11d48]">물체 설정</span>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2.5">
+                  {hazardItems.map((item) => (
+                    <div key={item.name} className="relative rounded-[16px] border border-[#e2e8f0]/80 bg-[#f8fafc] p-[13px]">
+                      <span className="grid size-8 place-items-center rounded-xl border border-[#e2e8f0]/60 bg-white"><item.icon size={16} className={item.danger ? 'text-[#e11d48]' : 'text-[#475569]'} aria-hidden="true" /></span>
+                      <p className="mt-2 text-[12px] font-bold text-[#0f172a]">{item.name}</p>
+                      <p className={`text-[11px] ${item.danger ? 'text-[#e11d48]' : 'text-[#64748b]'}`}>{item.detail}</p>
+                      {item.danger && <span className="absolute right-[10px] top-[10px] size-2 rounded-full bg-[#e11d48] shadow-[0_0_0_4px_#ffe4e6]" />}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <p className="text-center text-[11px] text-[#94a3b8]">위험물 목록은 화면 확인용 예시입니다.</p>
+            </section>
+          )}
+
+          <section aria-label="성장단계별 안전점검 기준" className="space-y-4 rounded-[24px] border border-[#f1f5f9] bg-white p-[21px] shadow-sm">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ListChecks size={20} className="text-[#0f172a]" aria-hidden="true" />
+                <h2 className="text-[16px] font-medium">성장단계별 안전점검 기준</h2>
+              </div>
+              <span className="shrink-0 rounded-full border border-[#fecdd3] bg-[#fff1f2] px-3 py-[5px] text-[11px] font-bold text-[#8b0a2d]">Safety Profile</span>
+            </div>
+
+            <div className="rounded-2xl border-2 border-[#10b981] bg-[#ecfdf5]/60 p-[18px]">
+              <div className="flex items-center">
+                <span className="grid size-8 shrink-0 place-items-center rounded-full bg-[#10b981] text-[14px] font-bold text-white">{stage ? stageOrder[stage] : '-'}</span>
+                <div className="pl-2.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[14px] font-medium">{stage ? `${stageOrder[stage]}. ${stageLabels[stage]}` : '현재 지원하는 연령이 아니에요'}</span>
+                    {isSupported && <span className="rounded-full bg-[#10b981] px-2 py-[2px] text-[9px] text-white">현재 적용</span>}
+                  </div>
+                  {stage && <p className="text-[12px] font-bold text-[#047857]">{stageAgeRangeLabels[stage]} · {profile.ageMonths}개월 현재</p>}
+                </div>
+              </div>
+              <div className="mt-3 border-t border-[#a7f3d0]/70 pt-3 text-[12px]">
+                <p className="font-medium text-[#0f172a]">{stage ? stageCriteriaTitles[stage] : '지원되는 성장 단계가 아니에요'}</p>
+                {stage && <p className="mt-0.5 leading-[1.5] text-[#475569]">{stageCriteriaDescriptions[stage]}</p>}
+              </div>
+            </div>
+
+            <div className="flex items-start gap-2.5 rounded-2xl border border-[#dbeafe] bg-[#eff6ff]/60 p-[13px]">
+              <Info size={16} className="mt-0.5 shrink-0 text-[#1e3a8a]" aria-hidden="true" />
+              <p className="text-[11px] leading-[1.5] text-[#334155]"><strong className="text-[#1e3a8a]">ThinQ 자동 연동 안내:</strong> 아이 생년월일을 등록하면 성장단계에 맞춰 로봇청소기의 안전점검 대상과 기준이 자동으로 변경됩니다.</p>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+  )
+}

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, ArrowRight, Smile, X } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Pause, Play, Smile, X } from 'lucide-react'
 import Header from '../components/Header'
 import HazardLocation from './HazardLocation'
+import SafetyProfileDetail from './SafetyProfileDetail'
+import GrowthReport from './GrowthReport'
 import homeIcon from '../assets/figma/home/imgButtonNavItemActive.svg'
 import deviceIcon from '../assets/figma/home/imgIcon.svg'
 import careIcon from '../assets/figma/home/imgIcon1.svg'
@@ -10,24 +12,11 @@ import robotIcon from '../assets/figma/home/imgVector5.svg'
 import robotDot from '../assets/figma/home/imgVector6.svg'
 import reportIcon from '../assets/figma/home/imgContainer1.svg'
 import powerButton from '../assets/figma/home/power-button.png'
-import pauseButton from '../assets/figma/home/pause-button.png'
-import resumeButton from '../assets/figma/home/resume-button.png'
 import type { RegisteredChild } from '../services/children'
 import { getDashboard, getHazardDetail, HazardDetailError, sendDeviceCommand, type DashboardHazard, type DashboardSnapshot, type HazardDetail } from '../services/dashboard'
+import { stageLabels, stageTitles } from '../lib/stages'
 
-const stageLabels = {
-  INFANT: '바닥 탐색 시기',
-  TODDLER: '걸음마 시기',
-  ACTIVE_CHILD: '유아 활동기',
-}
-
-const stageTitles = {
-  INFANT: '바닥을 탐색하는 시기예요',
-  TODDLER: '두발로 집안을 탐험하는 시기에요',
-  ACTIVE_CHILD: '활동 범위가 넓어지는 시기예요',
-}
-
-type Modal = 'device' | 'profile' | 'hazards' | 'avoidance' | 'report' | null
+type Modal = 'device' | 'hazards' | 'avoidance' | null
 
 export default function RegisteredHome({ child }: { child: RegisteredChild }) {
   const [dashboard, setDashboard] = useState<DashboardSnapshot | null>(null)
@@ -39,6 +28,8 @@ export default function RegisteredHome({ child }: { child: RegisteredChild }) {
   const [hazardError, setHazardError] = useState('')
   const [hazardErrorStatus, setHazardErrorStatus] = useState<number | null>(null)
   const [selectedHazard, setSelectedHazard] = useState<DashboardHazard | null>(null)
+  const [showSafetyProfile, setShowSafetyProfile] = useState(false)
+  const [showReport, setShowReport] = useState(false)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
@@ -131,6 +122,8 @@ export default function RegisteredHome({ child }: { child: RegisteredChild }) {
   }
 
   if (selectedHazard) return <HazardLocation hazard={selectedHazard} detail={hazardDetail} error={hazardError} errorStatus={hazardErrorStatus} isMock={dashboard?.isMock ?? false} onBack={() => setSelectedHazard(null)} onRetry={() => void openHazardDetail(selectedHazard)} />
+  if (showSafetyProfile) return <SafetyProfileDetail child={child} onBack={() => setShowSafetyProfile(false)} />
+  if (showReport && report) return <GrowthReport child={child} month={report.month} onBack={() => setShowReport(false)} />
 
   return (
     <div className="min-h-screen bg-[#f0f5fd] text-[#1e293b]">
@@ -204,11 +197,11 @@ export default function RegisteredHome({ child }: { child: RegisteredChild }) {
                     </div>
                   </div>
                   <div className="relative mt-2 flex items-center justify-center">
-                    <button type="button" onClick={() => setModal('hazards')} className="flex h-[38px] w-[205px] items-center justify-center rounded-full bg-[#b9003d] text-[14px] font-semibold text-white focus-visible:outline-[#a50034]">
+                    <button type="button" onClick={() => (activeHazard ? void openHazardDetail(activeHazard) : setModal('hazards'))} className="flex h-[38px] w-[205px] items-center justify-center rounded-full bg-[#b9003d] text-[14px] font-semibold text-white focus-visible:outline-[#a50034]">
                       실시간 위험 감지 맵 <ArrowRight size={15} className="ml-1" />
                     </button>
-                    <button type="button" onClick={handleDeviceCommand} disabled={commandPending} aria-label={isPaused ? '청소 재개' : '청소 일시정지'} className="absolute right-0 h-[46px] w-[50px] disabled:cursor-wait disabled:opacity-60">
-                      <img src={isPaused ? resumeButton : pauseButton} alt="" className="h-full w-full" />
+                    <button type="button" onClick={handleDeviceCommand} disabled={commandPending} aria-label={isPaused ? '청소 재개' : '청소 일시정지'} className={`absolute right-0 grid size-[46px] place-items-center rounded-full border shadow-sm disabled:cursor-wait disabled:opacity-60 ${isPaused ? 'border-[#c7d9fb] bg-[#eaf2fe]' : 'border-[#f3d2da] bg-[#fdeef1]'}`}>
+                      {isPaused ? <Play size={19} className="ml-0.5 text-[#2958c7]" fill="#2958c7" /> : <Pause size={19} className="text-[#b9003d]" fill="#b9003d" />}
                     </button>
                   </div>
                 </>
@@ -236,7 +229,7 @@ export default function RegisteredHome({ child }: { child: RegisteredChild }) {
               {isSupported && profile.stage ? dashboard?.isMock && profile.stage === 'TODDLER' ? '모서리 충돌 방지 및 바닥 전선 걸림 집중 감지 모드' : `${child.name}의 ${stageLabels[profile.stage]} 안전 프로필을 등록했어요.` : '안전 프로필이 적용되지 않았어요.'}
             </p>
             <div className="mt-3 flex justify-end border-t border-white/25 pt-2">
-              <button type="button" onClick={() => setModal('profile')} className="text-[11px] underline underline-offset-2 focus-visible:outline-white">상세 보기 &gt;</button>
+              <button type="button" onClick={() => setShowSafetyProfile(true)} className="text-[11px] underline underline-offset-2 focus-visible:outline-white">상세 보기 &gt;</button>
             </div>
           </section>
 
@@ -253,7 +246,7 @@ export default function RegisteredHome({ child }: { child: RegisteredChild }) {
               {report?.available ? `${child.name} 아동의 ${Number(report.month.slice(5))}월 행동 반경 및 위험물 접촉 분석 데이터가 포함된 심층 리포트를 확인해보세요.` : '기기 데이터가 쌓이면 월간 성장 리포트를 확인할 수 있어요.'}
             </p>
             <div className="mt-3 border-t border-[#f1f5f9] pt-2 text-center">
-              <button type="button" onClick={() => setModal('report')} disabled={!report?.available} className="inline-flex h-[43px] w-[205px] items-center justify-center rounded-full bg-[#b9003d] text-[15px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45">
+              <button type="button" onClick={() => setShowReport(true)} disabled={!report?.available} className="inline-flex h-[43px] w-[205px] items-center justify-center rounded-full bg-[#b9003d] text-[15px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45">
                 리포트 보러가기 <ArrowRight size={16} className="ml-1" />
               </button>
             </div>
@@ -274,26 +267,14 @@ export default function RegisteredHome({ child }: { child: RegisteredChild }) {
         <div className="fixed inset-0 z-20 flex items-end justify-center bg-[#0f172a]/40 p-4 sm:items-center" onMouseDown={(event) => { if (event.target === event.currentTarget) setModal(null) }}>
           <section role="dialog" aria-modal="true" aria-labelledby="home-dialog-title" className="w-full max-w-[370px] rounded-[20px] bg-white p-5 shadow-xl">
             <div className="flex items-start justify-between">
-              <h2 id="home-dialog-title" className="text-[18px] font-semibold">{modal === 'profile' ? 'Safety Profile' : modal === 'hazards' ? '실시간 위험 감지' : modal === 'avoidance' ? '우회 청소' : modal === 'report' ? '우리 아이 맞춤 성장 리포트' : '기기 연결 상태'}</h2>
+              <h2 id="home-dialog-title" className="text-[18px] font-semibold">{modal === 'hazards' ? '실시간 위험 감지' : modal === 'avoidance' ? '우회 청소' : '기기 연결 상태'}</h2>
               <button ref={closeButtonRef} type="button" onClick={() => setModal(null)} aria-label="닫기" className="rounded-full p-1 text-[#475569] focus-visible:outline-[#a50034]"><X size={20} /></button>
             </div>
-            {modal === 'profile' ? (
-              <div className="mt-4 space-y-2 text-[14px] text-[#475569]">
-                <p>아이: <strong className="text-[#1e293b]">{child.name}</strong></p>
-                <p>월령: <strong className="text-[#1e293b]">{profile.ageMonths}개월</strong></p>
-                <p>성장 단계: <strong className="text-[#1e293b]">{isSupported && profile.stage ? stageLabels[profile.stage] : '지원 범위 밖'}</strong></p>
-                <p className="pt-2 text-[12px]">기기에 안전 기준이 적용됐는지는 서버 연결 후 확인할 수 있어요.</p>
-              </div>
-            ) : modal === 'avoidance' ? (
+            {modal === 'avoidance' ? (
               <p className="mt-4 text-[14px] leading-6 text-[#475569]">우회 청소는 기기가 위험물을 피해 안전하게 이동하는 방식이 확정된 뒤 사용할 수 있어요. 현재 로봇청소기는 정지 상태를 유지합니다. 위치를 확인하고 위험물을 직접 치워 주세요.</p>
             ) : modal === 'hazards' ? (
               <div className="mt-4 text-[14px] text-[#475569]">
                 {dashboard?.activeHazards.length ? dashboard.activeHazards.map((hazard) => <button key={hazard.hazardId} type="button" onClick={() => void openHazardDetail(hazard)} className="block w-full border-b border-[#e2e8f0] py-2 text-left focus-visible:outline-[#a50034]">{hazard.objectName} · {hazard.locationLabel} <ArrowRight size={14} className="inline" /></button>) : <p>현재 표시할 위험 감지 내역이 없어요.</p>}
-              </div>
-            ) : modal === 'report' ? (
-              <div className="mt-4 space-y-2 text-[14px] leading-6 text-[#475569]">
-                <p>{child.name}의 {report ? Number(report.month.slice(5)) : ''}월 리포트입니다.</p>
-                <p>{dashboard?.isMock ? '현재 표시된 리포트는 화면 확인용 예시입니다. 실제 분석 결과는 서버 연결 후 제공됩니다.' : '리포트 상세 화면에서 월별 분석 결과를 확인할 수 있어요.'}</p>
               </div>
             ) : (
               <p className="mt-4 text-[14px] leading-6 text-[#475569]">
