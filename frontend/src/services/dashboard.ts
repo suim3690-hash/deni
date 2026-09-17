@@ -53,7 +53,8 @@ export interface DashboardSnapshot extends DashboardData {
 
 function mockDashboard(child: RegisteredChild): DashboardSnapshot {
   const previewState = new URLSearchParams(window.location.search).get('mockDevice')
-  const showHazard = new URLSearchParams(window.location.search).get('mockHazard') !== 'none'
+  // Explicit preview only. The normal mock home starts with no active hazard.
+  const showHazard = new URLSearchParams(window.location.search).get('mockHazard') === 'lego'
   const connectionState: ConnectionState = previewState === 'offline' ? 'OFFLINE' : previewState === 'unknown' ? 'UNKNOWN' : 'ONLINE'
   const today = new Date()
   const month = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
