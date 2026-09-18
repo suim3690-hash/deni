@@ -111,10 +111,12 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   const device = dashboard?.device
   const connection = loadError ? 'UNKNOWN' : device?.connectionState ?? 'UNKNOWN'
   const isOnline = connection === 'ONLINE'
+  const canControl = isOnline && Boolean(dashboard?.isMock || device?.commandsAvailable)
   const isOffline = connection === 'OFFLINE'
   const profile = dashboard?.currentProfile ?? child.safetyProfile
   const isSupported = profile.status === 'APPLIED' && profile.stage !== null
   const report = dashboard?.reportSummary
+  const reportAvailable = Boolean(report?.available)
   const exampleReportAvailable = Boolean(dashboard?.isMock && report?.available)
   const isPaused = device?.operationState === 'PAUSED'
   const isStopped = device?.operationState === 'STOPPING'
@@ -137,7 +139,11 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   }
 
   async function handleControl(action: 'pause' | 'stop' | 'resume') {
-    if (!device || !dashboard || !isOnline || commandPending) return
+    if (!device || !dashboard || !canControl || commandPending) return
+    if (action === 'stop' && !dashboard.isMock) {
+      setCommandError('청소 정지 명령은 아직 기기와 연결되지 않았어요.')
+      return
+    }
     if (action === 'resume' && dashboard.activeHazards.length > 0) {
       setCommandError('위험물 처리가 확인될 때까지 청소를 다시 시작할 수 없어요.')
       return
@@ -145,8 +151,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     setCommandError('')
     setCommandPending(true)
     try {
-      // The device command API only models pause/resume today; a full stop is
-      // tracked locally until the backend exposes a dedicated stop command.
+      // Full stop is a mock preview only, never a confirmed real-device state.
       const operationState = action === 'stop'
         ? await new Promise<typeof device.operationState>((resolve) => setTimeout(() => resolve('STOPPING'), 400))
         : await sendDeviceCommand(device.deviceId, action, dashboard.isMock)
@@ -162,7 +167,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
 
   if (selectedHazard) return <HazardLocation hazard={selectedHazard} detail={hazardDetail} error={hazardError} errorStatus={hazardErrorStatus} isMock={dashboard?.isMock ?? false} onBack={() => setSelectedHazard(null)} onRetry={() => void openHazardDetail(selectedHazard)} />
   if (showSafetyProfile) return <SafetyProfileDetail child={child} onBack={() => setShowSafetyProfile(false)} onUpdateChild={onUpdateChild} isMock={dashboard?.isMock ?? !import.meta.env.VITE_API_BASE_URL} activeHazards={dashboard?.activeHazards ?? null} hazardsError={loadError} />
-  if (showReport && report && exampleReportAvailable) return <GrowthReport child={child} month={report.month} onBack={() => setShowReport(false)} />
+  if (showReport && report && reportAvailable) return <GrowthReport child={child} month={report.month} onBack={() => setShowReport(false)} />
 
   return (
     <div className="min-h-screen bg-[#f0f5fd] text-[#1e293b] [zoom:max(0.85,calc(100vw/402px))]">
@@ -202,7 +207,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
                   <img src={robotDot} alt="" className="absolute right-[5px] top-[4px] size-2" />
                 </div>
                 <div className="min-w-0">
-                  <h2 className="truncate text-[16px] font-bold text-black">{device ? 'LG 로니 AI 베이비 케어' : loadError ? '기기 상태 조회 실패' : dashboard ? '기기 정보 연동 전' : '기기 상태 확인 중'}</h2>
+                  <h2 className="truncate text-[16px] font-bold text-black">{device ? device.name ?? '등록된 로봇청소기' : loadError ? '기기 상태 조회 실패' : dashboard ? '등록된 기기 없음' : '기기 상태 확인 중'}</h2>
                   <span className="mt-1 inline-flex rounded-full bg-[#d1feee] px-[7px] py-[1px] text-[10px] text-[#166b58]">{device ? '로봇' : '연결 전'}</span>
                 </div>
               </div>
@@ -212,7 +217,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
                   {isOnline ? '온라인' : isOffline ? '오프라인' : '상태 확인 전'}
                 </span>
                 {isPaused && <span className="rounded-full bg-[#fff0f1] px-2 py-[2px] text-[11px] text-[#b4233b]">일시 정지</span>}
-                {isStopped && <span className="rounded-full bg-[#fff0f1] px-2 py-[2px] text-[11px] text-[#b4233b]">정지됨</span>}
+                {isStopped && <span className="rounded-full bg-[#fff0f1] px-2 py-[2px] text-[11px] text-[#b4233b]">정지 중</span>}
                 {device?.batteryPercent != null && <span className="text-[11px] text-[#475569]">배터리 {device.batteryPercent}%</span>}
               </div>
             </div>
@@ -242,15 +247,15 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
                     </button>
                     <div className="absolute right-0">
                       {isPaused ? (
-                        <ControlButton onClick={() => void handleControl('stop')} disabled={commandPending} label="청소 정지">
+                        <ControlButton onClick={() => void handleControl('stop')} disabled={commandPending || !canControl} label="청소 정지">
                           <Square size={15} className="text-[#e11d48]" fill="currentColor" />
                         </ControlButton>
                       ) : isStopped ? (
-                        <ControlButton onClick={() => void handleControl('resume')} disabled={commandPending} label="청소 재개">
+                        <ControlButton onClick={() => void handleControl('resume')} disabled={commandPending || !canControl} label="청소 재개">
                           <Play size={19} className="text-[#2958c7]" fill="currentColor" />
                         </ControlButton>
                       ) : (
-                        <ControlButton onClick={() => void handleControl('pause')} disabled={commandPending} label="청소 일시정지">
+                        <ControlButton onClick={() => void handleControl('pause')} disabled={commandPending || !canControl} label="청소 일시정지">
                           <Power size={19} className="text-[#e11d48]" strokeWidth={2.4} />
                         </ControlButton>
                       )}
@@ -287,18 +292,18 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
 
           <section aria-label="월간 성장 리포트" className="mt-[24px] min-h-[190px] rounded-[24px] border border-[#e8edf5] bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between gap-2">
-              <span className="rounded-full border border-[#fee2e2] bg-[#fef2f2] px-[10px] py-[3px] text-[11px] text-[#a50034]">{exampleReportAvailable && report ? `화면 예시 · ${Number(report.month.slice(5))}월 리포트` : '리포트 준비 중'}</span>
-              <span className="text-[10px] text-[#94a3b8]">{exampleReportAvailable ? '화면 확인용 예시' : '데이터 연동 준비 중'}</span>
+              <span className="rounded-full border border-[#fee2e2] bg-[#fef2f2] px-[10px] py-[3px] text-[11px] text-[#a50034]">{reportAvailable && report ? `${exampleReportAvailable ? '화면 예시 · ' : ''}${Number(report.month.slice(5))}월 리포트 조회 가능` : '리포트 준비 중'}</span>
+              <span className="text-[10px] text-[#94a3b8]">{exampleReportAvailable ? '화면 확인용 예시' : reportAvailable ? 'DB 기록 집계' : '데이터 연동 준비 중'}</span>
             </div>
             <div className="mt-3 flex items-center gap-2">
               <img src={reportIcon} alt="" className="size-[15px]" />
               <h2 className="text-[18px] font-semibold">우리 아이 맞춤 성장 리포트</h2>
             </div>
             <p className="mt-1 text-[12px] leading-[1.6] text-[#475569]">
-              {exampleReportAvailable && report ? `${child.name} 아동의 ${Number(report.month.slice(5))}월 행동 반경 및 위험물 접촉 분석 화면 예시를 확인해보세요.` : '기기 데이터가 쌓이면 월간 성장 리포트를 확인할 수 있어요.'}
+              {reportAvailable ? exampleReportAvailable ? '화면 확인용 예시 리포트를 확인해 보세요.' : '저장된 위험 탐지 기록을 월별로 확인해 보세요. 기록이 없는 월도 조회할 수 있어요.' : '리포트 조회 기능을 준비하고 있어요.'}
             </p>
             <div className="mt-3 border-t border-[#f1f5f9] pt-2 text-center">
-              <button type="button" onClick={() => setShowReport(true)} disabled={!exampleReportAvailable} className="inline-flex h-[43px] w-[205px] items-center justify-center rounded-full bg-[#b9003d] text-[15px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45">
+              <button type="button" onClick={() => setShowReport(true)} disabled={!reportAvailable} className="inline-flex h-[43px] w-[205px] items-center justify-center rounded-full bg-[#b9003d] text-[15px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45">
                 리포트 보러가기 <ArrowRight size={16} className="ml-1" />
               </button>
             </div>
@@ -330,7 +335,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
               </div>
             ) : (
               <p className="mt-4 text-[14px] leading-6 text-[#475569]">
-                {isOnline ? '기기가 온라인 상태예요.' : isOffline ? '기기가 오프라인이에요. 로봇청소기의 전원과 네트워크 연결을 확인해 주세요.' : '서버와 기기 연결 상태를 확인할 수 없어요. 연동 후 상태가 표시됩니다.'}
+                {!device ? '등록된 기기가 없어요. 기기 등록 후 상태를 확인할 수 있습니다.' : isOnline ? '최근 보고에서 기기가 온라인 상태예요. 실제 제어 기능은 기기 연동 후 사용할 수 있습니다.' : isOffline ? '최근 보고에서 기기가 오프라인이에요. 로봇청소기의 전원과 네트워크 연결을 확인해 주세요.' : '기기는 등록되어 있지만 최근 상태 보고가 없어 연결·운행 상태를 확인할 수 없어요.'}
               </p>
             )}
           </section>

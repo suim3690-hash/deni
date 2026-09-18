@@ -1,5 +1,6 @@
 package com.deni.backend.hazard;
 
+import com.deni.backend.common.IdempotencyGuard;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -23,6 +24,12 @@ class Hazard {
 
 	@Column(name = "device_id", nullable = false, length = 100)
 	private String deviceId;
+
+	@Column(name = "source_event_id", length = 100, updatable = false)
+	private String sourceEventId;
+
+	@Column(name = "detection_input_hash", length = 64, updatable = false)
+	private String detectionInputHash;
 
 	@Enumerated(EnumType.STRING)
 	@Column(nullable = false, length = 30)
@@ -79,7 +86,7 @@ class Hazard {
 	Hazard(UUID id, UUID childId, String deviceId, HazardStatus status, String objectType, String objectName,
 			RiskLevel riskLevel, String riskReason, OffsetDateTime detectedAt, String locationLabel,
 			String mapImageUrl, Double markerX, Double markerY, String captureImageUrl,
-			DeviceOperationState deviceOperationState, OffsetDateTime now) {
+			DeviceOperationState deviceOperationState, String sourceEventId, OffsetDateTime now) {
 		this.id = id;
 		this.childId = childId;
 		this.deviceId = deviceId;
@@ -95,6 +102,12 @@ class Hazard {
 		this.markerY = markerY;
 		this.captureImageUrl = captureImageUrl;
 		this.deviceOperationState = deviceOperationState;
+		this.sourceEventId = sourceEventId;
+		this.detectionInputHash = sourceEventId == null ? null : IdempotencyGuard.fingerprint(
+				childId.toString(), deviceId, objectType, objectName, riskLevel.name(), riskReason,
+				detectedAt.toInstant().toString(), locationLabel, mapImageUrl,
+				markerX == null ? null : markerX.toString(), markerY == null ? null : markerY.toString(),
+				captureImageUrl, deviceOperationState.name());
 		this.createdAt = now;
 		this.updatedAt = now;
 	}
@@ -103,8 +116,16 @@ class Hazard {
 		return id;
 	}
 
+	UUID getChildId() {
+		return childId;
+	}
+
 	String getDeviceId() {
 		return deviceId;
+	}
+
+	String getDetectionInputHash() {
+		return detectionInputHash;
 	}
 
 	HazardStatus getStatus() {

@@ -1,5 +1,6 @@
 package com.deni.backend.child;
 
+import com.deni.backend.common.IdempotencyGuard;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -39,6 +40,9 @@ class Child {
 	@Column(name = "registration_idempotency_key", nullable = false, unique = true)
 	private UUID registrationIdempotencyKey;
 
+	@Column(name = "registration_input_hash", length = 64, updatable = false)
+	private String registrationInputHash;
+
 	@Column(name = "created_at", nullable = false)
 	private OffsetDateTime createdAt;
 
@@ -61,6 +65,7 @@ class Child {
 		this.stage = stage;
 		this.profileAppliedAt = profileAppliedAt;
 		this.registrationIdempotencyKey = registrationIdempotencyKey;
+		this.registrationInputHash = IdempotencyGuard.fingerprint(name, birthDate.toString());
 		this.createdAt = now;
 		this.updatedAt = now;
 	}
@@ -84,6 +89,10 @@ class Child {
 	}
 
 	boolean hasRegistrationInput(String name, LocalDate birthDate) {
+		if (registrationInputHash != null) {
+			return registrationInputHash.equals(IdempotencyGuard.fingerprint(name, birthDate.toString()));
+		}
+		// V4 이전 원본 입력은 미수집. 기존 아이만 현재 저장 값과 비교한다.
 		return this.name.equals(name) && this.birthDate.equals(birthDate);
 	}
 

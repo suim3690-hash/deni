@@ -4,10 +4,13 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -49,6 +52,23 @@ public class ApiExceptionHandler {
 			HttpServletRequest request) {
 		return response(HttpStatus.CONFLICT, "CONFLICT", "이미 처리된 요청이거나 저장할 수 없는 상태입니다.", null,
 				request);
+	}
+
+	@ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+	ResponseEntity<ErrorEnvelope> handleUnsupportedMethod(HttpRequestMethodNotSupportedException exception,
+			HttpServletRequest request) {
+		var result = response(HttpStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "지원하지 않는 요청 방식입니다.", null, request);
+		HttpHeaders headers = new HttpHeaders();
+		headers.addAll(result.getHeaders());
+		if (exception.getSupportedHttpMethods() != null) headers.setAllow(exception.getSupportedHttpMethods());
+		return new ResponseEntity<>(result.getBody(), headers, HttpStatus.METHOD_NOT_ALLOWED);
+	}
+
+	@ExceptionHandler(OptimisticLockingFailureException.class)
+	ResponseEntity<ErrorEnvelope> handleConcurrentUpdate(OptimisticLockingFailureException exception,
+			HttpServletRequest request) {
+		return response(HttpStatus.CONFLICT, "CONFLICT", "정보가 다른 요청에서 변경되었습니다. 다시 조회해 주세요.",
+				null, request);
 	}
 
 	@ExceptionHandler(Exception.class)

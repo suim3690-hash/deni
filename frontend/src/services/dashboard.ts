@@ -6,6 +6,8 @@ export type OperationState = 'RUNNING' | 'PAUSED' | 'STOPPING' | 'RESUMING' | 'R
 
 export interface DashboardDevice {
   deviceId: string
+  name?: string
+  commandsAvailable?: boolean
   connectionState: ConnectionState
   operationState: OperationState
   batteryPercent: number | null
@@ -82,6 +84,8 @@ function mockDashboard(child: RegisteredChild): DashboardSnapshot {
     currentProfile: child.safetyProfile,
     device: {
       deviceId: 'preview-device',
+      name: 'LG 로니 AI 베이비 케어',
+      commandsAvailable: true,
       connectionState,
       operationState: connectionState === 'ONLINE' ? showHazard || previewState === 'paused' ? 'PAUSED' : 'RUNNING' : 'UNKNOWN',
       batteryPercent: connectionState === 'ONLINE' ? 82 : null,
@@ -149,7 +153,8 @@ export async function sendDeviceCommand(deviceId: string, action: 'pause' | 'res
     body: '{}',
   })
   if (!response.ok) throw new Error(`Device command failed: ${response.status}`)
-  const { commandId } = await response.json() as { commandId: string }
+  const { commandId, deliveryState } = await response.json() as { commandId: string; deliveryState?: string }
+  if (deliveryState === 'NOT_CONNECTED') throw new Error('Command was recorded but device delivery is not connected')
 
   for (let attempt = 0; attempt < 8; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 800))

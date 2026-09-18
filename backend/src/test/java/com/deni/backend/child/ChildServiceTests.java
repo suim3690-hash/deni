@@ -1,5 +1,6 @@
 package com.deni.backend.child;
 
+import com.deni.backend.common.IdempotencyGuard;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
@@ -43,7 +44,8 @@ class ChildServiceTests {
 		ChildRepository repository = mock(ChildRepository.class);
 		when(repository.findById(childId)).thenReturn(Optional.of(child));
 
-		ChildService.SafetyProfileResult result = new ChildService(repository).getSafetyProfile(childId);
+		ChildService.SafetyProfileResult result = new ChildService(repository,
+				mock(ProfileHistoryRepository.class), mock(IdempotencyGuard.class)).getSafetyProfile(childId);
 
 		assertEquals(childId, result.childId());
 		assertEquals(ProfileStatus.APPLIED, result.status());

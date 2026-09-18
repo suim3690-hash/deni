@@ -1,11 +1,14 @@
 package com.deni.backend.hazard;
 
 import com.deni.backend.common.ApiException;
+import com.deni.backend.common.IdempotencyGuard;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -16,9 +19,11 @@ public class HazardService {
 	private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
 	private final HazardRepository hazardRepository;
+	private final IdempotencyGuard idempotencyGuard;
 
-	public HazardService(HazardRepository hazardRepository) {
+	public HazardService(HazardRepository hazardRepository, IdempotencyGuard idempotencyGuard) {
 		this.hazardRepository = hazardRepository;
+		this.idempotencyGuard = idempotencyGuard;
 	}
 
 	@Transactional(readOnly = true)
@@ -51,12 +56,49 @@ public class HazardService {
 		return toDetail(hazard);
 	}
 
+	@Transactional(readOnly = true)
+	public List<ObjectDetectionCount> getMonthlyDetections(UUID childId, OffsetDateTime start,
+			OffsetDateTime end) {
+		Map<ObjectKey, ObjectDetectionCount> counts = new HashMap<>();
+		for (HazardRepository.DetectionCount row : hazardRepository.countDetectionsByObject(childId, start, end)) {
+			ObjectKey key = new ObjectKey(row.getObjectType(), row.getLabel());
+			ObjectDetectionCount existing = counts.get(key);
+			RiskLevel highestRisk = RiskLevel.valueOf(row.getRiskLevel());
+			if (existing != null) {
+				RiskLevel previousRisk = RiskLevel.valueOf(existing.riskLevel());
+				if (previousRisk.ordinal() < highestRisk.ordinal()) highestRisk = previousRisk;
+			}
+			long count = row.getCount() + (existing == null ? 0 : existing.count());
+			counts.put(key, new ObjectDetectionCount(key.objectType(), key.label(), count, highestRisk.name()));
+		}
+		return counts.values().stream()
+				.sorted(Comparator.comparingLong(ObjectDetectionCount::count).reversed()
+						.thenComparing(ObjectDetectionCount::objectType).thenComparing(ObjectDetectionCount::label))
+				.toList();
+	}
+
+	@Transactional(readOnly = true)
+	public void requireActiveAssociation(UUID hazardId, UUID childId, String deviceId) {
+		Hazard hazard = hazardRepository.findById(hazardId)
+				.orElseThrow(() -> ApiException.notFound("HAZARD_NOT_FOUND", "위험 감지 정보를 찾을 수 없습니다."));
+		if (!hazard.getChildId().equals(childId) || !hazard.getDeviceId().equals(deviceId)) {
+			throw ApiException.conflict("HAZARD_DEVICE_MISMATCH", "위험 건의 아이와 등록 기기의 연결 정보가 일치하지 않습니다.");
+		}
+		if (hazard.getStatus() != HazardStatus.ACTIVE) {
+			throw ApiException.conflict("HAZARD_ALREADY_RESOLVED", "이미 해결된 위험 건은 재확인을 요청할 수 없습니다.");
+		}
+	}
+
 	@Transactional
 	public HazardDetailResult recordDetection(DetectionInput input) {
+		if (input == null) {
+			throw ApiException.validation("탐지 데이터를 입력해 주세요.", Map.of("detection", "필수입니다."));
+		}
 		if (input.childId() == null) {
 			throw ApiException.validation("아이 ID를 입력해 주세요.", Map.of("childId", "아이 ID는 필수입니다."));
 		}
 		String deviceId = requireText(input.deviceId(), "deviceId", 100);
+		String eventId = requireText(input.eventId(), "eventId", 100);
 		String objectType = requireText(input.objectType(), "objectType", 50);
 		String objectName = requireText(input.objectName(), "objectName", 100);
 		RiskLevel riskLevel = parseEnum(RiskLevel.class, input.riskLevel(), "riskLevel");
@@ -66,12 +108,22 @@ public class HazardService {
 			throw ApiException.validation("감지 시각을 입력해 주세요.", Map.of("detectedAt", "감지 시각은 필수입니다."));
 		}
 		validateMarker(input.markerX(), input.markerY());
+		Double markerX = normalizeZero(input.markerX());
+		Double markerY = normalizeZero(input.markerY());
 
 		OffsetDateTime now = OffsetDateTime.now(SERVICE_ZONE);
 		Hazard hazard = new Hazard(UUID.randomUUID(), input.childId(), deviceId, HazardStatus.ACTIVE,
 				objectType, objectName, riskLevel, normalizeOptional(input.riskReason()), input.detectedAt(),
 				normalizeOptional(input.locationLabel(), "locationLabel", 200), normalizeOptional(input.mapImageUrl()),
-				input.markerX(), input.markerY(), normalizeOptional(input.captureImageUrl()), operationState, now);
+				markerX, markerY, normalizeOptional(input.captureImageUrl()), operationState, eventId, now);
+		idempotencyGuard.lock("hazard-detection", IdempotencyGuard.fingerprint(deviceId, eventId));
+		Hazard existing = hazardRepository.findByDeviceIdAndSourceEventId(deviceId, eventId).orElse(null);
+		if (existing != null) {
+			if (!hazard.getDetectionInputHash().equals(existing.getDetectionInputHash())) {
+				throw ApiException.conflict("DETECTION_EVENT_REUSED", "동일한 탐지 이벤트 ID에 다른 내용을 저장할 수 없습니다.");
+			}
+			return toDetail(existing);
+		}
 		return toDetail(hazardRepository.save(hazard));
 	}
 
@@ -137,20 +189,32 @@ public class HazardService {
 			throw ApiException.validation("지도 좌표를 확인해 주세요.",
 					Map.of("marker", "x와 y를 함께 입력해야 합니다."));
 		}
-		if (markerX != null && (markerX < 0.0 || markerX > 1.0 || markerY < 0.0 || markerY > 1.0)) {
+		if (markerX != null && (!Double.isFinite(markerX) || !Double.isFinite(markerY)
+				|| markerX < 0.0 || markerX > 1.0 || markerY < 0.0 || markerY > 1.0)) {
 			throw ApiException.validation("지도 좌표를 확인해 주세요.",
-					Map.of("marker", "x와 y는 0과 1 사이여야 합니다."));
+					Map.of("marker", "x와 y는 0과 1 사이의 유한한 숫자여야 합니다."));
 		}
+	}
+
+	private Double normalizeZero(Double value) {
+		if (value == null) return null;
+		return value == 0.0 ? 0.0 : value;
 	}
 
 	public record DetectionInput(UUID childId, String deviceId, String objectType, String objectName,
 			String riskLevel, String riskReason, OffsetDateTime detectedAt, String locationLabel,
 			String mapImageUrl, Double markerX, Double markerY, String captureImageUrl,
-			String deviceOperationState) {
+			String deviceOperationState, String eventId) {
 	}
 
 	public record ActiveHazardSummary(UUID hazardId, String objectName, String riskLevel,
 			String locationLabel, OffsetDateTime detectedAt) {
+	}
+
+	public record ObjectDetectionCount(String objectType, String label, long count, String riskLevel) {
+	}
+
+	private record ObjectKey(String objectType, String label) {
 	}
 
 	public record HazardListItem(UUID hazardId, String objectName, String riskLevel,

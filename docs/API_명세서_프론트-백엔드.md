@@ -90,6 +90,12 @@
 
 `safetyProfile.status`: `APPLIED | UNSUPPORTED`. 등록 자체가 성공했더라도 적용할 연령 밖이면 `UNSUPPORTED`, `stage: null`과 안내용 정보를 반환하고, 임의의 단계를 지정하지 않는다. 서버 검증 실패는 성공 응답으로 포장하지 않는다.
 
+현재 등록은 UUID `Idempotency-Key` 헤더가 필수다. 같은 키의 동시 요청은 PostgreSQL 트랜잭션 잠금으로
+순서대로 처리해 아이·최초 프로필 이력을 한 번만 저장한다. 같은 최초 입력은 기존 아이를 반환하고,
+다른 입력은 `409 IDEMPOTENCY_KEY_REUSED`다. 새 등록은 최초 이름·생년월일의 지문을 보존하므로
+아이 수정 후 원래 등록 요청을 재시도해도 수정된 현재 정보를 반환하며 수정 내용을 되돌리지 않는다.
+V4 이전 등록의 최초 입력 지문은 소급 생성하지 않고 현재 저장된 이름·생년월일과 비교한다.
+
 #### `PATCH /api/v1/children/{childId}`
 
 요청은 등록과 같은 `{ name, birthDate }` 중 변경할 필드만 전달한다. 성공 응답은 수정된 아이 정보와 **재계산된** `safetyProfile`을 포함한다. 기존 프로필을 프론트에서 월령만 바꿔 재사용하지 않는다.
@@ -113,6 +119,40 @@
 `stage`: `INFANT | TODDLER | ACTIVE_CHILD | null`. 위험 대상 객체와 기준 문구는 프론트에서 임의로 산출하지 않고 서버가 승인된 기준으로 제공한다.
 
 ### 3.2 홈·기기 상태와 정지/재개
+
+#### `POST /api/v1/devices` — 개발용 기기 등록·아이 연결(구현됨)
+
+```json
+{ "childId": "실제 아이 UUID", "deviceId": "robot-001", "name": "거실 로봇청소기" }
+```
+
+성공 `201 Created`, `Location: /api/v1/devices/robot-001/status`:
+
+```json
+{
+  "childId": "실제 아이 UUID",
+  "deviceId": "robot-001",
+  "name": "거실 로봇청소기",
+  "status": {
+    "deviceId": "robot-001",
+    "name": "거실 로봇청소기",
+    "connectionState": "UNKNOWN",
+    "operationState": "UNKNOWN",
+    "batteryPercent": null,
+    "lastSeenAt": null,
+    "commandsAvailable": false
+  }
+}
+```
+
+| 항목 | 현재 구현 |
+| --- | --- |
+| 연결 범위 | 잠정적으로 아이 1명당 기기 1대, 기기 1대당 아이 1명. 미등록 아이 `404 CHILD_NOT_FOUND` |
+| ID·이름 | 공백 제거 후 1~100자. ID는 영문·숫자로 시작하고 영문·숫자·점·밑줄·콜론·하이픈 허용, 대소문자 구분 |
+| 재시도 | 같은 ID·아이·이름이면 기존 기기 반환, 최초 보고 상태를 초기화하지 않음. 동시 요청도 등록 한 번 |
+| 충돌 | 같은 ID의 다른 아이/이름 `409 DEVICE_ALREADY_REGISTERED`, 같은 아이의 다른 기기 `409 CHILD_DEVICE_ALREADY_LINKED` |
+| 상태 의미 | 등록은 DB 연결 정보 저장일 뿐 실제 페어링·기기 소유권·온라인 연결 확인이 아님 |
+| 미지원 | 등록 화면·기기 수정·연결 해제·재연결 API 없음. 인증·다중 기기 정책은 후속 확정 |
 
 #### `GET /api/v1/dashboard`
 
@@ -149,7 +189,36 @@
 
 `GET /api/v1/devices/{deviceId}/status`는 위 `device` 객체와 같은 연결·운행 상태, 배터리, `lastSeenAt`을 반환한다. 홈의 주기적 갱신과 명령 후 실제 상태 확인에 사용한다. 기기가 등록되지 않았다면 `dashboard.device`는 `null`로 반환하고 별도 안내를 표시한다.
 
+현재 위 상태 GET은 구현됐으며 `name`, `commandsAvailable: false`도 제공한다. 없는 기기 조회는
+`404 DEVICE_NOT_FOUND`다. 등록된 미보고 기기는 `UNKNOWN`·배터리/수신 시각 `null`로 반환한다.
+`dashboard.device`에도 같은 상태 응답을 사용한다. 실제 명령 전달은 미구현이므로 프론트 제어 버튼은 비활성화한다.
+
+상태 저장은 향후 인증된 기기 메시지 소비자가 호출할 `DeviceService.recordStatus()` 내부 서비스만 구현했다.
+프론트용 POST/PATCH 상태 입력 API는 없고 실제 하드웨어 입력도 아직 없다. 기기 ID, 연결·운행 상태,
+보고 시각을 검증하며 배터리는 생략 또는 0~100이다. 미래 보고는 거부하고, 이전 보고는 무시한다.
+같은 보고 시각·내용은 재전송으로 처리하며 서버 수신 시각을 갱신하지 않는다. 같은 시각의 다른 내용은
+`DEVICE_STATUS_REPORT_REUSED` 충돌이다. 보고 시각은 PostgreSQL과 같은 마이크로초 정밀도로 비교한다.
+
+보고 시각과 서버 수신 시각이 모두 기본 300초 이내일 때만 최근 상태·배터리를 제공한다.
+미보고·만료 시 `UNKNOWN`·배터리 `null`을 반환하고 마지막 수신 시각은 보존하며 원본 DB 값을 변경하지 않는다.
+`OFFLINE`은 명시적인 최근 보고일 때만 제공하며 온라인이 아니면 운행 상태는 `UNKNOWN`이다.
+만료 기준은 잠정값이고 `DEVICE_STATUS_MAX_AGE_SECONDS` 양수로 변경할 수 있다.
+
 #### `POST /api/v1/devices/{deviceId}/commands/pause` / `resume`
+
+현재 일시정지 요청 기록·조회와 재개 차단을 구현했다. **실제 전달·실행 결과 수신은 미구현**이다.
+아래 `SUCCEEDED` 예시는 향후 연동 계약이며 현재 응답으로 생성하지 않는다.
+
+| 현재 동작 | 구현 |
+| --- | --- |
+| 일시정지 접수 | 최근 `ONLINE` 보고가 있는 등록 기기만 `202`, `{ commandId, status: REQUESTED, deliveryState: NOT_CONNECTED }` |
+| 미보고/만료/오프라인 | 새 접수 `409 DEVICE_NOT_ONLINE`, 요청 기록 생성 없음 |
+| 조회 | `200`, `status: REQUESTED`, `deviceOperationState: UNKNOWN`, `confirmedAt: null`, `requestedAt`, `deliveryState: NOT_CONNECTED` |
+| 동일 재시도 | 기기별 UUID 키·종류·대상이 같으면 기존 ID 반환. 다른 명령/위험 건으로 재사용하면 `409 IDEMPOTENCY_KEY_REUSED` |
+| 재개 | 아이 활성 위험이 있으면 `409 HAZARD_UNRESOLVED`, 없어도 안전 확인 연동 전에는 `409 SAFETY_CONFIRMATION_REQUIRED`. 저장 안 함 |
+| 프론트 | 실제 제어는 `commandsAvailable: false` 유지. 접수 응답을 실행 성공으로 표시하지 않음 |
+
+이 기록은 전달 큐가 아닌 사용자 의도 감사 이력이다. 기기 전달을 연결할 때 과거 개발 요청을 자동 재생하지 않는다.
 
 요청 본문은 `{}`로 두고 `Idempotency-Key` 헤더를 보낸다. 성공 접수 시 `202 Accepted`:
 
@@ -179,6 +248,21 @@
 하드웨어·탐지 모델 통합 전에는 외부용 위험 등록 API를 노출하지 않는다. 백엔드는 향후 기기 메시지
 소비자가 호출할 저장 서비스와 조회 API만 제공하며, 임의의 샘플 탐지 데이터를 생성하지 않는다.
 
+내부 저장 서비스의 입력·중복 처리 규칙(외부 API 추가 아님):
+
+| 항목 | 현재 구현 |
+| --- | --- |
+| `eventId` | 필수 문자열, 앞뒤 공백 제거 후 최대 100자. 같은 탐지의 재전송에서는 기기가 같은 값을 유지 |
+| 중복 판단 | `deviceId`·`eventId` 조합. 동시 요청은 트랜잭션 잠금으로 순차 처리하고 DB UNIQUE 인덱스로 중복 제한 |
+| 같은 내용 재전송 | 정규화한 최초 입력 지문이 같으면 기존 위험 ID·현재 상세 반환. 이미 해결된 위험도 다시 활성화하지 않음 |
+| 다른 내용으로 재사용 | `DETECTION_EVENT_REUSED` 충돌(HTTP로 변환하는 경우 `409`). 기존 위험은 변경하지 않음 |
+| 서로 다른 이벤트 | 같은 물체라도 별도 위험 저장. 반복 감지 물체를 하나로 묶는 정책은 미구현 |
+| 좌표 | x·y 모두 생략하거나 모두 유한한 0~1 값. `NaN`·무한대·한쪽만 입력은 검증 오류 |
+| 기존 기록 | V4 이전 기록의 이벤트 ID·입력 지문은 NULL 유지. 알 수 없는 원본 이벤트를 소급 생성하지 않음 |
+
+입력 지문에는 아이·물체·위험도·시각·위치·이미지·운행 상태가 포함되며, 저장 상태 변경은 포함하지 않는다.
+공백·동일 시각의 시간대 표현·좌표의 음수 0은 정규화한다. 인증·기기 연결·실제 이벤트 ID 생성은 아직 미구현이다.
+
 #### `GET /api/v1/hazards/{hazardId}`
 
 ```json
@@ -206,6 +290,17 @@
 
 #### `POST /api/v1/hazards/{hazardId}/removal-checks`
 
+현재는 **재확인 요청 접수 기록·조회만 구현**했다. 아래 `CHECKING` 및 완료 예시는 향후 기기·모델 연동 계약이다.
+
+| 현재 동작 | 구현 |
+| --- | --- |
+| 접수 조건 | 활성 위험, 등록 기기의 아이·ID와 일치, 최근 `ONLINE`·`PAUSED` 보고 |
+| 접수 응답 | `202`, `{ actionId, type: DIRECT_REMOVAL_CHECK, status: UNKNOWN, deliveryState: NOT_CONNECTED }` |
+| 미확인 의미 | 모델에 재확인을 시작하지 않았으므로 `CHECKING`으로 표시하지 않음 |
+| 차단 | 미보고/오프라인 `DEVICE_NOT_ONLINE`, 일시정지 미확인 `DEVICE_NOT_PAUSED`, 연결 불일치 `HAZARD_DEVICE_MISMATCH`, 해결된 위험 `HAZARD_ALREADY_RESOLVED`(모두 `409`) |
+| 재시도 | 같은 기기·UUID 키·위험 대상은 같은 요청 ID 반환. 다른 종류/위험 대상은 `409 IDEMPOTENCY_KEY_REUSED` |
+| 저장 범위 | `operation_requests` 접수 기록만 저장. 위험 `ACTIVE` 상태·기기 운행 상태를 변경하지 않음 |
+
 보호자가 실제 위험물을 치운 뒤 `위험물을 치웠어요`를 누를 때만 호출한다. 본문 `{}`, `Idempotency-Key` 필수. `202 Accepted`:
 
 ```json
@@ -216,6 +311,10 @@
 
 #### `POST /api/v1/hazards/{hazardId}/relocations`
 
+현재는 없는 위험에 `404 HAZARD_NOT_FOUND`, 기존 위험에는 `409 RELOCATION_NOT_CONFIGURED`를 반환한다.
+안전 위치·가능 물체·배터리 조건·기기 전달 계약이 미정이므로 요청을 저장하거나 `MOVING`으로 응답하지 않는다.
+아래는 향후 연동 계약이다.
+
 보호자가 `안전 위치로 이동`을 선택할 때 호출한다. 안전 위치를 서버에 미리 지정한다면 본문 `{}`, 사용자가 선택한다면 `{ "safeZoneId": "zone_123" }`를 사용한다. `Idempotency-Key` 필수. `202 Accepted`:
 
 ```json
@@ -225,6 +324,13 @@
 기기 오프라인, 이동 불가 물체, 배터리 부족 등은 성공으로 응답하지 않는다. 이동 명령 요청만으로 완료를 기록하지 않는다.
 
 #### `GET /api/v1/safety-actions/{actionId}`
+
+현재 접수 기록 조회는 구현됐다. `status: UNKNOWN`, `hazardPresent: null`, `treatmentStatus: PENDING`,
+`deviceOperationState: UNKNOWN`, `completedAt: null`, `requestedAt`, `deliveryState: NOT_CONNECTED`를 반환한다.
+명령 ID를 안전 처리 ID로 조회하거나 없는 ID를 조회하면 `404 SAFETY_ACTION_NOT_FOUND`다.
+명령 조회도 해당 기기와 명령 종류를 검증하며 대상이 다르면 `404 COMMAND_NOT_FOUND`다.
+프론트의 실제 재확인·이송 기능은 연동 전 안내를 유지한다. 아래 완료 예시는 미래 결과 수신 계약이며
+타이머·버튼 클릭·기기 현재 상태만으로 생성하지 않는다.
 
 프론트는 요청 후 이 경로를 재조회하거나 동일 필드의 서버 이벤트를 구독한다. 직접 제거 성공 예시:
 
@@ -272,38 +378,85 @@
 
 ### 3.5 월간 리포트와 평가
 
-최신 사용자 결정에 따라 **현재 Figma 리포트 구성**을 기준으로 한다. 기존 PRD의 ‘실제 안전 처리 내역’ 필수 표시와 `회피율·청소 면적·만족도 제외` 문구는 현재 시안과 다르므로, 백엔드가 집계 구현에 착수하기 전에 범위 변경을 문서에도 반영해야 한다.
+최신 사용자 결정에 따라 **현재 Figma 리포트 구성**을 기준으로 한다. 기존 PRD의 ‘실제 안전 처리 내역’ 필수 표시와 `회피율·청소 면적·만족도 제외` 문구보다 이 절의 API 계약을 우선한다. 현재 구현은 저장된 탐지 기록의 집계·조회까지이며, 실제 처리·변경 이력이나 미수집 수치를 임의 생성하지 않는다.
 
 #### `GET /api/v1/reports/monthly?childId={childId}&month=YYYY-MM`
 
 ```json
 {
-  "reportId": "report_2026_09",
-  "childId": "child_456",
+  "reportId": "report_bc2ebb0b-4cc6-41eb-8001-ec48ab76db0d_2026-09",
+  "childId": "bc2ebb0b-4cc6-41eb-8001-ec48ab76db0d",
   "month": "2026-09",
   "childName": "김튼튼",
-  "stageChange": {
-    "from": "TODDLER",
-    "to": "ACTIVE_CHILD",
-    "changedAt": "2026-09-01T00:00:00+09:00"
-  },
+  "stageChange": null,
+  "stageChanges": [],
   "summary": {
-    "detectionCount": 12,
-    "avoidanceRatePercent": 100,
-    "safeCleanedAreaSquareMeters": 824.5
+    "detectionCount": 3,
+    "avoidanceRatePercent": null,
+    "safeCleanedAreaSquareMeters": null
   },
   "detectionsByObject": [
     { "objectType": "TOY_PART", "label": "레고 브릭", "count": 3, "riskLevel": "VERY_HIGH" }
   ],
-  "criteriaChanges": [
-    { "title": "가구 모서리 감지 활성화", "description": "적용된 안전 기준의 변경 설명" }
-  ],
+  "criteriaChanges": [],
   "nextStagePreview": { "stage": null, "description": "다음 지원 단계 안내 또는 지원 범위 밖 안내" },
   "feedback": null
 }
 ```
 
 조회 월에 기록이 없어도 `200 OK`로 `stageChange: null`, 집계값 `0`, 목록 `[]`을 반환한다. 조회 실패는 별도 오류 응답을 반환한다. 회피율의 분자·분모, 안전 청소 면적의 산출 기준 및 데이터 공급 여부는 아직 확정되지 않았다. 실제 산출할 수 없는 값은 `null`로 응답하고 프론트에서 수치 카드를 숨기거나 준비 중 상태로 표시한다. 임의의 숫자를 내려주지 않는다.
+
+현재 구현 규칙:
+
+| 항목 | 동작 |
+| --- | --- |
+| query | `childId` UUID·`month` 필수. 0001년부터 서울 기준 현재 월까지 `YYYY-MM`; 미래 월·형식 오류 `400`, 없는 아이 `404` |
+| 월 경계 | `Asia/Seoul` 월초 00:00 이상, 다음 월초 00:00 미만. 저장된 `detected_at` 기준 |
+| 탐지 건수 | 아이에 연결된 `hazards` 행 수, `ACTIVE`·`RESOLVED` 모두 포함. 같은 기기·이벤트 재전송은 추가 집계되지 않음. 실제 처리 완료 건수 아님 |
+| 물체별 집계 | 종류·이름별 합산 및 그룹 내 최고 위험도. 건수 내림차순, 동률은 종류·이름순 |
+| 변경 이력 | `profile_history.changed_at`의 서울 기준 월 범위 조회. `REGISTERED`는 최초 등록 기준이므로 변경 목록에서 제외 |
+| 단일·전체 변경 | `stageChange`는 마지막 변경 또는 `null`, `stageChanges`는 전체 변경의 시각·기록 PK 오름차순 목록 또는 `[]` |
+| 변경 필드 | `from`·`to`는 단계(미지원은 `null`), `fromStatus`·`toStatus`는 상태, `reason`은 `AGE_CHANGED` 또는 `BIRTH_DATE_UPDATED`, `changedAt`은 실제 기록 시각 |
+| 기준 변경 | 변경 시 저장된 이후 기준의 제목·설명·`changedAt`을 제공. 미지원 전환은 기준 없음 안내; 현재 코드로 과거 문구를 재생성하지 않음 |
+| 다음 단계 안내 | 현재 등록 생년월일과 백엔드 기준 문구로 계산. 과거 월은 월말, 현재 월은 오늘 기준; 실제 변경 이력이 아님 |
+| 저장·식별자 | 별도 리포트 테이블 없이 조회 시 집계, `report_{childUUID}_{YYYY-MM}`. 변경 당시 기준은 `profile_history`에 보존하나 과거 아이 이름·생년월일 스냅샷은 보존하지 않음 |
+| 대시보드 | 현재 월 `reportSummary.available: true`로 진입 지원. 기록 존재·리포트 발행 완료의 의미가 아님 |
+| 평가 | `feedback: null`, 서버 저장 미구현. 실제 API 모드에서는 평가 버튼을 표시하지 않음 |
+
+위 JSON은 위험 기록 3건이 있는 경우의 계약 예시이며, 현재 DB에 해당 기록을 생성하지 않는다.
+
+변경이 있는 월의 필드 예시:
+
+```json
+{
+  "stageChanges": [
+    {
+      "from": "INFANT",
+      "to": "TODDLER",
+      "changedAt": "2026-09-18T11:30:00+09:00",
+      "fromStatus": "APPLIED",
+      "toStatus": "APPLIED",
+      "reason": "AGE_CHANGED"
+    }
+  ],
+  "criteriaChanges": [
+    {
+      "title": "모서리·문턱·전선 등 이동 위험 탐지 강화",
+      "description": "가구 모서리, 바닥 문턱, 콘센트와 전선 걸림 위험을 집중 모니터링합니다.",
+      "changedAt": "2026-09-18T11:30:00+09:00"
+    }
+  ]
+}
+```
+
+아이 등록 시 최초 기준을 저장하고, 생년월일 수정·프로필 상세/대시보드 조회·등록 재시도·주기 실행에서
+단계나 상태가 달라진 경우에만 변경 이력을 추가한다. 프로필과 이력은 같은 트랜잭션으로 저장하며,
+동시 갱신 충돌은 롤백 후 `409 CONFLICT`다. 기존 아이의 과거 이력은 소급 생성하지 않는다.
+주기 실행은 서버 실행 중 기본 서울 시간 매일 00:05이며, 시각은 잠정값으로
+`PROFILE_REFRESH_CRON`에서 변경하거나 `PROFILE_REFRESH_ENABLED=false`로 비활성화할 수 있다.
+별도 사용자 API 없이 같은 갱신 로직을 사용하고 아이별로 트랜잭션을 분리한다.
+`changedAt`은 생일 경계의 이론적 전환 시각이 아니라 백엔드가 갱신을 수행한 시각이며,
+실제 기기 적용 확인 결과도 아니다. 서버 중단으로 놓친 중간 단계·실행은 소급 생성하지 않는다.
 
 #### `POST /api/v1/reports/{reportId}/feedback`
 

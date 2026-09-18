@@ -1,9 +1,12 @@
 package com.deni.backend.child;
 
 import com.deni.backend.common.ApiException;
+import com.deni.backend.common.IdempotencyGuard;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -17,16 +20,35 @@ public class ChildService {
 	private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
 	private final ChildRepository childRepository;
+	private final ProfileHistoryRepository historyRepository;
+	private final IdempotencyGuard idempotencyGuard;
+	private final Clock clock;
 
-	public ChildService(ChildRepository childRepository) {
+	@Autowired
+	public ChildService(ChildRepository childRepository, ProfileHistoryRepository historyRepository,
+			IdempotencyGuard idempotencyGuard) {
+		this(childRepository, historyRepository, idempotencyGuard, Clock.system(SERVICE_ZONE));
+	}
+
+	ChildService(ChildRepository childRepository, ProfileHistoryRepository historyRepository,
+			IdempotencyGuard idempotencyGuard, Clock clock) {
 		this.childRepository = childRepository;
+		this.historyRepository = historyRepository;
+		this.idempotencyGuard = idempotencyGuard;
+		this.clock = clock;
 	}
 
 	@Transactional
 	public ChildResult register(String name, LocalDate birthDate, UUID idempotencyKey) {
 		String normalizedName = normalizeName(name);
-		LocalDate today = LocalDate.now(SERVICE_ZONE);
+		OffsetDateTime now = OffsetDateTime.now(clock);
+		LocalDate today = now.toLocalDate();
 		validateBirthDate(birthDate, today);
+		if (idempotencyKey == null) {
+			throw ApiException.validation("등록 요청 식별키를 입력해 주세요.",
+					Map.of("Idempotency-Key", "UUID 식별키는 필수입니다."));
+		}
+		idempotencyGuard.lock("child-registration", idempotencyKey.toString());
 
 		Child existing = childRepository.findByRegistrationIdempotencyKey(idempotencyKey).orElse(null);
 		if (existing != null) {
@@ -34,14 +56,17 @@ public class ChildService {
 				throw ApiException.conflict("IDEMPOTENCY_KEY_REUSED",
 						"동일한 Idempotency-Key를 다른 등록 정보에 사용할 수 없습니다.");
 			}
+			refreshProfile(existing, now);
 			return toResult(existing, today);
 		}
 
-		OffsetDateTime now = OffsetDateTime.now(SERVICE_ZONE);
 		CalculatedProfile profile = calculateProfile(birthDate, today);
 		Child child = new Child(UUID.randomUUID(), normalizedName, birthDate, profile.status(), profile.stage(),
 				profile.status() == ProfileStatus.APPLIED ? now : null, idempotencyKey, now);
-		return toResult(childRepository.save(child), today);
+		child = childRepository.saveAndFlush(child);
+		historyRepository.save(new ProfileHistory(child.getId(), null, null, profile.status(), profile.stage(),
+				ProfileChangeReason.REGISTERED, now, List.of(), criteria(profile.stage())));
+		return toResult(child, today);
 	}
 
 	@Transactional
@@ -53,20 +78,28 @@ public class ChildService {
 		Child child = findChild(childId);
 		String nextName = name == null ? child.getName() : normalizeName(name);
 		LocalDate nextBirthDate = birthDate == null ? child.getBirthDate() : birthDate;
-		LocalDate today = LocalDate.now(SERVICE_ZONE);
+		OffsetDateTime now = OffsetDateTime.now(clock);
+		LocalDate today = now.toLocalDate();
 		validateBirthDate(nextBirthDate, today);
 
 		CalculatedProfile profile = calculateProfile(nextBirthDate, today);
-		child.update(nextName, nextBirthDate, profile.status(), profile.stage(), OffsetDateTime.now(SERVICE_ZONE));
+		ProfileChangeReason reason = child.getBirthDate().equals(nextBirthDate)
+				? ProfileChangeReason.AGE_CHANGED : ProfileChangeReason.BIRTH_DATE_UPDATED;
+		recordProfileChange(child, profile, reason, now);
+		child.update(nextName, nextBirthDate, profile.status(), profile.stage(), now);
 		return toResult(child, today);
+	}
+
+	/** 기기 연결 시 존재 여부만 확인하며 프로필을 갱신하지 않는다. */
+	@Transactional(readOnly = true)
+	public void requireRegisteredChild(UUID childId) {
+		findChild(childId);
 	}
 
 	@Transactional
 	public SafetyProfileResult getSafetyProfile(UUID childId) {
 		Child child = findChild(childId);
-		LocalDate today = LocalDate.now(SERVICE_ZONE);
-		CalculatedProfile calculated = calculateProfile(child.getBirthDate(), today);
-		child.applyProfile(calculated.status(), calculated.stage(), OffsetDateTime.now(SERVICE_ZONE));
+		CalculatedProfile calculated = refreshProfile(child, OffsetDateTime.now(clock));
 
 		return new SafetyProfileResult(child.getId(), calculated.status(), calculated.stage(),
 				stageLabel(calculated.stage()), calculated.ageMonths(), criteria(calculated.stage()),
@@ -76,12 +109,42 @@ public class ChildService {
 	@Transactional
 	public DashboardChildState getDashboardChild(UUID childId) {
 		Child child = findChild(childId);
-		LocalDate today = LocalDate.now(SERVICE_ZONE);
-		CalculatedProfile calculated = calculateProfile(child.getBirthDate(), today);
-		child.applyProfile(calculated.status(), calculated.stage(), OffsetDateTime.now(SERVICE_ZONE));
+		CalculatedProfile calculated = refreshProfile(child, OffsetDateTime.now(clock));
 
 		return new DashboardChildState(child.getId(), child.getName(), calculated.status(), calculated.stage(),
 				calculated.ageMonths());
+	}
+
+	/** 스케줄러가 아이 한 명을 독립 트랜잭션으로 갱신한다. 실제 변경 여부를 반환한다. */
+	@Transactional
+	public boolean refreshSafetyProfile(UUID childId) {
+		Child child = findChild(childId);
+		ProfileStatus previousStatus = child.getProfileStatus();
+		GrowthStage previousStage = child.getStage();
+		CalculatedProfile calculated = refreshProfile(child, OffsetDateTime.now(clock));
+		return previousStatus != calculated.status() || previousStage != calculated.stage();
+	}
+
+	private CalculatedProfile refreshProfile(Child child, OffsetDateTime now) {
+		CalculatedProfile calculated = calculateProfile(child.getBirthDate(), now.toLocalDate());
+		recordProfileChange(child, calculated, ProfileChangeReason.AGE_CHANGED, now);
+		child.applyProfile(calculated.status(), calculated.stage(), now);
+		return calculated;
+	}
+
+	private void recordProfileChange(Child child, CalculatedProfile next, ProfileChangeReason reason,
+			OffsetDateTime now) {
+		if (child.getProfileStatus() == next.status() && child.getStage() == next.stage()) return;
+		historyRepository.save(new ProfileHistory(child.getId(), child.getProfileStatus(), child.getStage(),
+				next.status(), next.stage(), reason, now, previousCriteria(child), criteria(next.stage())));
+	}
+
+	private List<SafetyCriterion> previousCriteria(Child child) {
+		// 저장 이력 없는 기존 아이의 이전 기준 문구는 알 수 없으므로 추측하지 않는다.
+		return historyRepository.findTopByChildIdOrderByChangedAtDescIdDesc(child.getId())
+				.filter(history -> history.getToStatus() == child.getProfileStatus()
+						&& history.getToStage() == child.getStage())
+				.map(ProfileHistory::getToCriteria).orElse(List.of());
 	}
 
 	private Child findChild(UUID childId) {
@@ -144,7 +207,7 @@ public class ChildService {
 		};
 	}
 
-	private List<SafetyCriterion> criteria(GrowthStage stage) {
+	static List<SafetyCriterion> criteria(GrowthStage stage) {
 		if (stage == null) {
 			return List.of();
 		}
