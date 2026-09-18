@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import ChildRegistration from './pages/ChildRegistration'
 import RegisteredHome from './pages/RegisteredHome'
 import type { RegisteredChild } from './services/children'
@@ -37,26 +37,29 @@ function restoreRegisteredChild(): RegisteredChild | null {
 
 function App() {
   const [child, setChild] = useState<RegisteredChild | null>(restoreRegisteredChild)
+  const [registrationNotice, setRegistrationNotice] = useState('')
 
-  function persistChild(registeredChild: RegisteredChild) {
+  const persistChild = useCallback((registeredChild: RegisteredChild) => {
+    setRegistrationNotice('')
     try {
       sessionStorage.setItem(childSessionKey, JSON.stringify(registeredChild))
     } catch {
       // Registration still works when the browser refuses session storage.
     }
     setChild(registeredChild)
-  }
+  }, [])
 
-  function clearChild() {
+  const clearChild = useCallback((message: string) => {
     try {
       sessionStorage.removeItem(childSessionKey)
     } catch {
       // The registration screen remains available without session storage.
     }
     setChild(null)
-  }
+    setRegistrationNotice(message)
+  }, [])
 
-  return child ? <RegisteredHome child={child} onUpdateChild={persistChild} onChildUnavailable={clearChild} /> : <ChildRegistration onGoHome={persistChild} />
+  return child ? <RegisteredHome child={child} onUpdateChild={persistChild} onChildUnavailable={clearChild} /> : <ChildRegistration onGoHome={persistChild} notice={registrationNotice} />
 }
 
 export default App

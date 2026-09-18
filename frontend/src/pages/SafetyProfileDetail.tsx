@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowLeft, BatteryWarning, Blocks, Check, Coins, Info, L
 import floorPlanPreview from '../assets/figma/safety-profile/floor-plan.png'
 import MonthlyFeedbackButton from '../components/MonthlyFeedbackButton'
 import { getSafetyProfile, localToday, updateChild, type RegisteredChild, type SafetyProfileData } from '../services/children'
+import { ApiRequestError, apiErrorMessage } from '../services/apiError'
 import type { DashboardHazard } from '../services/dashboard'
 import { stageAgeRangeLabels, stageBannerSubtitles, stageLabels, stageOrder, stageTitles } from '../lib/stages'
 
@@ -13,6 +14,7 @@ interface Props {
   isMock: boolean
   activeHazards: DashboardHazard[] | null
   hazardsError: boolean
+  hazardsErrorMessage: string
 }
 
 const hazardItems = [
@@ -22,7 +24,7 @@ const hazardItems = [
   { icon: Magnet, name: '작은 자석', detail: '1개 (장천공 주의)', danger: true },
 ]
 
-export default function SafetyProfileDetail({ child, onBack, onUpdateChild, isMock, activeHazards, hazardsError }: Props) {
+export default function SafetyProfileDetail({ child, onBack, onUpdateChild, isMock, activeHazards, hazardsError, hazardsErrorMessage }: Props) {
   const [profileReloadKey, setProfileReloadKey] = useState(0)
   const profileRequestKey = `${child.childId}:${child.birthDate}:${profileReloadKey}`
   const [profileRequest, setProfileRequest] = useState<{
@@ -44,6 +46,7 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild, isMo
   const [editBirthDate, setEditBirthDate] = useState(child.birthDate)
   const [saving, setSaving] = useState(false)
   const [editError, setEditError] = useState('')
+  const [editFieldErrors, setEditFieldErrors] = useState<Record<string, string>>({})
 
   useEffect(() => {
     let current = true
@@ -52,11 +55,11 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild, isMo
       .then((result) => {
         if (current) setProfileRequest({ key: profileRequestKey, detail: result, error: '' })
       })
-      .catch(() => {
+      .catch((error) => {
         if (current) setProfileRequest({
           key: profileRequestKey,
           detail: null,
-          error: 'Safety Profile을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.',
+          error: apiErrorMessage(error, 'Safety Profile을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'),
         })
       })
 
@@ -67,6 +70,7 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild, isMo
     setEditName(child.name)
     setEditBirthDate(child.birthDate)
     setEditError('')
+    setEditFieldErrors({})
     setIsEditing(true)
   }
 
@@ -89,13 +93,15 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild, isMo
     }
 
     setEditError('')
+    setEditFieldErrors({})
     setSaving(true)
     try {
       const updated = await updateChild(child.childId, { name: trimmedName, birthDate: editBirthDate })
       onUpdateChild(updated)
       setIsEditing(false)
-    } catch {
-      setEditError('정보를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.')
+    } catch (error) {
+      setEditFieldErrors(error instanceof ApiRequestError ? error.fieldErrors : {})
+      setEditError(apiErrorMessage(error, '정보를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'))
     } finally {
       setSaving(false)
     }
@@ -141,12 +147,15 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild, isMo
                       id="edit-child-name"
                       type="text"
                       autoComplete="off"
+                      maxLength={50}
                       value={editName}
-                      onChange={(event) => setEditName(event.target.value)}
+                      onChange={(event) => { setEditName(event.target.value); setEditFieldErrors({}); setEditError('') }}
                       disabled={saving}
-                      aria-invalid={!!editError && !editName.trim()}
+                      aria-invalid={!!editFieldErrors.name || (!!editError && !editName.trim())}
+                      aria-describedby={editFieldErrors.name ? 'edit-child-name-error' : undefined}
                       className="h-[45px] w-full rounded-xl border border-[#e2e8f0] bg-white px-[15px] text-[14px] text-[#1e293b] focus:outline-none focus:ring-2 focus:ring-[#a50034]/20 disabled:opacity-60"
                     />
+                    {editFieldErrors.name && <p id="edit-child-name-error" role="alert" className="text-[11px] text-[#a50034]">{editFieldErrors.name}</p>}
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <label htmlFor="edit-child-birthday" className="text-[12px] font-medium text-[#334155]">생년월일</label>
@@ -155,11 +164,13 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild, isMo
                       type="date"
                       value={editBirthDate}
                       max={localToday()}
-                      onChange={(event) => setEditBirthDate(event.target.value)}
+                      onChange={(event) => { setEditBirthDate(event.target.value); setEditFieldErrors({}); setEditError('') }}
                       disabled={saving}
-                      aria-invalid={!!editError && (!editBirthDate || editBirthDate > localToday())}
+                      aria-invalid={!!editFieldErrors.birthDate || (!!editError && (!editBirthDate || editBirthDate > localToday()))}
+                      aria-describedby={editFieldErrors.birthDate ? 'edit-child-birthday-error' : undefined}
                       className="h-[45px] w-full rounded-xl border border-[#e2e8f0] bg-white px-[15px] text-[14px] text-[#1e293b] focus:outline-none focus:ring-2 focus:ring-[#a50034]/20 disabled:opacity-60"
                     />
+                    {editFieldErrors.birthDate && <p id="edit-child-birthday-error" role="alert" className="text-[11px] text-[#a50034]">{editFieldErrors.birthDate}</p>}
                     <p className="text-[11px] leading-[1.4] text-[#94a3b8]">생년월일을 바꾸면 성장 단계와 Safety Profile 기준이 다시 계산돼요.</p>
                   </div>
                 </div>
@@ -257,7 +268,7 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild, isMo
                     ))}
                   </div>
                 ) : hazardsError ? (
-                  <p role="alert" className="mt-3 text-[12px] text-[#9f1239]">위험 기록을 불러오지 못했어요. 홈으로 돌아가 다시 시도해 주세요.</p>
+                  <p role="alert" className="mt-3 text-[12px] text-[#9f1239]">{hazardsErrorMessage || '위험 기록을 불러오지 못했어요. 홈으로 돌아가 다시 시도해 주세요.'}</p>
                 ) : activeHazards === null ? (
                   <p role="status" className="mt-3 text-[12px] text-[#64748b]">위험 기록을 불러오고 있어요.</p>
                 ) : activeHazards.length === 0 ? (
