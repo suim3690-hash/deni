@@ -11,7 +11,6 @@ import menuIcon from '../assets/figma/home/imgIcon2.svg'
 import robotIcon from '../assets/figma/home/imgVector5.svg'
 import robotDot from '../assets/figma/home/imgVector6.svg'
 import reportIcon from '../assets/figma/home/imgContainer1.svg'
-import powerButton from '../assets/figma/home/power-button.png'
 import type { RegisteredChild } from '../services/children'
 import { ApiRequestError, apiErrorMessage } from '../services/apiError'
 import { getDashboard, getHazardDetail, sendDeviceCommand, type DashboardHazard, type DashboardSnapshot, type HazardDetail } from '../services/dashboard'
@@ -239,7 +238,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
             <button type="button" onClick={() => setModal('device')} className="shrink-0 text-[12px] text-[#475569] hover:underline focus-visible:outline-[#a50034]">전체보기</button>
           </div>
 
-          <section aria-label="로봇청소기 상태" className={`rounded-[20px] border border-[#e8edf5] bg-white p-4 shadow-sm ${isOnline ? 'min-h-[246px]' : 'min-h-[149px]'}`}>
+          <section aria-label="로봇청소기 상태" className="min-h-[246px] rounded-[20px] border border-[#e8edf5] bg-white p-4 shadow-sm">
             <div className="flex items-start justify-between gap-2">
               <div className="flex min-w-0 items-center gap-2.5">
                 <div className="relative flex size-[42px] shrink-0 items-center justify-center rounded-[14px] bg-[#f0f5fd]">
@@ -263,53 +262,42 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
             </div>
 
             <div className="mt-3 border-t border-[#e8edf5] pt-3">
-              {isOnline ? (
-                <>
-                  <div className="mx-auto grid max-w-[258px] grid-cols-2 gap-4">
-                    <div className="flex h-[85px] flex-col items-center justify-center rounded-[18px] bg-[#f5f8ff] text-center">
-                      <span className="text-[11px] text-[#475569]">장애물 정밀 감지</span>
-                      <div className="mt-1 flex items-baseline gap-1">
-                        <span className="text-[22px] font-semibold">{dashboard?.obstacleCount ?? dashboard?.activeHazards.length ?? 0}개</span>
-                        {dashboard?.obstacleLabel && <span className="text-[10px] font-medium text-[#bd003f]">{dashboard.obstacleLabel}</span>}
-                      </div>
-                    </div>
-                    <div className="flex h-[85px] flex-col items-center justify-center rounded-[18px] bg-[#f5f8ff] text-center">
-                      <span className="text-[11px] text-[#475569]">공기 청정 연동</span>
-                      <div className="mt-1 flex items-baseline gap-1">
-                        <span className="text-[21px] font-semibold text-[#275b52]">{device?.airQualityLabel ?? '확인 전'}</span>
-                        {device?.purifierStateLabel && <span className="text-[10px] text-[#275b52]">퓨리케어 {device.purifierStateLabel}</span>}
-                      </div>
-                    </div>
+              <div className="mx-auto grid max-w-[258px] grid-cols-2 gap-4">
+                <div className="flex h-[85px] flex-col items-center justify-center rounded-[18px] bg-[#f5f8ff] text-center">
+                  <span className="text-[11px] text-[#475569]">장애물 정밀 감지</span>
+                  <div className="mt-1 flex items-baseline gap-1">
+                    <span className={`font-semibold ${!isOnline || dashboard?.obstacleCount == null ? 'text-[17px] text-[#64748b]' : 'text-[22px]'}`}>{!isOnline || dashboard?.obstacleCount == null ? '확인 전' : `${dashboard.obstacleCount}개`}</span>
+                    {isOnline && dashboard?.obstacleLabel && <span className="text-[10px] font-medium text-[#bd003f]">{dashboard.obstacleLabel}</span>}
                   </div>
-                  <div className="relative mt-2 flex items-center justify-center">
-                    <button type="button" onClick={() => (activeHazard ? void openHazardDetail(activeHazard) : dashboard?.isMock ? void openHazardDetail(demoHazard) : setModal('hazards'))} className="flex h-[38px] w-[205px] items-center justify-center rounded-full bg-[#b9003d] text-[14px] font-semibold text-white focus-visible:outline-[#a50034]">
-                      실시간 위험 감지 맵 <ArrowRight size={15} className="ml-1" />
-                    </button>
-                    <div className="absolute right-0">
-                      {isPaused ? (
-                        <ControlButton onClick={() => void handleControl('stop')} disabled={commandPending || !canControl} label="청소 정지">
-                          <Square size={15} className="text-[#e11d48]" fill="currentColor" />
-                        </ControlButton>
-                      ) : isStopped ? (
-                        <ControlButton onClick={() => void handleControl('resume')} disabled={commandPending || !canControl} label="청소 재개">
-                          <Play size={19} className="text-[#2958c7]" fill="currentColor" />
-                        </ControlButton>
-                      ) : (
-                        <ControlButton onClick={() => void handleControl('pause')} disabled={commandPending || !canControl} label="청소 일시정지">
-                          <Power size={19} className="text-[#e11d48]" strokeWidth={2.4} />
-                        </ControlButton>
-                      )}
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div className="flex items-center justify-end gap-2">
-                  <span className="rounded-full bg-[#fff0f1] px-3 py-1 text-[11px] font-medium text-[#b4233b]">
-                    {isOffline ? '기기 연결을 확인해주세요' : '기기 연결 상태를 확인할 수 없어요'}
-                  </span>
-                  <button type="button" onClick={() => setModal('device')} aria-label="기기 상태 안내" className="h-[46px] w-[44px] shrink-0 focus-visible:outline-[#a50034]"><img src={powerButton} alt="" className="h-full w-full" /></button>
                 </div>
-              )}
+                <div className="flex h-[85px] flex-col items-center justify-center rounded-[18px] bg-[#f5f8ff] text-center">
+                  <span className="text-[11px] text-[#475569]">공기 청정 연동</span>
+                  <div className="mt-1 flex items-baseline gap-1">
+                    <span className="text-[21px] font-semibold text-[#275b52]">{isOnline ? device?.airQualityLabel ?? '확인 전' : '확인 전'}</span>
+                    {isOnline && device?.purifierStateLabel && <span className="text-[10px] text-[#275b52]">퓨리케어 {device.purifierStateLabel}</span>}
+                  </div>
+                </div>
+              </div>
+              <div className="relative mt-2 flex items-center justify-center">
+                <button type="button" onClick={() => (activeHazard ? void openHazardDetail(activeHazard) : dashboard?.isMock ? void openHazardDetail(demoHazard) : setModal('hazards'))} disabled={!activeHazard && !device && !dashboard?.isMock} title={!activeHazard && !device && !dashboard?.isMock ? '기기 연결 후 사용할 수 있어요' : undefined} className="flex h-[38px] w-[205px] items-center justify-center rounded-full bg-[#b9003d] text-[14px] font-semibold text-white focus-visible:outline-[#a50034] disabled:cursor-not-allowed">
+                  실시간 위험 감지 맵 <ArrowRight size={15} className="ml-1" />
+                </button>
+                <div className="absolute right-0">
+                  {isPaused ? (
+                    <ControlButton onClick={() => void handleControl('stop')} disabled={commandPending || !canControl} label="청소 정지">
+                      <Square size={15} className="text-[#e11d48]" fill="currentColor" />
+                    </ControlButton>
+                  ) : isStopped ? (
+                    <ControlButton onClick={() => void handleControl('resume')} disabled={commandPending || !canControl} label="청소 재개">
+                      <Play size={19} className="text-[#2958c7]" fill="currentColor" />
+                    </ControlButton>
+                  ) : (
+                    <ControlButton onClick={() => void handleControl('pause')} disabled={commandPending || !canControl} label={canControl ? '청소 일시정지' : '기기 연결 후 사용 가능'}>
+                      <Power size={19} className="text-[#e11d48]" strokeWidth={2.4} />
+                    </ControlButton>
+                  )}
+                </div>
+              </div>
             </div>
           </section>
           {commandError && <p role="alert" className="mt-2 text-center text-[12px] text-[#a50034]">{commandError}</p>}
