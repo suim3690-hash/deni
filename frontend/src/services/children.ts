@@ -1,3 +1,5 @@
+import { generateId } from '../lib/id'
+
 export interface ChildRegistrationInput {
   name: string
   birthDate: string
@@ -92,7 +94,7 @@ async function mockRegisterChild(input: ChildRegistrationInput, idempotencyKey: 
   if (previous) return previous
 
   const child: RegisteredChild = {
-    childId: crypto.randomUUID(),
+    childId: generateId(),
     ...input,
     safetyProfile: computeSafetyProfile(input.birthDate),
   }

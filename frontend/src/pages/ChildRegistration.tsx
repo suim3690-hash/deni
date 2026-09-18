@@ -5,6 +5,7 @@ import calendarIcon from '../assets/icons/calendar.svg'
 import checkIcon from '../assets/icons/check.svg'
 import { computeSafetyProfile, localToday, registerChild, type RegisteredChild } from '../services/children'
 import { stageByOrder, stageDisplayNames, stageOrder, stageRegistrationAgeLabels, stageTitles } from '../lib/stages'
+import { generateId } from '../lib/id'
 
 type RegistrationStatus = 'editing' | 'loading' | 'success' | 'failure'
 
@@ -18,7 +19,7 @@ export default function ChildRegistration({ onGoHome }: ChildRegistrationProps) 
   const [status, setStatus] = useState<RegistrationStatus>('editing')
   const [error, setError] = useState('')
   const [registeredChild, setRegisteredChild] = useState<RegisteredChild | null>(null)
-  const requestKey = useRef(crypto.randomUUID())
+  const requestKey = useRef(generateId())
 
   const isReadOnly = status === 'loading' || status === 'success'
   const previewStage = birthDate && birthDate <= localToday() ? computeSafetyProfile(birthDate).stage : null
@@ -26,7 +27,7 @@ export default function ChildRegistration({ onGoHome }: ChildRegistrationProps) 
   function resetAfterEdit() {
     setStatus('editing')
     setError('')
-    requestKey.current = crypto.randomUUID()
+    requestKey.current = generateId()
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -96,7 +97,7 @@ export default function ChildRegistration({ onGoHome }: ChildRegistrationProps) 
   }[status]
 
   return (
-    <div className="min-h-screen bg-[#f0f5fd]">
+    <div className="min-h-screen bg-[#f0f5fd] [zoom:max(0.85,calc(100vw/402px))]">
       <Header title="손지아 홈" hasNotification />
 
       <main className="mx-auto max-w-[402px] px-4 pb-6 pt-[45px]">

@@ -1,4 +1,5 @@
 import type { RegisteredChild } from './children'
+import { generateId } from '../lib/id'
 
 export type ConnectionState = 'ONLINE' | 'OFFLINE' | 'UNKNOWN'
 export type OperationState = 'RUNNING' | 'PAUSED' | 'STOPPING' | 'RESUMING' | 'READY_TO_RESUME' | 'UNKNOWN'
@@ -135,7 +136,7 @@ export async function sendDeviceCommand(deviceId: string, action: 'pause' | 'res
   const path = `${baseUrl}/api/v1/devices/${encodeURIComponent(deviceId)}/commands`
   const response = await fetch(`${path}/${action}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': generateId() },
     body: '{}',
   })
   if (!response.ok) throw new Error(`Device command failed: ${response.status}`)

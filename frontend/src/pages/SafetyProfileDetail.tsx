@@ -98,7 +98,7 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild }: Pr
   }
 
   return (
-    <div className="min-h-screen bg-[#f2f6fa] text-[#0f172a]">
+    <div className="min-h-screen bg-[#f2f6fa] text-[#0f172a] [zoom:max(0.85,calc(100vw/402px))]">
       <div className="mx-auto min-h-screen max-w-[402px] pb-[40px]">
         <header className="sticky top-0 z-10 flex items-center justify-between border-b border-[#f1f5f9] bg-white/95 px-4 pb-[13px] pt-3 backdrop-blur-md">
           <div className="flex items-center gap-2.5">
@@ -115,10 +115,10 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild }: Pr
               <span className="rounded-full bg-white/20 px-[10px] py-[5px] text-[11px] font-medium">✦ {isSupported ? '현재 Safety Profile 자동 적용 중' : '지원 범위 밖'}</span>
               <MonthlyFeedbackButton shapeClassName="size-[44px] rounded-[14px]" iconSize={22} />
             </div>
-            <h2 className="-mt-1 max-w-[260px] text-[21px] font-bold leading-[1.2]">
+            <h2 className="-mt-1 text-[21px] font-bold leading-[1.2]">
               {isSupported && stage ? stageTitles[stage] : '현재 지원하는 연령이 아니에요'}
             </h2>
-            <p className="mt-1 max-w-[280px] text-[12px] leading-[1.4] text-white/95">
+            <p className="mt-1 text-[12px] leading-[1.4] text-white/95">
               {isSupported && stage ? stageBannerSubtitles[stage] : '안전 프로필이 적용되지 않았어요.'}
             </p>
           </section>

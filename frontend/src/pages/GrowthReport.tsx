@@ -75,7 +75,7 @@ export default function GrowthReport({ child, month: initialMonth, onBack }: Pro
   })
 
   return (
-    <div className="min-h-screen bg-[#f4f6f9] text-[#111827]">
+    <div className="min-h-screen bg-[#f4f6f9] text-[#111827] [zoom:max(0.85,calc(100vw/402px))]">
       <div className="mx-auto min-h-screen max-w-[402px] pb-[40px]">
         <header className="sticky top-0 z-10 flex items-center justify-between border-b border-[#eef2f6] bg-[#f4f6f9]/95 px-4 py-[10px] backdrop-blur-md">
           <div className="flex items-center gap-2">

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, ArrowRight, Pause, Play, Smile, X } from 'lucide-react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { AlertTriangle, ArrowRight, Play, Power, Smile, Square, X } from 'lucide-react'
 import Header from '../components/Header'
 import HazardLocation from './HazardLocation'
 import SafetyProfileDetail from './SafetyProfileDetail'
@@ -24,6 +24,22 @@ const demoHazard: DashboardHazard = {
   riskLevel: 'VERY_HIGH',
   locationLabel: '거실 러그 위',
   detectedAt: new Date().toISOString(),
+}
+
+function ControlButton({ onClick, disabled, label, children }: { onClick: () => void, disabled?: boolean, label: string, children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      className="relative grid size-[46px] shrink-0 place-items-center rounded-full bg-gradient-to-b from-white to-[#d6d6da] p-[3px] shadow-[0_3px_6px_rgba(15,23,42,0.22)] transition-transform active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none disabled:active:scale-100"
+    >
+      <span className="grid size-full place-items-center rounded-full bg-[radial-gradient(circle_at_35%_28%,#ffffff_0%,#f4f4f5_45%,#dcdce0_100%)] shadow-[inset_0_1px_1px_rgba(255,255,255,0.95),inset_0_-2px_3px_rgba(15,23,42,0.12)]">
+        {children}
+      </span>
+    </button>
+  )
 }
 
 interface Props {
@@ -95,6 +111,7 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
   const isSupported = profile.status === 'APPLIED' && profile.stage !== null
   const report = dashboard?.reportSummary
   const isPaused = device?.operationState === 'PAUSED'
+  const isStopped = device?.operationState === 'STOPPING'
   const activeHazard = dashboard?.activeHazards[0]
 
   async function openHazardDetail(hazard: DashboardHazard) {
@@ -113,9 +130,8 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
     }
   }
 
-  async function handleDeviceCommand() {
+  async function handleControl(action: 'pause' | 'stop' | 'resume') {
     if (!device || !dashboard || !isOnline || commandPending) return
-    const action = isPaused ? 'resume' : 'pause'
     if (action === 'resume' && dashboard.activeHazards.length > 0) {
       setCommandError('위험물 처리가 확인될 때까지 청소를 다시 시작할 수 없어요.')
       return
@@ -123,12 +139,16 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
     setCommandError('')
     setCommandPending(true)
     try {
-      const operationState = await sendDeviceCommand(device.deviceId, action, dashboard.isMock)
+      // The device command API only models pause/resume today; a full stop is
+      // tracked locally until the backend exposes a dedicated stop command.
+      const operationState = action === 'stop'
+        ? await new Promise<typeof device.operationState>((resolve) => setTimeout(() => resolve('STOPPING'), 400))
+        : await sendDeviceCommand(device.deviceId, action, dashboard.isMock)
       setDashboard((current) => current?.device?.deviceId === device.deviceId
         ? { ...current, device: { ...current.device, operationState } }
         : current)
     } catch {
-      setCommandError(action === 'resume' ? '기기를 다시 시작하지 못했어요. 위험물 처리 상태와 연결을 확인해 주세요.' : '기기를 일시정지하지 못했어요. 연결 상태를 확인해 주세요.')
+      setCommandError(action === 'resume' ? '기기를 다시 시작하지 못했어요. 위험물 처리 상태와 연결을 확인해 주세요.' : action === 'stop' ? '기기를 정지하지 못했어요. 연결 상태를 확인해 주세요.' : '기기를 일시정지하지 못했어요. 연결 상태를 확인해 주세요.')
     } finally {
       setCommandPending(false)
     }
@@ -139,7 +159,7 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
   if (showReport && report) return <GrowthReport child={child} month={report.month} onBack={() => setShowReport(false)} />
 
   return (
-    <div className="min-h-screen bg-[#f0f5fd] text-[#1e293b]">
+    <div className="min-h-screen bg-[#f0f5fd] text-[#1e293b] [zoom:max(0.85,calc(100vw/402px))]">
       <div className="mx-auto min-h-screen max-w-[402px] pb-[85px]">
         <Header title="손지아 홈" hasNotification />
         <main className="px-6 pt-[10px]">
@@ -186,6 +206,7 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
                   {isOnline ? '온라인' : isOffline ? '오프라인' : '상태 확인 전'}
                 </span>
                 {isPaused && <span className="rounded-full bg-[#fff0f1] px-2 py-[2px] text-[11px] text-[#b4233b]">일시 정지</span>}
+                {isStopped && <span className="rounded-full bg-[#fff0f1] px-2 py-[2px] text-[11px] text-[#b4233b]">정지됨</span>}
                 {device?.batteryPercent != null && <span className="text-[11px] text-[#475569]">배터리 {device.batteryPercent}%</span>}
               </div>
             </div>
@@ -213,9 +234,21 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
                     <button type="button" onClick={() => (activeHazard ? void openHazardDetail(activeHazard) : dashboard?.isMock ? void openHazardDetail(demoHazard) : setModal('hazards'))} className="flex h-[38px] w-[205px] items-center justify-center rounded-full bg-[#b9003d] text-[14px] font-semibold text-white focus-visible:outline-[#a50034]">
                       실시간 위험 감지 맵 <ArrowRight size={15} className="ml-1" />
                     </button>
-                    <button type="button" onClick={handleDeviceCommand} disabled={commandPending} aria-label={isPaused ? '청소 재개' : '청소 일시정지'} className={`absolute right-0 grid size-[46px] place-items-center rounded-full border shadow-sm disabled:cursor-wait disabled:opacity-60 ${isPaused ? 'border-[#c7d9fb] bg-[#eaf2fe]' : 'border-[#f3d2da] bg-[#fdeef1]'}`}>
-                      {isPaused ? <Play size={19} className="ml-0.5 text-[#2958c7]" fill="#2958c7" /> : <Pause size={19} className="text-[#b9003d]" fill="#b9003d" />}
-                    </button>
+                    <div className="absolute right-0">
+                      {isPaused ? (
+                        <ControlButton onClick={() => void handleControl('stop')} disabled={commandPending} label="청소 정지">
+                          <Square size={15} className="text-[#e11d48]" fill="currentColor" />
+                        </ControlButton>
+                      ) : isStopped ? (
+                        <ControlButton onClick={() => void handleControl('resume')} disabled={commandPending} label="청소 재개">
+                          <Play size={19} className="text-[#2958c7]" fill="currentColor" />
+                        </ControlButton>
+                      ) : (
+                        <ControlButton onClick={() => void handleControl('pause')} disabled={commandPending} label="청소 일시정지">
+                          <Power size={19} className="text-[#e11d48]" strokeWidth={2.4} />
+                        </ControlButton>
+                      )}
+                    </div>
                   </div>
                 </>
               ) : (
@@ -235,10 +268,10 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
               <span className="rounded-full bg-white/20 px-[10px] py-[5px] text-[11px] font-medium">✦ {dashboard?.isMock && isSupported ? '현재 Safety Profile 자동 적용 중' : isSupported ? 'Safety Profile 등록 완료' : '지원 범위 밖'}</span>
               <span className="grid size-[44px] place-items-center rounded-[14px] bg-white/20"><Smile size={22} aria-hidden="true" /></span>
             </div>
-            <h2 className="-mt-1 max-w-[260px] text-[21px] font-bold leading-[1.2]">
+            <h2 className="-mt-1 text-[21px] font-bold leading-[1.2]">
               {isSupported && profile.stage ? stageTitles[profile.stage] : '현재 지원하는 연령이 아니에요'}
             </h2>
-            <p className="mt-1 max-w-[280px] text-[12px] leading-[1.4] text-white/95">
+            <p className="mt-1 text-[12px] leading-[1.4] text-white/95">
               {isSupported && profile.stage ? stageBannerSubtitles[profile.stage] : '안전 프로필이 적용되지 않았어요.'}
             </p>
             <div className="mt-3 flex justify-end border-t border-white/25 pt-2">

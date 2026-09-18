@@ -33,15 +33,15 @@ export default function HazardLocation({ hazard, detail, error, errorStatus, isM
   const displayTime = new Intl.DateTimeFormat('ko-KR', {
     hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Seoul',
   }).format(new Date(detectedAt))
-  const [actionMessage, setActionMessage] = useState('')
   const [mapFailed, setMapFailed] = useState(false)
   const [captureFailed, setCaptureFailed] = useState(false)
   const [autoTransport, setAutoTransport] = useState(false)
   const [transportPhase, setTransportPhase] = useState<'moving' | 'done'>('moving')
   const [manualPhase, setManualPhase] = useState<'idle' | 'moving' | 'removed' | 'done'>('idle')
+  const [removePhase, setRemovePhase] = useState<'idle' | 'verifying' | 'clear' | 'temp-safe' | 'done'>('idle')
   const restricted = errorStatus === 403 || errorStatus === 404
   const riskLabel = isMock ? '삼킴 고위험' : detail?.riskLevel === 'VERY_HIGH' ? '매우 높은 위험' : detail?.riskLevel === 'HIGH' ? '높은 위험' : '위험 감지'
-  const showSuccessBanner = (autoTransport && transportPhase === 'done') || manualPhase === 'done'
+  const showSuccessBanner = (autoTransport && transportPhase === 'done') || manualPhase === 'done' || removePhase !== 'idle'
   const showMovingAlert = (autoTransport && transportPhase === 'moving') || manualPhase === 'moving' || manualPhase === 'removed'
 
   useEffect(() => {
@@ -61,6 +61,21 @@ export default function HazardLocation({ hazard, detail, error, errorStatus, isM
     }
   }, [manualPhase])
 
+  useEffect(() => {
+    if (removePhase === 'verifying') {
+      const timer = setTimeout(() => setRemovePhase('clear'), 4000)
+      return () => clearTimeout(timer)
+    }
+    if (removePhase === 'clear') {
+      const timer = setTimeout(() => setRemovePhase('temp-safe'), 3000)
+      return () => clearTimeout(timer)
+    }
+    if (removePhase === 'temp-safe') {
+      const timer = setTimeout(() => setRemovePhase('done'), 2000)
+      return () => clearTimeout(timer)
+    }
+  }, [removePhase])
+
   function toggleAutoTransport() {
     const enabled = !autoTransport
     if (enabled) setTransportPhase('moving')
@@ -68,7 +83,7 @@ export default function HazardLocation({ hazard, detail, error, errorStatus, isM
   }
 
   return (
-    <div className="min-h-screen bg-[#f0f5fd] text-[#1e293b]">
+    <div className="min-h-screen bg-[#f0f5fd] text-[#1e293b] [zoom:max(0.85,calc(100vw/402px))]">
       <div className="mx-auto min-h-screen max-w-[402px] pb-[112px]">
         <header className="flex h-[66px] items-center gap-5 bg-[#f7f9ff] px-7">
           <button type="button" onClick={onBack} aria-label="홈으로 돌아가기" className="grid size-6 place-items-center focus-visible:outline-[#a50034]"><ArrowLeft size={22} /></button>
@@ -139,14 +154,15 @@ export default function HazardLocation({ hazard, detail, error, errorStatus, isM
 
           <section aria-label="위험물 감지 상세" className="rounded-[22px] bg-white px-[18px] pb-[18px] pt-[16px] shadow-[0_2px_8px_rgba(48,60,90,0.06)]">
             <h2 className="flex items-center gap-2 text-[16px] font-bold text-[#171c25]"><img src={robotIcon} alt="" className="size-5" />드니 AI 실시간 캡처</h2>
-            <div className="relative mt-3 overflow-hidden rounded-[4px] bg-[#e5e7eb]">
-              {(isMock || detail?.captureImageUrl) && !captureFailed ? <img src={isMock ? capturePreview : detail?.captureImageUrl ?? ''} onError={() => setCaptureFailed(true)} alt={`${name} 감지 사진`} className="aspect-[334/169] w-full object-cover" /> : <div className="grid aspect-[334/169] place-items-center text-[13px] text-[#64748b]">{!detail && !error ? '감지 사진을 불러오고 있어요' : '감지 사진을 확인할 수 없어요'}</div>}
-              <span className="absolute left-3 top-3 rounded-full bg-[#191919]/85 px-2 py-1 font-mono text-[10px] text-white">● AI OBJECT DETECTED</span>
-              <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-[#141414]/90 px-3 py-2 text-white">
-                <strong className="text-[12px] leading-4">{name} 감지<br />{location}</strong>
-                <span className="shrink-0 rounded-full bg-[#ffdad9] px-2 py-1 text-[11px] font-bold text-[#b42330]">{riskLabel}</span>
+            <div className="relative mx-auto mt-3 w-[210px] overflow-hidden rounded-[12px] border-2 border-dashed border-[#e11d48]/70 bg-[#e5e7eb]">
+              {(isMock || detail?.captureImageUrl) && !captureFailed ? <img src={isMock ? capturePreview : detail?.captureImageUrl ?? ''} onError={() => setCaptureFailed(true)} alt={`${name}만 확대 촬영된 감지 사진 (프라이버시 보호를 위해 주변 공간은 표시하지 않음)`} className="aspect-[35/24] w-full object-cover" /> : <div className="grid aspect-[35/24] place-items-center text-[13px] text-[#64748b]">{!detail && !error ? '감지 사진을 불러오고 있어요' : '감지 사진을 확인할 수 없어요'}</div>}
+              <span className="absolute left-2 top-2 rounded-[4px] bg-[#e11d48] px-2 py-0.5 text-[10px] font-bold text-white shadow">{name}</span>
+              <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-[#141414]/90 px-2 py-1.5 text-white">
+                <strong className="text-[11px] leading-4">{name}</strong>
+                <span className="shrink-0 rounded-full bg-[#ffdad9] px-1.5 py-0.5 text-[10px] font-bold text-[#b42330]">{riskLabel}</span>
               </div>
             </div>
+            <p className="mt-2 text-center text-[11px] text-[#94a3b8]">프라이버시 보호를 위해 위험물만 확대해서 보여드려요 · {location}</p>
             <div className="mt-3 rounded-[12px] border border-[#d7e2ff] bg-[#f4f7ff] px-3 py-3 text-[13px] leading-5">
               <p><span className="mr-2 font-bold text-[#b9003d]">ⓘ</span>{detail?.riskReason ?? '위험물 상세 정보를 확인하고 있어요. 아이가 접근하기 전에 바닥에서 치워 주세요.'}</p>
             </div>
@@ -165,30 +181,45 @@ export default function HazardLocation({ hazard, detail, error, errorStatus, isM
           </section>
           {isMock && <p className="text-center text-[11px] text-[#94a3b8]">지도·사진·위험 정보는 화면 확인용 예시입니다.</p>}
         </main>}
-
-        {!restricted && (
-          <footer className="fixed bottom-0 left-1/2 z-10 flex w-full max-w-[402px] -translate-x-1/2 gap-3 border-t border-[#e2e8f0] bg-white px-3 pb-5 pt-3">
-            {autoTransport ? (
-              <button type="button" disabled className="flex min-h-[54px] flex-1 items-center justify-center gap-2 rounded-[20px] bg-[#e5e7eb] px-2 text-[14px] font-semibold text-[#6b7280] disabled:cursor-default">
-                {transportPhase === 'moving' ? <><Loader2 size={16} className="animate-spin" aria-hidden="true" />안전 위치로 이동 중</> : '로봇청소기 작동중'}
-              </button>
-            ) : manualPhase === 'moving' || manualPhase === 'removed' ? (
-              <div role="status" className="flex min-h-[54px] flex-1 flex-col items-center justify-center rounded-[20px] bg-[#10b981] px-2 text-center text-white">
-                <strong className="text-[14px] font-bold">{manualPhase === 'moving' ? '위험물을 치우는 중입니다' : '위험물을 치웠어요'}</strong>
-                <span className="text-[11px] text-white/90">기기가 위험물이 없어진 것을 확인하면 청소를 재개해요.</span>
-              </div>
-            ) : manualPhase === 'done' ? (
-              <button type="button" disabled className="flex min-h-[54px] flex-1 items-center justify-center rounded-[20px] bg-[#e5e7eb] px-2 text-[14px] font-semibold text-[#6b7280] disabled:cursor-default">로봇청소기 작동중</button>
-            ) : (
-              <>
-                <button type="button" onClick={() => setManualPhase('moving')} className="min-h-[54px] flex-1 rounded-[20px] border border-[#3755ff] bg-white px-2 text-[12px] font-semibold text-[#2948dd]">안전 위치로 이동</button>
-                <button type="button" onClick={() => setActionMessage('위험물을 직접 치운 뒤 확인하는 안전 처리 화면은 다음 단계에서 연결됩니다.')} className="min-h-[54px] flex-1 rounded-[20px] bg-[#b9003d] px-2 text-[13px] font-bold leading-4 text-white shadow-[0_3px_8px_rgba(185,0,61,0.25)]">사용자 직접 제거<br />(위험물 우회 청소)</button>
-              </>
-            )}
-          </footer>
-        )}
-        {actionMessage && <div role="alert" className="fixed bottom-[85px] left-1/2 z-20 w-[calc(100%-32px)] max-w-[370px] -translate-x-1/2 rounded-xl bg-[#25252b] p-3 text-[12px] text-white shadow-lg" onClick={() => setActionMessage('')}>{actionMessage}</div>}
       </div>
+
+      {!restricted && (
+        <footer className="fixed bottom-0 left-1/2 z-10 flex w-full max-w-[402px] -translate-x-1/2 gap-3 border-t border-[#e2e8f0] bg-white px-3 pb-5 pt-3">
+          {autoTransport ? (
+            <button type="button" disabled className="flex min-h-[54px] flex-1 items-center justify-center gap-2 rounded-[20px] bg-[#e5e7eb] px-2 text-[14px] font-semibold text-[#6b7280] disabled:cursor-default">
+              {transportPhase === 'moving' ? <><Loader2 size={16} className="animate-spin" aria-hidden="true" />안전 위치로 이동 중</> : '로봇청소기 작동중'}
+            </button>
+          ) : manualPhase === 'moving' || manualPhase === 'removed' ? (
+            <div role="status" className="flex min-h-[54px] flex-1 flex-col items-center justify-center rounded-[20px] bg-[#10b981] px-2 text-center text-white">
+              <strong className="text-[14px] font-bold">{manualPhase === 'moving' ? '위험물을 치우는 중입니다' : '위험물을 치웠어요'}</strong>
+              <span className="text-[11px] text-white/90">기기가 위험물이 없어진 것을 확인하면 청소를 재개해요.</span>
+            </div>
+          ) : manualPhase === 'done' ? (
+            <button type="button" disabled className="flex min-h-[54px] flex-1 items-center justify-center rounded-[20px] bg-[#e5e7eb] px-2 text-[14px] font-semibold text-[#6b7280] disabled:cursor-default">로봇청소기 작동중</button>
+          ) : removePhase === 'verifying' ? (
+            <div role="status" className="flex min-h-[54px] flex-1 items-center justify-center gap-2 rounded-[20px] bg-[#10b981] px-2 text-white">
+              <Loader2 size={18} className="animate-spin" aria-hidden="true" />
+              <strong className="text-[16px] font-bold">재확인 중</strong>
+            </div>
+          ) : removePhase === 'clear' ? (
+            <div role="status" className="flex min-h-[54px] flex-1 flex-col items-center justify-center rounded-[20px] bg-[#10b981] px-2 text-center text-white">
+              <strong className="text-[14px] font-bold">위험물이 더 이상 감지되지 않습니다</strong>
+              <span className="text-[11px] text-white/90">청소를 재개합니다</span>
+            </div>
+          ) : removePhase === 'temp-safe' ? (
+            <div role="status" className="flex min-h-[54px] flex-1 items-center justify-center rounded-[20px] bg-[#10b981] px-2 text-center text-white">
+              <strong className="text-[15px] font-bold">임시 안전조치 완료 · 청소 재개 가능</strong>
+            </div>
+          ) : removePhase === 'done' ? (
+            <button type="button" disabled className="flex min-h-[54px] flex-1 items-center justify-center rounded-[20px] bg-[#e5e7eb] px-2 text-[14px] font-semibold text-[#6b7280] disabled:cursor-default">로봇청소기 작동중</button>
+          ) : (
+            <>
+              <button type="button" onClick={() => setManualPhase('moving')} className="min-h-[54px] flex-1 rounded-[20px] border border-[#3755ff] bg-white px-2 text-[12px] font-semibold text-[#2948dd]">안전 위치로 이동</button>
+              <button type="button" onClick={() => setRemovePhase('verifying')} className="min-h-[54px] flex-1 rounded-[20px] bg-[#b9003d] px-2 text-[13px] font-bold leading-4 text-white shadow-[0_3px_8px_rgba(185,0,61,0.25)]">사용자 직접 제거<br />(위험물 우회 청소)</button>
+            </>
+          )}
+        </footer>
+      )}
     </div>
   )
 }
