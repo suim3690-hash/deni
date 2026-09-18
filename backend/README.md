@@ -401,6 +401,8 @@ SELECT version, description, success FROM flyway_schema_history ORDER BY install
 | --- | --- |
 | 아이 등록·수정 | 서버 저장 성공 후 아이 정보·재계산 프로필 반영 |
 | 홈 | 대시보드 조회, 실제 API 모드에서 5초 간격 갱신 |
+| 홈 데이터 상태 | 조회 중·성공·실패, 마지막 성공 응답 시각·수동 다시 조회 표시. 실패 시 기기 상태는 UNKNOWN, 이전 배터리/정지 상태를 현재 값처럼 표시하지 않음 |
+| 아이 이름 동기화 | 서버의 아이 이름을 홈·sessionStorage에 반영. 프로필에서 수정 성공 시 이름·재계산된 단계/월령을 홈에도 즉시 반영 |
 | 프로필 상세 | 서버 기준 표시, 로딩·실패·재시도·미지원 상태 구분 |
 | 위험 알림·상세 | 대시보드 활성 위험 선택 시 동일 위험 상세 API 조회 |
 | 위험 목록 | 백엔드 목록 API는 준비됨. 현재 프론트는 대시보드 `activeHazards` 사용 |
@@ -410,6 +412,7 @@ SELECT version, description, success FROM flyway_schema_history ORDER BY install
 | 프로필 변경 리포트 | 선택 월의 전체 단계 변경·사유·기록 시각 및 당시 기준 문구 표시. 이력 없는 월은 빈 안내 |
 | 미수집 리포트 값 | 회피율·청소 면적 카드 숨김. 실제 API 모드의 평가 버튼은 숨김 |
 | 기기 | 미등록이면 `null`, 등록 후 실제 이름·최근 상태 표시. 미보고/만료는 상태 확인 전, 실제 제어 버튼 비활성화 |
+| API 오류 안내 | 등록·수정·프로필·대시보드·위험 상세·월간 리포트에 공통 오류 처리. 서버 message·requestId 표시, 입력 화면은 fieldErrors 반영 |
 
 `VITE_API_BASE_URL` 미설정 시 프론트 서비스는 mock 모드로 동작한다.
 실제 API 모드의 Safety Profile 상세는 서버 활성 위험을 사용하고 지도는 준비 중으로 표시한다.
@@ -482,6 +485,7 @@ Vite가 5173 이외 포트를 사용하면 현재 CORS 허용값도 조정해야
 | `backend/` | `.\gradlew.bat clean test` | 성장단계·변경 이력·주기 실행·대시보드·위험·월간 집계·좌표·재시도 테스트. DB 통합 테스트는 기본 생략 |
 | `frontend/` | `npm run build` | TypeScript·프로덕션 빌드 검증 |
 | `frontend/` | `npm run lint` | 프론트 코드 검사 |
+| `frontend/` | `node --test tests/apiError.test.mjs` | 서버 오류·요청 ID·비JSON 응답·요청 키 충돌 안내 검증 |
 
 단위 테스트의 저장소는 Mockito mock을 사용한다. 실제 PostgreSQL 저장이나 하드웨어 통합 테스트를
 대신하지 않는다. DB 통합 테스트는 `RUN_DB_TESTS=true`와 `DB_PASSWORD`가 설정된 경우에만 실행한다.

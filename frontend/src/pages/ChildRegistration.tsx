@@ -4,6 +4,7 @@ import babyFaceIcon from '../assets/icons/baby-face.svg'
 import calendarIcon from '../assets/icons/calendar.svg'
 import checkIcon from '../assets/icons/check.svg'
 import { computeSafetyProfile, localToday, registerChild, type RegisteredChild } from '../services/children'
+import { ApiRequestError, apiErrorMessage } from '../services/apiError'
 import { stageByOrder, stageDisplayNames, stageOrder, stageRegistrationAgeLabels, stageTitles } from '../lib/stages'
 import { generateId } from '../lib/id'
 
@@ -11,13 +12,15 @@ type RegistrationStatus = 'editing' | 'loading' | 'success' | 'failure'
 
 interface ChildRegistrationProps {
   onGoHome: (child: RegisteredChild) => void
+  notice?: string
 }
 
-export default function ChildRegistration({ onGoHome }: ChildRegistrationProps) {
+export default function ChildRegistration({ onGoHome, notice }: ChildRegistrationProps) {
   const [name, setName] = useState('')
   const [birthDate, setBirthDate] = useState('')
   const [status, setStatus] = useState<RegistrationStatus>('editing')
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [registeredChild, setRegisteredChild] = useState<RegisteredChild | null>(null)
   const requestKey = useRef(generateId())
 
@@ -27,6 +30,7 @@ export default function ChildRegistration({ onGoHome }: ChildRegistrationProps) 
   function resetAfterEdit() {
     setStatus('editing')
     setError('')
+    setFieldErrors({})
     requestKey.current = generateId()
   }
 
@@ -53,6 +57,7 @@ export default function ChildRegistration({ onGoHome }: ChildRegistrationProps) 
     }
 
     setError('')
+    setFieldErrors({})
     setStatus('loading')
     try {
       const child = await registerChild(
@@ -63,7 +68,9 @@ export default function ChildRegistration({ onGoHome }: ChildRegistrationProps) 
       setName(child.name)
       setBirthDate(child.birthDate)
       setStatus('success')
-    } catch {
+    } catch (cause) {
+      setFieldErrors(cause instanceof ApiRequestError ? cause.fieldErrors : {})
+      setError(apiErrorMessage(cause, '아이 정보를 등록하지 못했어요. 다시 시도해 주세요.'))
       setStatus('failure')
     }
   }
@@ -79,7 +86,7 @@ export default function ChildRegistration({ onGoHome }: ChildRegistrationProps) 
     editing: <>생년월일을 입력하면 성장 단계에 맞는<br />안전점검 기준을 확인할 수 있어요</>,
     loading: '잠시만 기다려 주세요.',
     success: `${registeredChild?.name ?? name}의 정보를 확인했어요.`,
-    failure: '연결 상태를 확인하고 다시 시도해 주세요.',
+    failure: '아래 안내를 확인하고 다시 시도해 주세요.',
   }[status]
 
   const buttonText = {
@@ -97,10 +104,11 @@ export default function ChildRegistration({ onGoHome }: ChildRegistrationProps) 
   }[status]
 
   return (
-    <div className="min-h-screen bg-[#f0f5fd] [zoom:max(0.85,calc(100vw/402px))]">
+    <div className="min-h-screen bg-[#f0f5fd] [zoom:clamp(0.85,calc(100vw/402px),1.4)]">
       <Header title="아이 정보 등록" hasNotification />
 
       <main className="mx-auto max-w-[402px] px-4 pb-6 pt-[45px]">
+        {notice && <p role="alert" className="mb-4 rounded-xl border border-[#ffdfdf] bg-[#fff8f8] px-4 py-3 text-[12px] text-[#a50034]">{notice}</p>}
         <section className="rounded-2xl border-2 border-dashed border-[#ffdfdf] bg-[#fff8f8] px-5 py-5 drop-shadow-[0px_1px_1px_rgba(0,0,0,0.05)]">
           <div className="flex min-h-[128px] flex-col items-center">
             <div className="flex size-12 items-center justify-center rounded-full bg-[#ffeaeb]">
@@ -124,14 +132,16 @@ export default function ChildRegistration({ onGoHome }: ChildRegistrationProps) 
                   id="child-name"
                   type="text"
                   autoComplete="off"
+                  maxLength={50}
                   value={name}
                   onChange={(event) => { setName(event.target.value); resetAfterEdit() }}
                   placeholder="예: 김튼튼, 우리아가"
                   readOnly={isReadOnly}
-                  aria-invalid={!!error && !name.trim()}
-                  aria-describedby={error ? 'registration-message' : undefined}
+                  aria-invalid={!!fieldErrors.name || (!!error && !name.trim())}
+                  aria-describedby={fieldErrors.name ? 'child-name-error' : error ? 'registration-message' : undefined}
                   className="h-[45px] w-full rounded-xl border border-[#ffe4e6] bg-white px-[15px] text-[14px] text-[#1e293b] placeholder:text-[#6b7280] focus:outline-none focus:ring-2 focus:ring-[#a50034]/20 read-only:text-[#6b7280]"
                 />
+                {fieldErrors.name && <p id="child-name-error" role="alert" className="text-[11px] text-[#a50034]">{fieldErrors.name}</p>}
               </div>
 
               <div className="flex flex-col gap-1.5">
@@ -146,8 +156,8 @@ export default function ChildRegistration({ onGoHome }: ChildRegistrationProps) 
                     max={localToday()}
                     onChange={(event) => { setBirthDate(event.target.value); resetAfterEdit() }}
                     disabled={isReadOnly}
-                    aria-invalid={!!error && (!birthDate || birthDate > localToday())}
-                    aria-describedby={error ? 'registration-message' : undefined}
+                    aria-invalid={!!fieldErrors.birthDate || (!!error && (!birthDate || birthDate > localToday()))}
+                    aria-describedby={fieldErrors.birthDate ? 'child-birthday-error' : error ? 'registration-message' : undefined}
                     className="h-[45px] w-full appearance-none rounded-xl border border-[#ffe4e6] bg-white px-[15px] text-[14px] text-transparent caret-transparent focus:outline-none focus:ring-2 focus:ring-[#a50034]/20 disabled:opacity-100 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:size-full [&::-webkit-calendar-picker-indicator]:opacity-0"
                   />
                   <span
@@ -162,6 +172,7 @@ export default function ChildRegistration({ onGoHome }: ChildRegistrationProps) 
                     className="pointer-events-none absolute right-[17px] top-1/2 h-[16.67px] w-[15px] -translate-y-1/2"
                   />
                 </div>
+                {fieldErrors.birthDate && <p id="child-birthday-error" role="alert" className="text-[11px] text-[#a50034]">{fieldErrors.birthDate}</p>}
               </div>
             </div>
 

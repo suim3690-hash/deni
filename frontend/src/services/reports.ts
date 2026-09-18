@@ -1,4 +1,5 @@
 import type { Stage } from '../lib/stages'
+import { apiErrorFromResponse } from './apiError'
 
 export interface ProfileStageChange {
   from: Stage | null
@@ -26,15 +27,6 @@ export interface MonthlyReport {
   nextStagePreview: { stage: Stage | null; description: string }
   feedback: string | null
   isMock: boolean
-}
-
-export class MonthlyReportRequestError extends Error {
-  readonly status: number
-
-  constructor(status: number) {
-    super(`Monthly report request failed: ${status}`)
-    this.status = status
-  }
 }
 
 export function currentReportMonth() {
@@ -65,7 +57,7 @@ export async function getMonthlyReport(childId: string, childName: string, month
 
   const query = new URLSearchParams({ childId, month })
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/reports/monthly?${query}`, { signal })
-  if (!response.ok) throw new MonthlyReportRequestError(response.status)
+  if (!response.ok) throw await apiErrorFromResponse(response, '월간 리포트를 불러오지 못했어요.')
   const data = await response.json() as Omit<MonthlyReport, 'isMock'>
   return { ...data, isMock: false }
 }
