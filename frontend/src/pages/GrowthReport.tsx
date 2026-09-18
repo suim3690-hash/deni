@@ -88,6 +88,7 @@ export default function GrowthReport({ child, month: initialMonth, onBack }: Pro
         </header>
 
         <main className="space-y-[14px] px-4 pt-[8px]">
+          <p className="rounded-[12px] border border-[#dbeafe] bg-[#eff6ff] px-3 py-2 text-center text-[11px] text-[#1e3a8a]">화면 확인용 예시 리포트입니다. 실제 기기·DB 분석 결과가 아닙니다.</p>
           <div className="flex items-center justify-between px-1">
             <div className="flex items-center gap-1.5">
               <span className="size-[6px] shrink-0 rounded-full bg-[#a50034]" />

@@ -13,7 +13,7 @@ import robotDot from '../assets/figma/home/imgVector6.svg'
 import reportIcon from '../assets/figma/home/imgContainer1.svg'
 import powerButton from '../assets/figma/home/power-button.png'
 import type { RegisteredChild } from '../services/children'
-import { getDashboard, getHazardDetail, HazardDetailError, sendDeviceCommand, type DashboardHazard, type DashboardSnapshot, type HazardDetail } from '../services/dashboard'
+import { DashboardRequestError, getDashboard, getHazardDetail, HazardDetailError, sendDeviceCommand, type DashboardHazard, type DashboardSnapshot, type HazardDetail } from '../services/dashboard'
 import { stageBannerSubtitles, stageTitles } from '../lib/stages'
 
 type Modal = 'device' | 'hazards' | 'avoidance' | null
@@ -45,9 +45,10 @@ function ControlButton({ onClick, disabled, label, children }: { onClick: () => 
 interface Props {
   child: RegisteredChild
   onUpdateChild: (child: RegisteredChild) => void
+  onChildUnavailable: () => void
 }
 
-export default function RegisteredHome({ child, onUpdateChild }: Props) {
+export default function RegisteredHome({ child, onUpdateChild, onChildUnavailable }: Props) {
   const [dashboard, setDashboard] = useState<DashboardSnapshot | null>(null)
   const [loadError, setLoadError] = useState(false)
   const [modal, setModal] = useState<Modal>(null)
@@ -73,8 +74,12 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
           setDashboard(result)
           setLoadError(false)
         }
-      } catch {
-        if (current) setLoadError(true)
+      } catch (error) {
+        if (current && error instanceof DashboardRequestError && error.status === 404) {
+          onChildUnavailable()
+        } else if (current) {
+          setLoadError(true)
+        }
       } finally {
         inFlight = false
       }
@@ -93,7 +98,7 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
       document.removeEventListener('visibilitychange', refreshWhenVisible)
       window.removeEventListener('focus', refreshWhenVisible)
     }
-  }, [child])
+  }, [child, onChildUnavailable])
 
   useEffect(() => {
     if (!modal) return
@@ -110,6 +115,7 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
   const profile = dashboard?.currentProfile ?? child.safetyProfile
   const isSupported = profile.status === 'APPLIED' && profile.stage !== null
   const report = dashboard?.reportSummary
+  const exampleReportAvailable = Boolean(dashboard?.isMock && report?.available)
   const isPaused = device?.operationState === 'PAUSED'
   const isStopped = device?.operationState === 'STOPPING'
   const activeHazard = dashboard?.activeHazards[0]
@@ -155,13 +161,13 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
   }
 
   if (selectedHazard) return <HazardLocation hazard={selectedHazard} detail={hazardDetail} error={hazardError} errorStatus={hazardErrorStatus} isMock={dashboard?.isMock ?? false} onBack={() => setSelectedHazard(null)} onRetry={() => void openHazardDetail(selectedHazard)} />
-  if (showSafetyProfile) return <SafetyProfileDetail child={child} onBack={() => setShowSafetyProfile(false)} onUpdateChild={onUpdateChild} />
-  if (showReport && report) return <GrowthReport child={child} month={report.month} onBack={() => setShowReport(false)} />
+  if (showSafetyProfile) return <SafetyProfileDetail child={child} onBack={() => setShowSafetyProfile(false)} onUpdateChild={onUpdateChild} isMock={dashboard?.isMock ?? !import.meta.env.VITE_API_BASE_URL} activeHazards={dashboard?.activeHazards ?? null} hazardsError={loadError} />
+  if (showReport && report && exampleReportAvailable) return <GrowthReport child={child} month={report.month} onBack={() => setShowReport(false)} />
 
   return (
     <div className="min-h-screen bg-[#f0f5fd] text-[#1e293b] [zoom:max(0.85,calc(100vw/402px))]">
       <div className="mx-auto min-h-screen max-w-[402px] pb-[85px]">
-        <Header title="손지아 홈" hasNotification />
+        <Header title={`${child.name} 홈`} hasNotification />
         <main className="px-6 pt-[10px]">
           {activeHazard && (
             <section aria-label="위험 물체 감지 알림" role="status" className="mb-3 rounded-[16px] border border-[#ffc5c5] bg-[#fff9f9] px-4 pb-4 pt-[17px] text-[#25252b]">
@@ -170,10 +176,10 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-1">
                     <h2 className="text-[16px] font-bold text-[#b42330]">위험 물체 감지 알림</h2>
-                    <span className="shrink-0 rounded-full bg-[#ffe8e9] px-2 py-[3px] text-[10px] font-semibold text-[#b42330]">{isPaused ? '일시정지 중' : '상태 확인 중'}</span>
+                    <span className="shrink-0 rounded-full bg-[#ffe8e9] px-2 py-[3px] text-[10px] font-semibold text-[#b42330]">{dashboard?.isMock ? '화면 예시' : !device ? '기기 상태 미확인' : isPaused ? '일시정지 중' : '상태 확인 중'}</span>
                   </div>
                   <p className="mt-1 text-[12px] leading-[1.4]">
-                    {activeHazard.locationLabel} <strong className="text-[#b42330]">위험 물체({activeHazard.objectName}) 1개</strong>가 감지되어 로봇청소기 운행이 {isPaused ? '즉시 정지되었습니다.' : '정지 확인 중입니다.'}
+                    {activeHazard.locationLabel} <strong className="text-[#b42330]">위험 물체({activeHazard.objectName}) 1개</strong>가 감지되었습니다. {device ? isPaused ? '로봇청소기 운행이 일시정지 중입니다.' : '로봇청소기 운행 상태를 확인 중입니다.' : '기기 운행 상태는 아직 확인할 수 없어요.'}
                   </p>
                 </div>
               </div>
@@ -196,7 +202,7 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
                   <img src={robotDot} alt="" className="absolute right-[5px] top-[4px] size-2" />
                 </div>
                 <div className="min-w-0">
-                  <h2 className="truncate text-[16px] font-bold text-black">{device ? 'LG 로니 AI 베이비 케어' : loadError ? '기기 상태 조회 실패' : dashboard ? '등록된 기기가 없어요' : '기기 상태 확인 중'}</h2>
+                  <h2 className="truncate text-[16px] font-bold text-black">{device ? 'LG 로니 AI 베이비 케어' : loadError ? '기기 상태 조회 실패' : dashboard ? '기기 정보 연동 전' : '기기 상태 확인 중'}</h2>
                   <span className="mt-1 inline-flex rounded-full bg-[#d1feee] px-[7px] py-[1px] text-[10px] text-[#166b58]">{device ? '로봇' : '연결 전'}</span>
                 </div>
               </div>
@@ -272,7 +278,7 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
               {isSupported && profile.stage ? stageTitles[profile.stage] : '현재 지원하는 연령이 아니에요'}
             </h2>
             <p className="mt-1 text-[12px] leading-[1.4] text-white/95">
-              {isSupported && profile.stage ? stageBannerSubtitles[profile.stage] : '안전 프로필이 적용되지 않았어요.'}
+              {isSupported && profile.stage ? dashboard?.isMock ? stageBannerSubtitles[profile.stage] : '성장 단계별 안전점검 기준을 서버에서 확인했어요. 기기 적용은 연동 전입니다.' : '안전 프로필이 적용되지 않았어요.'}
             </p>
             <div className="mt-3 flex justify-end border-t border-white/25 pt-2">
               <button type="button" onClick={() => setShowSafetyProfile(true)} className="text-[11px] underline underline-offset-2 focus-visible:outline-white">상세 보기 &gt;</button>
@@ -281,23 +287,23 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
 
           <section aria-label="월간 성장 리포트" className="mt-[24px] min-h-[190px] rounded-[24px] border border-[#e8edf5] bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between gap-2">
-              <span className="rounded-full border border-[#fee2e2] bg-[#fef2f2] px-[10px] py-[3px] text-[11px] text-[#a50034]">{report?.available ? `이번 달(${Number(report.month.slice(5))}월) 리포트 발행 완료` : '리포트 준비 중'}</span>
-              <span className="text-[10px] text-[#94a3b8]">매월 1일 자동 업데이트</span>
+              <span className="rounded-full border border-[#fee2e2] bg-[#fef2f2] px-[10px] py-[3px] text-[11px] text-[#a50034]">{exampleReportAvailable && report ? `화면 예시 · ${Number(report.month.slice(5))}월 리포트` : '리포트 준비 중'}</span>
+              <span className="text-[10px] text-[#94a3b8]">{exampleReportAvailable ? '화면 확인용 예시' : '데이터 연동 준비 중'}</span>
             </div>
             <div className="mt-3 flex items-center gap-2">
               <img src={reportIcon} alt="" className="size-[15px]" />
               <h2 className="text-[18px] font-semibold">우리 아이 맞춤 성장 리포트</h2>
             </div>
             <p className="mt-1 text-[12px] leading-[1.6] text-[#475569]">
-              {report?.available ? `${child.name} 아동의 ${Number(report.month.slice(5))}월 행동 반경 및 위험물 접촉 분석 데이터가 포함된 심층 리포트를 확인해보세요.` : '기기 데이터가 쌓이면 월간 성장 리포트를 확인할 수 있어요.'}
+              {exampleReportAvailable && report ? `${child.name} 아동의 ${Number(report.month.slice(5))}월 행동 반경 및 위험물 접촉 분석 화면 예시를 확인해보세요.` : '기기 데이터가 쌓이면 월간 성장 리포트를 확인할 수 있어요.'}
             </p>
             <div className="mt-3 border-t border-[#f1f5f9] pt-2 text-center">
-              <button type="button" onClick={() => setShowReport(true)} disabled={!report?.available} className="inline-flex h-[43px] w-[205px] items-center justify-center rounded-full bg-[#b9003d] text-[15px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45">
+              <button type="button" onClick={() => setShowReport(true)} disabled={!exampleReportAvailable} className="inline-flex h-[43px] w-[205px] items-center justify-center rounded-full bg-[#b9003d] text-[15px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45">
                 리포트 보러가기 <ArrowRight size={16} className="ml-1" />
               </button>
             </div>
           </section>
-          {dashboard?.isMock && <p className="mt-3 text-center text-[11px] text-[#94a3b8]">현재 기기·리포트 수치는 화면 확인용 예시입니다.</p>}
+          {dashboard?.isMock && <p className="mt-3 text-center text-[11px] text-[#94a3b8]">현재 기기·위험·리포트 정보는 화면 확인용 예시입니다.</p>}
           {loadError && <p role="alert" className="mt-3 text-center text-[12px] text-[#a50034]">홈 데이터를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.</p>}
         </main>
 
@@ -317,7 +323,7 @@ export default function RegisteredHome({ child, onUpdateChild }: Props) {
               <button ref={closeButtonRef} type="button" onClick={() => setModal(null)} aria-label="닫기" className="rounded-full p-1 text-[#475569] focus-visible:outline-[#a50034]"><X size={20} /></button>
             </div>
             {modal === 'avoidance' ? (
-              <p className="mt-4 text-[14px] leading-6 text-[#475569]">우회 청소는 기기가 위험물을 피해 안전하게 이동하는 방식이 확정된 뒤 사용할 수 있어요. 현재 로봇청소기는 정지 상태를 유지합니다. 위치를 확인하고 위험물을 직접 치워 주세요.</p>
+              <p className="mt-4 text-[14px] leading-6 text-[#475569]">{dashboard?.isMock ? '우회 청소는 기기가 위험물을 피해 안전하게 이동하는 방식이 확정된 뒤 사용할 수 있어요. 현재 로봇청소기는 정지 상태를 유지합니다. 위치를 확인하고 위험물을 직접 치워 주세요.' : '우회 청소 기능은 아직 연결되지 않았어요. 기기 운행 상태는 확인할 수 없으므로 위험물 위치를 확인하고 직접 치워 주세요.'}</p>
             ) : modal === 'hazards' ? (
               <div className="mt-4 text-[14px] text-[#475569]">
                 {dashboard?.activeHazards.length ? dashboard.activeHazards.map((hazard) => <button key={hazard.hazardId} type="button" onClick={() => void openHazardDetail(hazard)} className="block w-full border-b border-[#e2e8f0] py-2 text-left focus-visible:outline-[#a50034]">{hazard.objectName} · {hazard.locationLabel} <ArrowRight size={14} className="inline" /></button>) : <p>현재 표시할 위험 감지 내역이 없어요.</p>}

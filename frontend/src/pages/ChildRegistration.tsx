@@ -76,7 +76,7 @@ export default function ChildRegistration({ onGoHome }: ChildRegistrationProps) 
   }[status]
 
   const description = {
-    editing: <>생년월일을 입력하면 성장 단계에 맞춰<br />로봇청소기 안전 기준이 자동으로 바뀌어요</>,
+    editing: <>생년월일을 입력하면 성장 단계에 맞는<br />안전점검 기준을 확인할 수 있어요</>,
     loading: '잠시만 기다려 주세요.',
     success: `${registeredChild?.name ?? name}의 정보를 확인했어요.`,
     failure: '연결 상태를 확인하고 다시 시도해 주세요.',
@@ -90,15 +90,15 @@ export default function ChildRegistration({ onGoHome }: ChildRegistrationProps) 
   }[status]
 
   const helper = error || {
-    editing: <>등록 후 기기 연결 상태를 확인하고<br />맞춤 안전 프로필을 적용합니다.</>,
+    editing: <>등록 후 아이의 성장 단계와<br />맞춤 안전 프로필을 저장합니다.</>,
     loading: '정보 저장이 완료되면 다음 화면으로 이동합니다.',
-    success: <>안전 프로필의 기기 적용 상태는<br />홈에서 확인해 주세요.</>,
+    success: <>성장 단계별 안전점검 기준은<br />홈에서 확인해 주세요.</>,
     failure: '입력한 정보는 유지되어 있어요.',
   }[status]
 
   return (
     <div className="min-h-screen bg-[#f0f5fd] [zoom:max(0.85,calc(100vw/402px))]">
-      <Header title="손지아 홈" hasNotification />
+      <Header title="아이 정보 등록" hasNotification />
 
       <main className="mx-auto max-w-[402px] px-4 pb-6 pt-[45px]">
         <section className="rounded-2xl border-2 border-dashed border-[#ffdfdf] bg-[#fff8f8] px-5 py-5 drop-shadow-[0px_1px_1px_rgba(0,0,0,0.05)]">

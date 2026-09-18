@@ -3,7 +3,9 @@ import ChildRegistration from './pages/ChildRegistration'
 import RegisteredHome from './pages/RegisteredHome'
 import type { RegisteredChild } from './services/children'
 
-const childSessionKey = 'deni:registered-child:v1'
+const childSessionKey = import.meta.env.VITE_API_BASE_URL
+  ? 'deni:registered-child:api:v1'
+  : 'deni:registered-child:mock:v1'
 
 function isRegisteredChild(value: unknown): value is RegisteredChild {
   if (!value || typeof value !== 'object') return false
@@ -45,7 +47,16 @@ function App() {
     setChild(registeredChild)
   }
 
-  return child ? <RegisteredHome child={child} onUpdateChild={persistChild} /> : <ChildRegistration onGoHome={persistChild} />
+  function clearChild() {
+    try {
+      sessionStorage.removeItem(childSessionKey)
+    } catch {
+      // The registration screen remains available without session storage.
+    }
+    setChild(null)
+  }
+
+  return child ? <RegisteredHome child={child} onUpdateChild={persistChild} onChildUnavailable={clearChild} /> : <ChildRegistration onGoHome={persistChild} />
 }
 
 export default App

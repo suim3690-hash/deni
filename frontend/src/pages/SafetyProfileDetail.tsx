@@ -3,12 +3,16 @@ import { AlertTriangle, ArrowLeft, BatteryWarning, Blocks, Check, Coins, Info, L
 import floorPlanPreview from '../assets/figma/safety-profile/floor-plan.png'
 import MonthlyFeedbackButton from '../components/MonthlyFeedbackButton'
 import { getSafetyProfile, localToday, updateChild, type RegisteredChild, type SafetyProfileData } from '../services/children'
+import type { DashboardHazard } from '../services/dashboard'
 import { stageAgeRangeLabels, stageBannerSubtitles, stageLabels, stageOrder, stageTitles } from '../lib/stages'
 
 interface Props {
   child: RegisteredChild
   onBack: () => void
   onUpdateChild: (child: RegisteredChild) => void
+  isMock: boolean
+  activeHazards: DashboardHazard[] | null
+  hazardsError: boolean
 }
 
 const hazardItems = [
@@ -18,7 +22,7 @@ const hazardItems = [
   { icon: Magnet, name: '작은 자석', detail: '1개 (장천공 주의)', danger: true },
 ]
 
-export default function SafetyProfileDetail({ child, onBack, onUpdateChild }: Props) {
+export default function SafetyProfileDetail({ child, onBack, onUpdateChild, isMock, activeHazards, hazardsError }: Props) {
   const [profileReloadKey, setProfileReloadKey] = useState(0)
   const profileRequestKey = `${child.childId}:${child.birthDate}:${profileReloadKey}`
   const [profileRequest, setProfileRequest] = useState<{
@@ -112,14 +116,14 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild }: Pr
         <main className="space-y-4 px-4 pt-4">
           <section aria-label="성장 단계 안내" className="min-h-[185px] rounded-[24px] bg-gradient-to-r from-[#d9064d] via-[#ee4f7e] to-[#fa80a5] p-5 text-white shadow-[0_6px_15px_rgba(174,0,57,0.14)]">
             <div className="flex items-start justify-between">
-              <span className="rounded-full bg-white/20 px-[10px] py-[5px] text-[11px] font-medium">✦ {isSupported ? '현재 Safety Profile 자동 적용 중' : '지원 범위 밖'}</span>
-              <MonthlyFeedbackButton shapeClassName="size-[44px] rounded-[14px]" iconSize={22} />
+              <span className="rounded-full bg-white/20 px-[10px] py-[5px] text-[11px] font-medium">✦ {isSupported ? isMock ? '현재 Safety Profile 자동 적용 중' : 'Safety Profile 등록 완료' : '지원 범위 밖'}</span>
+              {isMock ? <MonthlyFeedbackButton shapeClassName="size-[44px] rounded-[14px]" iconSize={22} /> : <span title="리포트 평가 기능 준비 중" aria-label="리포트 평가 기능 준비 중" className="grid size-[44px] place-items-center rounded-[14px] bg-white/20"><Smile size={22} aria-hidden="true" /></span>}
             </div>
             <h2 className="-mt-1 text-[21px] font-bold leading-[1.2]">
               {isSupported && stage ? stageTitles[stage] : '현재 지원하는 연령이 아니에요'}
             </h2>
             <p className="mt-1 text-[12px] leading-[1.4] text-white/95">
-              {isSupported && stage ? stageBannerSubtitles[stage] : '안전 프로필이 적용되지 않았어요.'}
+              {isSupported && stage ? isMock ? stageBannerSubtitles[stage] : '성장 단계에 맞는 안전점검 기준을 서버에서 확인했어요. 기기 적용은 연동 전입니다.' : '안전 프로필이 적용되지 않았어요.'}
             </p>
           </section>
 
@@ -156,7 +160,7 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild }: Pr
                       aria-invalid={!!editError && (!editBirthDate || editBirthDate > localToday())}
                       className="h-[45px] w-full rounded-xl border border-[#e2e8f0] bg-white px-[15px] text-[14px] text-[#1e293b] focus:outline-none focus:ring-2 focus:ring-[#a50034]/20 disabled:opacity-60"
                     />
-                    <p className="text-[11px] leading-[1.4] text-[#94a3b8]">생년월일 기준으로 성장 단계가 재산정되어 Safety Profile이 자동 적용돼요.</p>
+                    <p className="text-[11px] leading-[1.4] text-[#94a3b8]">생년월일을 바꾸면 성장 단계와 Safety Profile 기준이 다시 계산돼요.</p>
                   </div>
                 </div>
 
@@ -198,50 +202,75 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild }: Pr
 
           <section aria-label="스마트 안심 케어 맵" className="rounded-[24px] border border-[#f1f5f9] bg-white p-[17px] shadow-sm">
             <h2 className="mb-3 flex items-center gap-2 text-[15px] font-bold"><span className="size-[10px] rounded-full bg-[#2563eb]" />스마트 안심 케어 맵</h2>
-            <div className="overflow-hidden rounded-[20px] border border-black/10">
-              <img src={floorPlanPreview} alt="집안 위험물 감지 위치가 표시된 예시 지도" className="block w-full" />
-            </div>
-            <p className="mt-2 text-center text-[11px] text-[#94a3b8]">지도는 화면 확인용 예시입니다.</p>
+            {isMock ? (
+              <>
+                <div className="overflow-hidden rounded-[20px] border border-black/10">
+                  <img src={floorPlanPreview} alt="집안 위험물 감지 위치가 표시된 예시 지도" className="block w-full" />
+                </div>
+                <p className="mt-2 text-center text-[11px] text-[#94a3b8]">화면 예시 지도이며 실제 감지 위치가 아닙니다.</p>
+              </>
+            ) : (
+              <p className="rounded-[20px] bg-[#f3f6fc] px-4 py-8 text-center text-[13px] text-[#64748b]">실제 지도 데이터는 아직 제공되지 않아요. 감지 위치는 아래 위험 기록에서 확인할 수 있어요.</p>
+            )}
           </section>
 
-          {isSupported && (
+          {(isSupported || !isMock) && (
             <section aria-label="영유아 바닥 삼킴 위험물 사전 탐지" className="space-y-3 pt-1">
               <div className="flex items-center justify-between px-1">
                 <div className="flex items-center gap-2">
                   <span className="size-2 shrink-0 rounded-full bg-[#e11d48]" />
-                  <h2 className="text-[16px] font-medium">영유아 바닥 삼킴 위험물 사전 탐지</h2>
+                  <h2 className="text-[16px] font-medium">{isMock ? '영유아 바닥 삼킴 위험물 사전 탐지' : '현재 위험 감지 기록'}</h2>
                 </div>
-                <span className="shrink-0 rounded-full border border-[#fecdd3] bg-[#ffe4e6] px-3 py-[5px] text-[10px] font-bold text-[#be123c]">Baby Safe Scan</span>
+                <span className="shrink-0 rounded-full border border-[#fecdd3] bg-[#ffe4e6] px-3 py-[5px] text-[10px] font-bold text-[#be123c]">{isMock ? '화면 예시' : 'DB 조회'}</span>
               </div>
 
-              <div className="flex items-center gap-3 rounded-[24px] border border-[#fecdd3] bg-[#fff1f2] p-[17px]">
-                <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-[#e11d48] shadow-[0_4px_6px_-1px_#fecdd3]"><AlertTriangle size={22} className="text-white" fill="currentColor" stroke="white" aria-hidden="true" /></span>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[14px] font-medium text-[#4c0519]">삼킴 위험도</span>
-                    <span className="rounded-full bg-[#e11d48] px-2 py-[2px] text-[10px] text-white">매우 높음</span>
+              {isMock && (
+                <div className="flex items-center gap-3 rounded-[24px] border border-[#fecdd3] bg-[#fff1f2] p-[17px]">
+                  <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-[#e11d48] shadow-[0_4px_6px_-1px_#fecdd3]"><AlertTriangle size={22} className="text-white" fill="currentColor" stroke="white" aria-hidden="true" /></span>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[14px] font-medium text-[#4c0519]">삼킴 위험도 예시</span>
+                      <span className="rounded-full bg-[#e11d48] px-2 py-[2px] text-[10px] text-white">매우 높음</span>
+                    </div>
+                    <p className="text-[12px] leading-[1.4] text-[#9f1239]">화면 확인용 위험물 {hazardItems.length}개 항목을 표시하고 있어요.</p>
                   </div>
-                  <p className="text-[12px] leading-[1.4] text-[#9f1239]">영유아 입에 들어가기 쉬운 직경 3cm 이하 고위험 물체 {hazardItems.length}건 감지됨</p>
                 </div>
-              </div>
+              )}
 
               <div className="rounded-[24px] border border-[#f1f5f9] bg-white p-[17px] shadow-sm">
                 <div className="flex items-center justify-between">
-                  <span className="text-[12px] font-medium text-[#1e293b]">발견된 위험물 리스트 (총 {hazardItems.length}개 항목)</span>
-                  <span className="text-[12px] font-medium text-[#e11d48]">물체 설정</span>
+                  <span className="text-[12px] font-medium text-[#1e293b]">{isMock ? `예시 위험물 목록 (${hazardItems.length}개 항목)` : `활성 위험 기록 (${hazardsError ? '조회 실패' : activeHazards === null ? '조회 중' : `${activeHazards.length}건`})`}</span>
+                  <span className="text-[12px] font-medium text-[#e11d48]">{isMock ? '화면 예시' : '실제 데이터'}</span>
                 </div>
-                <div className="mt-3 grid grid-cols-2 gap-2.5">
-                  {hazardItems.map((item) => (
-                    <div key={item.name} className="relative rounded-[16px] border border-[#e2e8f0]/80 bg-[#f8fafc] p-[13px]">
-                      <span className="grid size-8 place-items-center rounded-xl border border-[#e2e8f0]/60 bg-white"><item.icon size={16} className={item.danger ? 'text-[#e11d48]' : 'text-[#475569]'} aria-hidden="true" /></span>
-                      <p className="mt-2 text-[12px] font-bold text-[#0f172a]">{item.name}</p>
-                      <p className={`text-[11px] ${item.danger ? 'text-[#e11d48]' : 'text-[#64748b]'}`}>{item.detail}</p>
-                      {item.danger && <span className="absolute right-[10px] top-[10px] size-2 rounded-full bg-[#e11d48] shadow-[0_0_0_4px_#ffe4e6]" />}
-                    </div>
-                  ))}
-                </div>
+                {isMock ? (
+                  <div className="mt-3 grid grid-cols-2 gap-2.5">
+                    {hazardItems.map((item) => (
+                      <div key={item.name} className="relative rounded-[16px] border border-[#e2e8f0]/80 bg-[#f8fafc] p-[13px]">
+                        <span className="grid size-8 place-items-center rounded-xl border border-[#e2e8f0]/60 bg-white"><item.icon size={16} className={item.danger ? 'text-[#e11d48]' : 'text-[#475569]'} aria-hidden="true" /></span>
+                        <p className="mt-2 text-[12px] font-bold text-[#0f172a]">{item.name}</p>
+                        <p className={`text-[11px] ${item.danger ? 'text-[#e11d48]' : 'text-[#64748b]'}`}>{item.detail}</p>
+                        {item.danger && <span className="absolute right-[10px] top-[10px] size-2 rounded-full bg-[#e11d48] shadow-[0_0_0_4px_#ffe4e6]" />}
+                      </div>
+                    ))}
+                  </div>
+                ) : hazardsError ? (
+                  <p role="alert" className="mt-3 text-[12px] text-[#9f1239]">위험 기록을 불러오지 못했어요. 홈으로 돌아가 다시 시도해 주세요.</p>
+                ) : activeHazards === null ? (
+                  <p role="status" className="mt-3 text-[12px] text-[#64748b]">위험 기록을 불러오고 있어요.</p>
+                ) : activeHazards.length === 0 ? (
+                  <p className="mt-3 text-[12px] text-[#64748b]">현재 활성 위험 기록이 없어요.</p>
+                ) : (
+                  <div className="mt-3 space-y-2.5">
+                    {activeHazards.map((hazard) => (
+                      <div key={hazard.hazardId} className="rounded-[16px] border border-[#e2e8f0]/80 bg-[#f8fafc] p-[13px]">
+                        <p className="text-[12px] font-bold text-[#0f172a]">{hazard.objectName}</p>
+                        <p className="mt-1 text-[11px] text-[#64748b]">{hazard.locationLabel} · {hazard.riskLevel === 'VERY_HIGH' ? '매우 높은 위험' : hazard.riskLevel === 'HIGH' ? '높은 위험' : hazard.riskLevel === 'MEDIUM' ? '보통 위험' : hazard.riskLevel === 'LOW' ? '낮은 위험' : '위험도 확인 전'}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-              <p className="text-center text-[11px] text-[#94a3b8]">위험물 목록은 화면 확인용 예시입니다.</p>
+              {isMock && <p className="text-center text-[11px] text-[#94a3b8]">위험물 목록은 화면 확인용 예시이며 실제 감지 결과가 아닙니다.</p>}
             </section>
           )}
 
@@ -260,7 +289,7 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild }: Pr
                 <div className="pl-2.5">
                   <div className="flex items-center gap-1.5">
                     <span className="text-[14px] font-medium">{stage ? `${stageOrder[stage]}. ${profileDetail?.stageLabel ?? stageLabels[stage]}` : '현재 지원하는 연령이 아니에요'}</span>
-                    {isSupported && <span className="rounded-full bg-[#10b981] px-2 py-[2px] text-[9px] text-white">현재 적용</span>}
+                    {isSupported && <span className="rounded-full bg-[#10b981] px-2 py-[2px] text-[9px] text-white">{isMock ? '현재 적용' : '서버 기준'}</span>}
                   </div>
                   {stage && <p className="text-[12px] font-bold text-[#047857]">{stageAgeRangeLabels[stage]} · {profile.ageMonths}개월 현재</p>}
                 </div>
@@ -288,7 +317,7 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild }: Pr
 
             <div className="flex items-start gap-2.5 rounded-2xl border border-[#dbeafe] bg-[#eff6ff]/60 p-[13px]">
               <Info size={16} className="mt-0.5 shrink-0 text-[#1e3a8a]" aria-hidden="true" />
-              <p className="text-[11px] leading-[1.5] text-[#334155]"><strong className="text-[#1e3a8a]">ThinQ 자동 연동 안내:</strong> 아이 생년월일을 등록하면 성장단계에 맞춰 로봇청소기의 안전점검 대상과 기준이 자동으로 변경됩니다.</p>
+              <p className="text-[11px] leading-[1.5] text-[#334155]"><strong className="text-[#1e3a8a]">{isMock ? 'ThinQ 자동 연동 안내:' : '현재 연동 상태:'}</strong> {isMock ? '아이 생년월일을 등록하면 성장단계에 맞춰 로봇청소기의 안전점검 대상과 기준이 자동으로 변경됩니다.' : '성장단계별 안전점검 기준은 서버에서 계산해 제공하고 있습니다. 로봇청소기 적용 여부는 아직 확인할 수 없습니다.'}</p>
             </div>
           </section>
         </main>
