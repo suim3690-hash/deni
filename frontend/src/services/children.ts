@@ -1,4 +1,5 @@
 import { generateId } from '../lib/id'
+import { apiErrorFromResponse } from './apiError'
 
 export interface ChildRegistrationInput {
   name: string
@@ -136,7 +137,7 @@ export async function registerChild(input: ChildRegistrationInput, idempotencyKe
     body: JSON.stringify(input),
   })
 
-  if (!response.ok) throw new Error(`Registration failed: ${response.status}`)
+  if (!response.ok) throw await apiErrorFromResponse(response, '아이 정보를 등록하지 못했어요.')
   return response.json() as Promise<RegisteredChild>
 }
 
@@ -150,7 +151,7 @@ export async function updateChild(childId: string, input: ChildRegistrationInput
     body: JSON.stringify(input),
   })
 
-  if (!response.ok) throw new Error(`Update failed: ${response.status}`)
+  if (!response.ok) throw await apiErrorFromResponse(response, '아이 정보를 수정하지 못했어요.')
   return response.json() as Promise<RegisteredChild>
 }
 
@@ -159,6 +160,6 @@ export async function getSafetyProfile(childId: string, birthDate: string): Prom
   if (!baseUrl) return mockGetSafetyProfile(childId, birthDate)
 
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/children/${encodeURIComponent(childId)}/safety-profile`)
-  if (!response.ok) throw new Error(`Safety profile request failed: ${response.status}`)
+  if (!response.ok) throw await apiErrorFromResponse(response, '안전점검 기준을 불러오지 못했어요.')
   return response.json() as Promise<SafetyProfileData>
 }

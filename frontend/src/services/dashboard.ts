@@ -1,5 +1,6 @@
 import type { RegisteredChild } from './children'
 import { generateId } from '../lib/id'
+import { apiErrorFromResponse } from './apiError'
 
 export type ConnectionState = 'ONLINE' | 'OFFLINE' | 'UNKNOWN'
 export type OperationState = 'RUNNING' | 'PAUSED' | 'STOPPING' | 'RESUMING' | 'READY_TO_RESUME' | 'UNKNOWN'
@@ -34,24 +35,6 @@ export interface HazardDetail extends DashboardHazard {
   captureImageUrl: string | null
   mapImageUrl: string | null
   marker: { x: number; y: number } | null
-}
-
-export class HazardDetailError extends Error {
-  readonly status: number
-
-  constructor(status: number) {
-    super(`Hazard detail request failed: ${status}`)
-    this.status = status
-  }
-}
-
-export class DashboardRequestError extends Error {
-  readonly status: number
-
-  constructor(status: number) {
-    super(`Dashboard request failed: ${status}`)
-    this.status = status
-  }
 }
 
 export interface DashboardData {
@@ -115,7 +98,7 @@ export async function getHazardDetail(hazard: DashboardHazard, isMock: boolean):
   const baseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
   if (!baseUrl) throw new Error('API URL is missing')
   const response = await fetch(`${baseUrl}/api/v1/hazards/${encodeURIComponent(hazard.hazardId)}`)
-  if (!response.ok) throw new HazardDetailError(response.status)
+  if (!response.ok) throw await apiErrorFromResponse(response, '위험 상세 정보를 불러오지 못했어요.')
   const data = await response.json() as {
     hazardId: string; object?: { name?: string }; riskLevel: string; riskReason?: string | null
     detectedAt: string; location?: { label?: string; mapImageUrl?: string | null; marker?: { x: number; y: number } | null }
@@ -148,18 +131,18 @@ export async function sendDeviceCommand(deviceId: string, action: 'pause' | 'res
     headers: { 'Content-Type': 'application/json', 'Idempotency-Key': generateId() },
     body: '{}',
   })
-  if (!response.ok) throw new Error(`Device command failed: ${response.status}`)
+  if (!response.ok) throw await apiErrorFromResponse(response, '기기 명령을 보내지 못했어요.')
   const { commandId } = await response.json() as { commandId: string }
 
   for (let attempt = 0; attempt < 8; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 800))
     const result = await fetch(`${path}/${encodeURIComponent(commandId)}`)
-    if (!result.ok) throw new Error(`Device command status failed: ${result.status}`)
+    if (!result.ok) throw await apiErrorFromResponse(result, '기기 명령 상태를 확인하지 못했어요.')
     const command = await result.json() as { status: 'REQUESTED' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN'; deviceOperationState?: OperationState }
     if (command.status === 'SUCCEEDED' && command.deviceOperationState) return command.deviceOperationState
-    if (command.status === 'FAILED') throw new Error('Device command was rejected')
+    if (command.status === 'FAILED') throw new Error('기기에서 명령을 거부했어요.')
   }
-  throw new Error('Device command confirmation timed out')
+  throw new Error('기기 명령 결과를 확인하는 데 시간이 오래 걸리고 있어요.')
 }
 
 export async function getDashboard(child: RegisteredChild): Promise<DashboardSnapshot> {
@@ -168,7 +151,7 @@ export async function getDashboard(child: RegisteredChild): Promise<DashboardSna
 
   const query = new URLSearchParams({ childId: child.childId })
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/dashboard?${query}`)
-  if (!response.ok) throw new DashboardRequestError(response.status)
+  if (!response.ok) throw await apiErrorFromResponse(response, '홈 정보를 불러오지 못했어요.')
   const data = await response.json() as DashboardData
   return { ...data, isMock: false }
 }
