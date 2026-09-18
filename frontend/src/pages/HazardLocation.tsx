@@ -41,16 +41,17 @@ export default function HazardLocation({ hazard, detail, error, errorStatus, isM
   const [manualPhase, setManualPhase] = useState<'idle' | 'moving' | 'removed' | 'done'>('idle')
   const restricted = errorStatus === 403 || errorStatus === 404
   const riskLabel = isMock ? '삼킴 고위험' : detail?.riskLevel === 'VERY_HIGH' ? '매우 높은 위험' : detail?.riskLevel === 'HIGH' ? '높은 위험' : '위험 감지'
-  const showSuccessBanner = (autoTransport && transportPhase === 'done') || manualPhase === 'done'
-  const showMovingAlert = (autoTransport && transportPhase === 'moving') || manualPhase === 'moving' || manualPhase === 'removed'
+  const showSuccessBanner = isMock && ((autoTransport && transportPhase === 'done') || manualPhase === 'done')
+  const showMovingAlert = isMock && ((autoTransport && transportPhase === 'moving') || manualPhase === 'moving' || manualPhase === 'removed')
 
   useEffect(() => {
-    if (!autoTransport) return
+    if (!isMock || !autoTransport) return
     const timer = setTimeout(() => setTransportPhase('done'), 3000)
     return () => clearTimeout(timer)
-  }, [autoTransport])
+  }, [autoTransport, isMock])
 
   useEffect(() => {
+    if (!isMock) return
     if (manualPhase === 'moving') {
       const timer = setTimeout(() => setManualPhase('removed'), 6000)
       return () => clearTimeout(timer)
@@ -59,12 +60,24 @@ export default function HazardLocation({ hazard, detail, error, errorStatus, isM
       const timer = setTimeout(() => setManualPhase('done'), 1500)
       return () => clearTimeout(timer)
     }
-  }, [manualPhase])
+  }, [manualPhase, isMock])
 
   function toggleAutoTransport() {
+    if (!isMock) {
+      setActionMessage('실제 기기 제어 기능은 아직 연결되지 않았습니다.')
+      return
+    }
     const enabled = !autoTransport
     if (enabled) setTransportPhase('moving')
     setAutoTransport(enabled)
+  }
+
+  function startManualTransport() {
+    if (!isMock) {
+      setActionMessage('실제 기기 제어 기능은 아직 연결되지 않았습니다.')
+      return
+    }
+    setManualPhase('moving')
   }
 
   return (
@@ -73,7 +86,7 @@ export default function HazardLocation({ hazard, detail, error, errorStatus, isM
         <header className="flex h-[66px] items-center gap-5 bg-[#f7f9ff] px-7">
           <button type="button" onClick={onBack} aria-label="홈으로 돌아가기" className="grid size-6 place-items-center focus-visible:outline-[#a50034]"><ArrowLeft size={22} /></button>
           <div className="min-w-0 flex-1">
-            <p className="text-[12px] font-semibold tracking-wide text-[#ae1245]"><span aria-hidden="true">●</span> BABY CARE MODE</p>
+            <p className="text-[12px] font-semibold tracking-wide text-[#ae1245]"><span aria-hidden="true">●</span> BABY CARE MODE{isMock ? ' · 화면 예시' : ''}</p>
             <h1 className="text-[18px] font-bold leading-5">실시간 위험 감지 &amp; 맵</h1>
           </div>
           <SlidersHorizontal size={20} aria-hidden="true" className="text-[#1e293b]" />
@@ -181,7 +194,7 @@ export default function HazardLocation({ hazard, detail, error, errorStatus, isM
               <button type="button" disabled className="flex min-h-[54px] flex-1 items-center justify-center rounded-[20px] bg-[#e5e7eb] px-2 text-[14px] font-semibold text-[#6b7280] disabled:cursor-default">로봇청소기 작동중</button>
             ) : (
               <>
-                <button type="button" onClick={() => setManualPhase('moving')} className="min-h-[54px] flex-1 rounded-[20px] border border-[#3755ff] bg-white px-2 text-[12px] font-semibold text-[#2948dd]">안전 위치로 이동</button>
+                <button type="button" onClick={startManualTransport} className="min-h-[54px] flex-1 rounded-[20px] border border-[#3755ff] bg-white px-2 text-[12px] font-semibold text-[#2948dd]">안전 위치로 이동</button>
                 <button type="button" onClick={() => setActionMessage('위험물을 직접 치운 뒤 확인하는 안전 처리 화면은 다음 단계에서 연결됩니다.')} className="min-h-[54px] flex-1 rounded-[20px] bg-[#b9003d] px-2 text-[13px] font-bold leading-4 text-white shadow-[0_3px_8px_rgba(185,0,61,0.25)]">사용자 직접 제거<br />(위험물 우회 청소)</button>
               </>
             )}

@@ -44,6 +44,15 @@ export class HazardDetailError extends Error {
   }
 }
 
+export class DashboardRequestError extends Error {
+  readonly status: number
+
+  constructor(status: number) {
+    super(`Dashboard request failed: ${status}`)
+    this.status = status
+  }
+}
+
 export interface DashboardData {
   child: { childId: string; name: string }
   device: DashboardDevice | null
@@ -158,7 +167,7 @@ export async function getDashboard(child: RegisteredChild): Promise<DashboardSna
 
   const query = new URLSearchParams({ childId: child.childId })
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/dashboard?${query}`)
-  if (!response.ok) throw new Error(`Dashboard request failed: ${response.status}`)
+  if (!response.ok) throw new DashboardRequestError(response.status)
   const data = await response.json() as DashboardData
   return { ...data, isMock: false }
 }
