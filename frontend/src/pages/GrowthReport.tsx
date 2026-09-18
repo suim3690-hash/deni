@@ -75,12 +75,12 @@ export default function GrowthReport({ child, month: initialMonth, onBack }: Pro
   })
 
   return (
-    <div className="min-h-screen bg-[#f4f6f9] text-[#111827] [zoom:max(0.85,calc(100vw/402px))]">
+    <div className="min-h-screen bg-[#f4f6f9] text-[#111827] [zoom:clamp(0.85,calc(100vw/402px),1.4)]">
       <div className="mx-auto min-h-screen max-w-[402px] pb-[40px]">
-        <header className="sticky top-0 z-10 flex items-center justify-between border-b border-[#eef2f6] bg-[#f4f6f9]/95 px-4 py-[10px] backdrop-blur-md">
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={onBack} aria-label="홈으로 돌아가기" className="grid size-9 place-items-center focus-visible:outline-[#a50034]"><ArrowLeft size={20} /></button>
-            <h1 className="text-[18px] font-bold tracking-[-0.45px]">우리 아이 성장 리포트</h1>
+        <header className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[#eef2f6] bg-[#f4f6f9]/95 px-4 py-[10px] backdrop-blur-md">
+          <div className="flex min-w-0 items-center gap-2">
+            <button type="button" onClick={onBack} aria-label="홈으로 돌아가기" className="grid shrink-0 size-9 place-items-center focus-visible:outline-[#a50034]"><ArrowLeft size={20} /></button>
+            <h1 className="truncate text-[18px] font-bold tracking-[-0.45px]">우리 아이 성장 리포트</h1>
           </div>
           <button type="button" onClick={openPicker} className="flex shrink-0 items-center gap-1.5 rounded-full border border-[#e5e7eb] bg-white px-[13px] py-[7px] text-[12px] font-semibold text-[#374151] shadow-sm focus-visible:outline-[#a50034]">
             <Calendar size={12} aria-hidden="true" />{yearNumber}년 {monthNumber}월<ChevronDown size={11} aria-hidden="true" />
@@ -99,8 +99,8 @@ export default function GrowthReport({ child, month: initialMonth, onBack }: Pro
 
           <section aria-label="이번 달 안전 요약" className="rounded-[24px] p-5 text-white shadow-[0_8px_20px_rgba(165,0,52,0.22)]" style={{ backgroundImage: 'linear-gradient(92deg, #ca1048 5%, #fb90b0 99%)' }}>
             <div className="flex items-start justify-between">
-              <span className="flex items-center gap-1.5 rounded-full bg-black/20 px-3 py-1 text-[11px] font-semibold backdrop-blur-md"><ShieldCheck size={12} aria-hidden="true" />월간 정기 안전 결산</span>
-              <MonthlyFeedbackButton shapeClassName="size-10 rounded-full border border-white/20" idleBgClassName="bg-white/15" iconSize={20} />
+              <span className="flex min-w-0 items-center gap-1.5 rounded-full bg-black/20 px-3 py-1 text-[11px] font-semibold backdrop-blur-md"><ShieldCheck size={12} className="shrink-0" aria-hidden="true" /><span className="truncate">월간 정기 안전 결산</span></span>
+              <MonthlyFeedbackButton shapeClassName="size-10 rounded-full border border-white/20" wrapperClassName="shrink-0" idleBgClassName="bg-white/15" iconSize={20} />
             </div>
             <h2 className="pt-[11px] text-[22px] font-extrabold tracking-[-0.55px]">{child.name} 님의 {monthNumber}월 리포트</h2>
             <p className="pb-[13px] pt-1 text-[12.5px] leading-[1.6] text-white/85">

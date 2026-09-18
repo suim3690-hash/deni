@@ -105,15 +105,15 @@ export default function HazardLocation({ hazard, detail, error, errorStatus, isM
   }
 
   return (
-    <div className="min-h-screen bg-[#f0f5fd] text-[#1e293b] [zoom:max(0.85,calc(100vw/402px))]">
+    <div className="min-h-screen bg-[#f0f5fd] text-[#1e293b] [zoom:clamp(0.85,calc(100vw/402px),1.4)]">
       <div className="mx-auto min-h-screen max-w-[402px] pb-[112px]">
         <header className="flex h-[66px] items-center gap-5 bg-[#f7f9ff] px-7">
-          <button type="button" onClick={onBack} aria-label="홈으로 돌아가기" className="grid size-6 place-items-center focus-visible:outline-[#a50034]"><ArrowLeft size={22} /></button>
+          <button type="button" onClick={onBack} aria-label="홈으로 돌아가기" className="grid size-6 shrink-0 place-items-center focus-visible:outline-[#a50034]"><ArrowLeft size={22} /></button>
           <div className="min-w-0 flex-1">
-            <p className="text-[12px] font-semibold tracking-wide text-[#ae1245]"><span aria-hidden="true">●</span> BABY CARE MODE{isMock ? ' · 화면 예시' : ''}</p>
-            <h1 className="text-[18px] font-bold leading-5">실시간 위험 감지 &amp; 맵</h1>
+            <p className="truncate text-[12px] font-semibold tracking-wide text-[#ae1245]"><span aria-hidden="true">●</span> BABY CARE MODE{isMock ? ' · 화면 예시' : ''}</p>
+            <h1 className="truncate text-[18px] font-bold leading-5">실시간 위험 감지 &amp; 맵</h1>
           </div>
-          <SlidersHorizontal size={20} aria-hidden="true" className="text-[#1e293b]" />
+          <SlidersHorizontal size={20} aria-hidden="true" className="shrink-0 text-[#1e293b]" />
         </header>
 
         {restricted ? <main className="px-4 pt-6"><div role="alert" className="rounded-[16px] border border-[#f2c5cb] bg-white p-5 text-[14px] text-[#9d1237]">{error}</div></main> : <main className="space-y-[17px] px-4 pt-3">
@@ -135,8 +135,8 @@ export default function HazardLocation({ hazard, detail, error, errorStatus, isM
               <span className="grid size-10 shrink-0 place-items-center rounded-[12px] bg-[#b9003d]"><AlertTriangle size={22} aria-hidden="true" /></span>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="rounded-full bg-[#b9003d] px-2 py-1 text-[11px] font-bold">긴급 주의</span>
-                  <strong className="truncate text-[14px]">{isMock ? '영유아 삼킴 위험 물체 발견' : `${name} 위험 물체 발견`}</strong>
+                  <span className="shrink-0 rounded-full bg-[#b9003d] px-2 py-1 text-[11px] font-bold">긴급 주의</span>
+                  <strong className="min-w-0 truncate text-[14px]">{isMock ? '영유아 삼킴 위험 물체 발견' : `${name} 위험 물체 발견`}</strong>
                 </div>
                 <p className="mt-1 text-right text-[12px] text-white/75">감지 시간: {displayTime}</p>
               </div>
@@ -154,9 +154,11 @@ export default function HazardLocation({ hazard, detail, error, errorStatus, isM
             <h2 className="mb-3 flex items-center gap-2 text-[15px] font-bold"><span className="size-[10px] rounded-full bg-[#2958c7]" />스마트 안심 케어 맵</h2>
             {isMock ? (
               <>
-                <div className="relative overflow-hidden rounded-[20px] border border-black/10">
-                  <img src={floorPlanPreview} alt="거실·안방·욕실·아이방·주방이 표시된 예시 지도" className="block w-full" />
-                  <HazardMarker x={0.54} y={0.45} label={`${location} 위험물 위치`} />
+                <div className="overflow-hidden rounded-[20px] border border-black/10">
+                  <img src={floorPlanPreview} alt="거실 집중 안전관리구역에 위험물 표시가 있는 예시 지도" className="block w-full" />
+                </div>
+                <div className="mt-2 flex items-center justify-center gap-1.5 rounded-full border border-[#f1f5f9] bg-white py-2 text-[12px] font-medium text-[#b4233b] shadow-sm">
+                  <span className="size-2 shrink-0 rounded-full bg-[#b4233b]" />위험물체
                 </div>
                 <p className="mt-2 text-center text-[11px] text-[#94a3b8]">지도는 화면 확인용 예시입니다.</p>
                 <p className="mt-1 text-[12px] text-[#475569]">위험물 위치 · {location}</p>
@@ -178,9 +180,9 @@ export default function HazardLocation({ hazard, detail, error, errorStatus, isM
             <h2 className="flex items-center gap-2 text-[16px] font-bold text-[#171c25]"><img src={robotIcon} alt="" className="size-5" />드니 AI 실시간 캡처</h2>
             <div className="relative mx-auto mt-3 w-[210px] overflow-hidden rounded-[12px] border-2 border-dashed border-[#e11d48]/70 bg-[#e5e7eb]">
               {(isMock || detail?.captureImageUrl) && !captureFailed ? <img src={isMock ? capturePreview : detail?.captureImageUrl ?? ''} onError={() => setCaptureFailed(true)} alt={`${name}만 확대 촬영된 감지 사진 (프라이버시 보호를 위해 주변 공간은 표시하지 않음)`} className="aspect-[35/24] w-full object-cover" /> : <div className="grid aspect-[35/24] place-items-center text-[13px] text-[#64748b]">{!detail && !error ? '감지 사진을 불러오고 있어요' : '감지 사진을 확인할 수 없어요'}</div>}
-              <span className="absolute left-2 top-2 rounded-[4px] bg-[#e11d48] px-2 py-0.5 text-[10px] font-bold text-white shadow">{name}</span>
+              <span className="absolute left-2 top-2 max-w-[186px] truncate rounded-[4px] bg-[#e11d48] px-2 py-0.5 text-[10px] font-bold text-white shadow">{name}</span>
               <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-[#141414]/90 px-2 py-1.5 text-white">
-                <strong className="text-[11px] leading-4">{name}</strong>
+                <strong className="min-w-0 truncate text-[11px] leading-4">{name}</strong>
                 <span className="shrink-0 rounded-full bg-[#ffdad9] px-1.5 py-0.5 text-[10px] font-bold text-[#b42330]">{riskLabel}</span>
               </div>
             </div>

@@ -102,22 +102,22 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild, isMo
   }
 
   return (
-    <div className="min-h-screen bg-[#f2f6fa] text-[#0f172a] [zoom:max(0.85,calc(100vw/402px))]">
+    <div className="min-h-screen bg-[#f2f6fa] text-[#0f172a] [zoom:clamp(0.85,calc(100vw/402px),1.4)]">
       <div className="mx-auto min-h-screen max-w-[402px] pb-[40px]">
-        <header className="sticky top-0 z-10 flex items-center justify-between border-b border-[#f1f5f9] bg-white/95 px-4 pb-[13px] pt-3 backdrop-blur-md">
-          <div className="flex items-center gap-2.5">
-            <button type="button" onClick={onBack} aria-label="홈으로 돌아가기" className="grid size-6 place-items-center focus-visible:outline-[#a50034]"><ArrowLeft size={20} /></button>
-            <h1 className="text-[16px] font-bold tracking-[-0.4px]">성장단계 연동 Safety Care</h1>
-            <span className="rounded-full bg-[#dbeafe]/90 px-2 py-[2px] text-[11px] font-bold text-[#2563eb]">Beta</span>
+        <header className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[#f1f5f9] bg-white/95 px-4 pb-[13px] pt-3 backdrop-blur-md">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <button type="button" onClick={onBack} aria-label="홈으로 돌아가기" className="grid shrink-0 size-6 place-items-center focus-visible:outline-[#a50034]"><ArrowLeft size={20} /></button>
+            <h1 className="truncate text-[16px] font-bold tracking-[-0.4px]">성장단계 연동 Safety Care</h1>
+            <span className="shrink-0 rounded-full bg-[#dbeafe]/90 px-2 py-[2px] text-[11px] font-bold text-[#2563eb]">Beta</span>
           </div>
-          <Settings size={20} className="text-[#0f172a]" aria-hidden="true" />
+          <Settings size={20} className="shrink-0 text-[#0f172a]" aria-hidden="true" />
         </header>
 
         <main className="space-y-4 px-4 pt-4">
           <section aria-label="성장 단계 안내" className="min-h-[185px] rounded-[24px] bg-gradient-to-r from-[#d9064d] via-[#ee4f7e] to-[#fa80a5] p-5 text-white shadow-[0_6px_15px_rgba(174,0,57,0.14)]">
-            <div className="flex items-start justify-between">
-              <span className="rounded-full bg-white/20 px-[10px] py-[5px] text-[11px] font-medium">✦ {isSupported ? isMock ? '현재 Safety Profile 자동 적용 중' : 'Safety Profile 등록 완료' : '지원 범위 밖'}</span>
-              {isMock ? <MonthlyFeedbackButton shapeClassName="size-[44px] rounded-[14px]" iconSize={22} /> : <span title="리포트 평가 기능 준비 중" aria-label="리포트 평가 기능 준비 중" className="grid size-[44px] place-items-center rounded-[14px] bg-white/20"><Smile size={22} aria-hidden="true" /></span>}
+            <div className="flex items-start justify-between gap-2">
+              <span className="min-w-0 truncate rounded-full bg-white/20 px-[10px] py-[5px] text-[11px] font-medium">✦ {isSupported ? isMock ? '현재 Safety Profile 자동 적용 중' : 'Safety Profile 등록 완료' : '지원 범위 밖'}</span>
+              {isMock ? <MonthlyFeedbackButton shapeClassName="size-[44px] rounded-[14px]" wrapperClassName="shrink-0" iconSize={22} /> : <span title="리포트 평가 기능 준비 중" aria-label="리포트 평가 기능 준비 중" className="grid size-[44px] shrink-0 place-items-center rounded-[14px] bg-white/20"><Smile size={22} aria-hidden="true" /></span>}
             </div>
             <h2 className="-mt-1 text-[21px] font-bold leading-[1.2]">
               {isSupported && stage ? stageTitles[stage] : '현재 지원하는 연령이 아니에요'}
@@ -180,18 +180,18 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild, isMo
                   </div>
                   <button type="button" onClick={startEditing} className="flex items-center gap-1 text-[12px] font-medium text-[#2563eb] focus-visible:outline-[#a50034]">수정하기 <Pencil size={13} /></button>
                 </div>
-                <div className="mt-4 flex items-center justify-between rounded-[16px] border border-[#f1f5f9] bg-[#f8fafc]/80 p-[15px]">
-                  <div className="flex items-center">
+                <div className="mt-4 flex items-center justify-between gap-2 rounded-[16px] border border-[#f1f5f9] bg-[#f8fafc]/80 p-[15px]">
+                  <div className="flex min-w-0 flex-1 items-center">
                     <div className="relative grid size-12 shrink-0 place-items-center rounded-full bg-[#fecdd3]">
                       <Smile size={22} className="text-[#e11d48]" aria-hidden="true" />
                       <span className="absolute -bottom-0.5 -right-0.5 grid size-4 place-items-center rounded-full border-2 border-white bg-[#10b981]"><Check size={10} className="text-white" strokeWidth={3} /></span>
                     </div>
-                    <div className="pl-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[16px] font-medium">{child.name}</span>
-                        <span className="rounded-[6px] bg-[#ffe4e6] px-2 py-[2px] text-[11px] font-bold text-[#e11d48]">{profile.ageMonths}개월</span>
+                    <div className="min-w-0 flex-1 pl-3">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="min-w-0 truncate text-[16px] font-medium">{child.name}</span>
+                        <span className="shrink-0 rounded-[6px] bg-[#ffe4e6] px-2 py-[2px] text-[11px] font-bold text-[#e11d48]">{profile.ageMonths}개월</span>
                       </div>
-                      <p className="text-[12px] text-[#64748b]">생년월일 <span className="text-[#334155]">{child.birthDate.replaceAll('-', '.')}</span></p>
+                      <p className="truncate text-[12px] text-[#64748b]">생년월일 <span className="text-[#334155]">{child.birthDate.replaceAll('-', '.')}</span></p>
                     </div>
                   </div>
                   <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-[#eff6ff] px-[10px] py-1 text-[12px] font-medium text-[#2563eb]"><span className="size-1.5 rounded-full bg-[#3b82f6]" />{isSupported && stage ? stageLabels[stage] : '지원 범위 밖'}</span>
@@ -205,7 +205,10 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild, isMo
             {isMock ? (
               <>
                 <div className="overflow-hidden rounded-[20px] border border-black/10">
-                  <img src={floorPlanPreview} alt="집안 위험물 감지 위치가 표시된 예시 지도" className="block w-full" />
+                  <img src={floorPlanPreview} alt="거실 집중 안전관리구역에 위험물 표시가 있는 예시 지도" className="block w-full" />
+                </div>
+                <div className="mt-2 flex items-center justify-center gap-1.5 rounded-full border border-[#f1f5f9] bg-white py-2 text-[12px] font-medium text-[#b4233b] shadow-sm">
+                  <span className="size-2 shrink-0 rounded-full bg-[#b4233b]" />위험물체
                 </div>
                 <p className="mt-2 text-center text-[11px] text-[#94a3b8]">화면 예시 지도이며 실제 감지 위치가 아닙니다.</p>
               </>
@@ -286,12 +289,12 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild, isMo
             <div className="rounded-2xl border-2 border-[#10b981] bg-[#ecfdf5]/60 p-[18px]">
               <div className="flex items-center">
                 <span className="grid size-8 shrink-0 place-items-center rounded-full bg-[#10b981] text-[14px] font-bold text-white">{stage ? stageOrder[stage] : '-'}</span>
-                <div className="pl-2.5">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[14px] font-medium">{stage ? `${stageOrder[stage]}. ${profileDetail?.stageLabel ?? stageLabels[stage]}` : '현재 지원하는 연령이 아니에요'}</span>
-                    {isSupported && <span className="rounded-full bg-[#10b981] px-2 py-[2px] text-[9px] text-white">{isMock ? '현재 적용' : '서버 기준'}</span>}
+                <div className="min-w-0 flex-1 pl-2.5">
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="min-w-0 truncate text-[14px] font-medium">{stage ? `${stageOrder[stage]}. ${profileDetail?.stageLabel ?? stageLabels[stage]}` : '현재 지원하는 연령이 아니에요'}</span>
+                    {isSupported && <span className="shrink-0 rounded-full bg-[#10b981] px-2 py-[2px] text-[9px] text-white">{isMock ? '현재 적용' : '서버 기준'}</span>}
                   </div>
-                  {stage && <p className="text-[12px] font-bold text-[#047857]">{stageAgeRangeLabels[stage]} · {profile.ageMonths}개월 현재</p>}
+                  {stage && <p className="truncate text-[12px] font-bold text-[#047857]">{stageAgeRangeLabels[stage]} · {profile.ageMonths}개월 현재</p>}
                 </div>
               </div>
               {profileLoading ? (

@@ -165,7 +165,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   if (showReport && report && exampleReportAvailable) return <GrowthReport child={child} month={report.month} onBack={() => setShowReport(false)} />
 
   return (
-    <div className="min-h-screen bg-[#f0f5fd] text-[#1e293b] [zoom:max(0.85,calc(100vw/402px))]">
+    <div className="min-h-screen bg-[#f0f5fd] text-[#1e293b] [zoom:clamp(0.85,calc(100vw/402px),1.4)]">
       <div className="mx-auto min-h-screen max-w-[402px] pb-[85px]">
         <Header title={`${child.name} 홈`} hasNotification />
         <main className="px-6 pt-[10px]">
@@ -175,7 +175,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
                 <span className="grid size-10 shrink-0 place-items-center rounded-[12px] bg-[#ffe5e7] text-[#ba1729]"><AlertTriangle size={22} fill="currentColor" stroke="white" strokeWidth={1.8} aria-hidden="true" /></span>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-1">
-                    <h2 className="text-[16px] font-bold text-[#b42330]">위험 물체 감지 알림</h2>
+                    <h2 className="min-w-0 truncate text-[16px] font-bold text-[#b42330]">위험 물체 감지 알림</h2>
                     <span className="shrink-0 rounded-full bg-[#ffe8e9] px-2 py-[3px] text-[10px] font-semibold text-[#b42330]">{dashboard?.isMock ? '화면 예시' : !device ? '기기 상태 미확인' : isPaused ? '일시정지 중' : '상태 확인 중'}</span>
                   </div>
                   <p className="mt-1 text-[12px] leading-[1.4]">
@@ -189,9 +189,9 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
               </div>
             </section>
           )}
-          <div className="mb-2 flex items-center justify-between">
-            <h1 className="text-[18px] font-semibold">즐겨 찾는 제품</h1>
-            <button type="button" onClick={() => setModal('device')} className="text-[12px] text-[#475569] hover:underline focus-visible:outline-[#a50034]">전체보기</button>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h1 className="min-w-0 truncate text-[18px] font-semibold">즐겨 찾는 제품</h1>
+            <button type="button" onClick={() => setModal('device')} className="shrink-0 text-[12px] text-[#475569] hover:underline focus-visible:outline-[#a50034]">전체보기</button>
           </div>
 
           <section aria-label="로봇청소기 상태" className={`rounded-[20px] border border-[#e8edf5] bg-white p-4 shadow-sm ${isOnline ? 'min-h-[246px]' : 'min-h-[149px]'}`}>
@@ -270,9 +270,9 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
           {commandError && <p role="alert" className="mt-2 text-center text-[12px] text-[#a50034]">{commandError}</p>}
 
           <section aria-label="아이 안전 프로필" className="mt-[18px] min-h-[185px] rounded-[24px] bg-gradient-to-r from-[#d9064d] via-[#ee4f7e] to-[#fa80a5] p-5 text-white shadow-[0_6px_15px_rgba(174,0,57,0.14)]">
-            <div className="flex items-start justify-between">
-              <span className="rounded-full bg-white/20 px-[10px] py-[5px] text-[11px] font-medium">✦ {dashboard?.isMock && isSupported ? '현재 Safety Profile 자동 적용 중' : isSupported ? 'Safety Profile 등록 완료' : '지원 범위 밖'}</span>
-              <span className="grid size-[44px] place-items-center rounded-[14px] bg-white/20"><Smile size={22} aria-hidden="true" /></span>
+            <div className="flex items-start justify-between gap-2">
+              <span className="min-w-0 truncate rounded-full bg-white/20 px-[10px] py-[5px] text-[11px] font-medium">✦ {dashboard?.isMock && isSupported ? '현재 Safety Profile 자동 적용 중' : isSupported ? 'Safety Profile 등록 완료' : '지원 범위 밖'}</span>
+              <span className="grid size-[44px] shrink-0 place-items-center rounded-[14px] bg-white/20"><Smile size={22} aria-hidden="true" /></span>
             </div>
             <h2 className="-mt-1 text-[21px] font-bold leading-[1.2]">
               {isSupported && profile.stage ? stageTitles[profile.stage] : '현재 지원하는 연령이 아니에요'}

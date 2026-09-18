@@ -97,7 +97,7 @@ export default function ChildRegistration({ onGoHome }: ChildRegistrationProps) 
   }[status]
 
   return (
-    <div className="min-h-screen bg-[#f0f5fd] [zoom:max(0.85,calc(100vw/402px))]">
+    <div className="min-h-screen bg-[#f0f5fd] [zoom:clamp(0.85,calc(100vw/402px),1.4)]">
       <Header title="아이 정보 등록" hasNotification />
 
       <main className="mx-auto max-w-[402px] px-4 pb-6 pt-[45px]">

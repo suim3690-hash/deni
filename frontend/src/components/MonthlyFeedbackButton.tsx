@@ -11,17 +11,18 @@ type FeedbackKey = (typeof feedbackOptions)[number]['key']
 
 interface Props {
   shapeClassName: string
+  wrapperClassName?: string
   idleBgClassName?: string
   iconSize?: number
 }
 
-export default function MonthlyFeedbackButton({ shapeClassName, idleBgClassName = 'bg-white/20', iconSize = 22 }: Props) {
+export default function MonthlyFeedbackButton({ shapeClassName, wrapperClassName = '', idleBgClassName = 'bg-white/20', iconSize = 22 }: Props) {
   const [feedback, setFeedback] = useState<FeedbackKey | null>(null)
   const [open, setOpen] = useState(false)
   const selected = feedbackOptions.find((option) => option.key === feedback) ?? null
 
   return (
-    <div className="relative">
+    <div className={`relative ${wrapperClassName}`}>
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}

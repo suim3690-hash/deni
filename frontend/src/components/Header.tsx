@@ -18,17 +18,17 @@ export default function Header({
   onMenuClick,
 }: HeaderProps) {
   return (
-    <header className="flex h-16 items-center justify-between bg-[#f0f5fd] px-4">
+    <header className="flex h-16 items-center justify-between gap-2 bg-[#f0f5fd] px-4">
       <button
         type="button"
         onClick={onTitleClick}
-        className="flex items-center gap-1 text-[17px] font-semibold text-[#1e293b]"
+        className="flex min-w-0 items-center gap-1 text-[17px] font-semibold text-[#1e293b]"
       >
-        {title}
-        <ChevronDown size={16} strokeWidth={2} className="text-[#1e293b]" />
+        <span className="truncate">{title}</span>
+        <ChevronDown size={16} strokeWidth={2} className="shrink-0 text-[#1e293b]" />
       </button>
 
-      <div className="flex items-center gap-4">
+      <div className="flex shrink-0 items-center gap-4">
         <button type="button" onClick={onAddClick} aria-label="추가" className="text-[#1e293b]">
           <Plus size={20} strokeWidth={2} />
         </button>
