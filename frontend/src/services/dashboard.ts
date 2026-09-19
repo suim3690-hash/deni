@@ -39,6 +39,15 @@ export interface HazardDetail extends DashboardHazard {
 export interface DashboardData {
   child: { childId: string; name: string }
   device: DashboardDevice | null
+  robotState?: {
+    operationState: 'RUNNING' | 'PAUSED' | 'RELOCATING' | 'UNKNOWN'
+    movementState: 'FORWARD' | 'TURNING' | 'BACKWARD' | 'STOPPED' | 'UNKNOWN'
+    movementDurationMs: number | null
+    movementDistanceM: number | null
+    sampledAt: string | null
+    receivedAt: string | null
+    stale: boolean
+  } | null
   currentProfile: DashboardProfile
   activeHazards: DashboardHazard[]
   reportSummary: { reportId: string | null; month: string; available: boolean } | null
@@ -149,5 +158,11 @@ export async function getDashboard(child: RegisteredChild): Promise<DashboardSna
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/dashboard?${query}`)
   if (!response.ok) throw await apiErrorFromResponse(response, '홈 정보를 불러오지 못했어요.')
   const data = await response.json() as DashboardData
-  return { ...data, isMock: false }
+  let robotState: DashboardData['robotState'] = null
+  if (data.device) {
+    const stateResponse = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/devices/${encodeURIComponent(data.device.deviceId)}/robot-state`)
+    if (!stateResponse.ok) throw await apiErrorFromResponse(stateResponse, '로봇 동작 정보를 불러오지 못했어요.')
+    robotState = await stateResponse.json() as NonNullable<DashboardData['robotState']>
+  }
+  return { ...data, robotState, isMock: false }
 }

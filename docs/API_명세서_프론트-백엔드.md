@@ -6,6 +6,12 @@
 
 ## 1. 구현 기준
 
+> 2026-09-18 추가 구현: 외부 PC의 탐지 원본·로봇 상태 직접 DB 입력 및
+> `GET /devices/{deviceId}/robot-state`, `GET /devices/{deviceId}/detections`,
+> `GET /devices/{deviceId}/detections/{eventId}/image`를 제공한다(기본 경로 `/api/v1`).
+> 입력 컬럼·시각·상태 유효성·프론트 반영 범위는 [DB 저장 가이드](모델_하드웨어_DB_저장_가이드.md)를 따른다.
+> 이미지 경로는 JSON이 아닌 JPEG/PNG를 반환한다. 원본 탐지가 기존 위험 기록으로 자동 변환되지는 않는다.
+
 - 기본 경로는 `/api/v1`, 요청·응답은 JSON을 사용한다. ID는 클라이언트가 해석하지 않는 문자열이다.
 - 모든 사용자 API는 인증된 보호자와 해당 아이·기기·위험 건의 접근 관계를 서버에서 확인한다. 인증 방식과 토큰 전달 방식은 별도 합의한다.
 - 시각은 시간대가 포함된 ISO 8601 문자열, 생년월일은 `YYYY-MM-DD`, 조회 월은 `YYYY-MM` 형식이다.

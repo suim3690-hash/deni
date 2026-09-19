@@ -120,6 +120,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   }, [modal])
 
   const device = dashboard?.device
+  const robotState = loadError ? null : dashboard?.robotState
   const connection = loadError ? 'UNKNOWN' : device?.connectionState ?? 'UNKNOWN'
   const isOnline = connection === 'ONLINE'
   const canControl = isOnline && Boolean(dashboard?.isMock || device?.commandsAvailable)
@@ -259,6 +260,17 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
                 {!loadError && device?.batteryPercent != null && <span className="text-[11px] text-[#475569]">배터리 {device.batteryPercent}%</span>}
               </div>
             </div>
+
+            {!dashboard?.isMock && device && <div className="mt-3 rounded-xl bg-[#f5f8ff] p-3 text-[12px] text-[#475569]" aria-label="로봇 동작 및 이동 정보">
+              <p className="font-semibold">로봇 동작·이동 정보</p>
+              {!robotState || robotState.stale ? <p className="mt-1">최근 동작 정보가 없어 상태를 확인할 수 없어요.</p> : <>
+                <p className="mt-1">동작: {{ RUNNING: '진행 중', PAUSED: '일시정지', RELOCATING: '장애물 이송 중', UNKNOWN: '확인 전' }[robotState.operationState]}</p>
+                <p>이동: {{ FORWARD: '직진', TURNING: '회전', BACKWARD: '후진', STOPPED: '정지', UNKNOWN: '확인 전' }[robotState.movementState]}</p>
+                {robotState.movementDurationMs !== null && <p>현재 이동 구간 시간: {(robotState.movementDurationMs / 1000).toFixed(1)}초</p>}
+                {robotState.movementDistanceM !== null && <p>현재 이동 구간 거리: {robotState.movementDistanceM}m</p>}
+              </>}
+              {robotState?.receivedAt && <p className="mt-1 text-[10px]">마지막 보고 수신: {new Date(robotState.receivedAt).toLocaleTimeString('ko-KR')}</p>}
+            </div>}
 
             <div className="mt-3 border-t border-[#e8edf5] pt-3">
               <div className="mx-auto grid max-w-[258px] grid-cols-2 gap-4">

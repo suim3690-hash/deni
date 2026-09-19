@@ -14,7 +14,7 @@
 | 언어·프레임워크 | Java 21, Spring Boot 4.1.1 |
 | API | Spring MVC, JSON, 기본 경로 `/api/v1` |
 | DB 접근 | Spring Data JPA, PostgreSQL |
-| 스키마 관리 | Flyway V1~V6, JPA `ddl-auto=validate` |
+| 스키마 관리 | Flyway V1~V7, JPA `ddl-auto=validate` |
 | 실행·검증 | Gradle Wrapper, JUnit·Mockito |
 
 ```text
@@ -22,6 +22,7 @@ backend/
 ├── README.md
 ├── .env.example                 # 비밀번호 설정 예시
 ├── run-local.ps1                # 로컬 .env 로딩 및 서버 실행
+├── examples/robot_db_writer.py  # 다른 PC의 탐지·이동 상태 DB 저장 예제
 └── src/
     ├── main/
     │   ├── java/com/deni/backend/
@@ -32,7 +33,7 @@ backend/
     │   │   └── common/          # 공통 예외·오류 응답·중복 저장 잠금
     │   └── resources/
     │       ├── application.properties
-    │       └── db/migration/    # V1~V6: children, hazards, profile_history, 중복 방지, devices, operation_requests
+    │       └── db/migration/    # V1~V7: 기존 도메인 + 탐지 원본·실시간 상태
     └── test/java/com/deni/backend/
         ├── child/
         ├── hazard/
@@ -42,6 +43,27 @@ backend/
 ```
 
 ## 2. 구현된 API
+
+### 다른 PC의 모델·하드웨어 데이터 입력
+
+접속 설정·컬럼·Python 저장 예제는 [모델·하드웨어 DB 저장 가이드](../docs/모델_하드웨어_DB_저장_가이드.md)를 참고한다.
+등록된 `device_id`를 사용하여 공유 PostgreSQL에 직접 저장한다. 비밀번호는 별도로 전달한다.
+
+| 추가 테이블 | 저장 내용 | 방식 |
+| --- | --- | --- |
+| `detection_events` | UUID, 기기, HAZARD/OBJECT, 라벨, DB 수신 시각, 바운딩 박스 이미지 바이트 | 이벤트별 누적. JPEG/PNG 최대 5MiB |
+| `robot_live_state` | 기기, 동작·이동 상태, 구간 시간·거리, 측정·수신 시각 | 기기당 최신 한 행. 과거·중복 보고는 갱신하지 않음 |
+
+| 추가 조회 API (`/api/v1` 기준) | 동작 |
+| --- | --- |
+| `GET /devices/{deviceId}/robot-state` | 최신 상태. 측정/수신 후 10초 이상 경과 시 UNKNOWN·stale 처리 |
+| `GET /devices/{deviceId}/detections` | 최근 50개 원본 탐지 메타데이터와 이미지 URL |
+| `GET /devices/{deviceId}/detections/{eventId}/image` | 해당 기기의 탐지 이미지 반환 |
+
+홈에 동작·이동·시간·거리 표시를 추가했으며 기존 5초 폴링으로 갱신한다. 원본 탐지 목록 UI는 추가하지 않았다.
+원본 탐지는 기존 `hazards`·월간 집계와 자동 연결되지 않으며, 로봇 상태 보고만으로 명령 완료나 기존 기기 연결 상태를 변경하지 않는다.
+
+### 기존 도메인 API
 
 아래 경로 앞에는 `/api/v1`을 붙인다. 현재 아이·위험 ID는 UUID 문자열이며 클라이언트는
 ID를 해석하지 않는다. 생년월일은 `YYYY-MM-DD`, 시각은 시간대를 포함한 ISO 8601을 사용한다.
@@ -270,7 +292,9 @@ Cron은 초·분·시·일·월·요일의 6필드다. 변경 후 백엔드를 �
 | `profile_history` | 백엔드 프로필 등록·변경 및 기준 스냅샷 | `child_id → children.id`, 참조 중인 아이 삭제 제한 | `V3__create_profile_history.sql` |
 | `devices` | 등록 기기·아이 연결·최근 보고 상태 | `child_id → children.id`, UNIQUE로 1:1 연결, 참조 중인 아이 삭제 제한 | `V5__create_devices.sql` |
 | `operation_requests` | 일시정지·직접 제거 재확인 접수 감사 기록 | 기기 FK, 재확인일 때 위험 FK. 실제 실행 큐 아님 | `V6__create_operation_requests.sql` |
-| `flyway_schema_history` | 스키마 적용 이력 | Flyway 자동 관리 | V1~V6 성공 이력 |
+| `detection_events` | 모델 탐지 원본·이미지 | 기기 FK | V7 |
+| `robot_live_state` | 기기당 최신 동작·이동 보고 | 기기 PK/FK | V7 |
+| `flyway_schema_history` | 스키마 적용 이력 | Flyway 자동 관리 | V1~V7 성공 이력 |
 
 `hazards.device_id`는 문자열이고 기기 테이블에 대한 외래키는 없다. 신규 기기 등록은 아이 존재·1:1 연결을
 검증하지만 기존 내부 탐지 저장 서비스는 기기 연결을 검증하지 않는다. 실제 수신 통합 시 보완해야 한다.
@@ -319,7 +343,8 @@ DB 제약으로 빈 이름과 잘못된 상태·단계 조합을 제한한다. �
 | `version` | BIGINT | O | JPA 낙관적 잠금 버전 |
 
 운행 상태 허용값은 `RUNNING`, `PAUSED`, `STOPPING`, `RESUMING`, `READY_TO_RESUME`, `UNKNOWN`이다.
-이는 실시간 상태를 기기에 재확인한 결과가 아니다. 이미지 파일 자체는 DB에 저장하지 않는다.
+이는 실시간 상태를 기기에 재확인한 결과가 아니다. `hazards`에는 이미지 파일 자체를 저장하지 않는다.
+별도 원본 입력 테이블 `detection_events`에는 JPEG/PNG 바이트를 저장한다.
 기기·상태·감지 시각 및 아이·감지 시각 기준 인덱스를 사용한다.
 
 ### `profile_history`
