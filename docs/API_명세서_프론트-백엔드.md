@@ -507,5 +507,5 @@ V4 이전 등록의 최초 입력 지문은 소급 생성하지 않고 현재 �
 ## 6. 근거
 
 - [3차 화면 설계](https://www.figma.com/design/VRe73HbPynTknNZkfMNuAp/%EA%B8%B0%ED%9A%8D-%EB%A9%98%ED%86%A0%EB%A7%81?node-id=1103-789)
-- [기능 요구사항](기능요구사항명세서.md) · [PRD](PRD_MVP_ThinQ_Kids_SafeGuard.md) · [메뉴 구조도](메뉴구조도.md)
+- [기능 요구사항](v1/기능요구사항명세서.md) · [PRD](v1/PRD_MVP_ThinQ_Kids_SafeGuard.md) · [메뉴 구조도](v1/메뉴구조도.md)
 - 이후 대화에서 확정된 연령대 변경, 직접 제거 후 기기 재확인, 홈 온라인·오프라인 표시, 월간 리포트의 Figma 시안 유지 결정
