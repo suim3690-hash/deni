@@ -35,21 +35,36 @@ export function currentReportMonth() {
   }).format(new Date())
 }
 
+const mockObjects = [
+  { objectType: 'SWALLOW', label: '구슬', riskLevel: 'VERY_HIGH' },
+  { objectType: 'SWALLOW', label: '동전', riskLevel: 'VERY_HIGH' },
+  { objectType: 'SWALLOW', label: '배터리', riskLevel: 'VERY_HIGH' },
+  { objectType: 'LIVING', label: '전선', riskLevel: 'HIGH' },
+  { objectType: 'LIVING', label: '콘센트', riskLevel: 'HIGH' },
+]
+
+// 목업 리포트: 월마다 다른 값이 나오도록 월과 물체 이름으로 결정적인 건수를 만든다.
+function mockMonthlyDetections(month: string) {
+  return mockObjects
+    .map((item) => {
+      let hash = 0
+      for (const char of `${month}:${item.label}`) hash = (hash * 31 + char.charCodeAt(0)) % 9973
+      return { ...item, count: hash % 4 }
+    })
+    .filter((item) => item.count > 0)
+}
+
 export async function getMonthlyReport(childId: string, childName: string, month: string,
   signal?: AbortSignal): Promise<MonthlyReport> {
   const baseUrl = import.meta.env.VITE_API_BASE_URL
+  const mockDetections = mockMonthlyDetections(month)
   if (!baseUrl) return {
     reportId: `preview-${childId}-${month}`,
     childId, childName, month, isMock: true,
     stageChange: null,
     stageChanges: [],
-    summary: { detectionCount: 12, avoidanceRatePercent: 100, safeCleanedAreaSquareMeters: null },
-    detectionsByObject: [
-      { objectType: 'TOY_PART', label: '레고 브릭', count: 3, riskLevel: 'VERY_HIGH' },
-      { objectType: 'COIN', label: '100원 동전', count: 2, riskLevel: 'HIGH' },
-      { objectType: 'MAGNET', label: '작은 자석', count: 1, riskLevel: 'VERY_HIGH' },
-      { objectType: 'OTHER', label: '기타', count: 6, riskLevel: 'MEDIUM' },
-    ],
+    summary: { detectionCount: mockDetections.reduce((sum, item) => sum + item.count, 0), avoidanceRatePercent: null, safeCleanedAreaSquareMeters: null },
+    detectionsByObject: mockDetections,
     criteriaChanges: [],
     nextStagePreview: { stage: null, description: '화면 확인용 예시 리포트입니다.' },
     feedback: null,

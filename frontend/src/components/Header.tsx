@@ -18,13 +18,13 @@ export default function Header({
   onMenuClick,
 }: HeaderProps) {
   return (
-    <header className="flex h-16 items-center justify-between gap-2 bg-[#f0f5fd] px-4">
+    <header className="flex min-h-16 items-center justify-between gap-2 bg-[#f0f5fd] px-4 py-2">
       <button
         type="button"
         onClick={onTitleClick}
         className="flex min-w-0 items-center gap-1 text-[17px] font-semibold text-[#1e293b]"
       >
-        <span className="truncate">{title}</span>
+        <span className="">{title}</span>
         <ChevronDown size={16} strokeWidth={2} className="shrink-0 text-[#1e293b]" />
       </button>
 

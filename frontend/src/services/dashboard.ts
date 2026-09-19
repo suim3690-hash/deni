@@ -1,5 +1,6 @@
 import type { RegisteredChild } from './children'
 import { generateId } from '../lib/id'
+import { classifyHazard } from '../lib/hazardRisk'
 import { apiErrorFromResponse } from './apiError'
 
 export type ConnectionState = 'ONLINE' | 'OFFLINE' | 'UNKNOWN'
@@ -14,8 +15,6 @@ export interface DashboardDevice {
   batteryPercent: number | null
   lastSeenAt: string | null
   safetyModeEnabled?: boolean | null
-  airQualityLabel?: string | null
-  purifierStateLabel?: string | null
 }
 
 export interface DashboardHazard {
@@ -51,8 +50,6 @@ export interface DashboardData {
   currentProfile: DashboardProfile
   activeHazards: DashboardHazard[]
   reportSummary: { reportId: string | null; month: string; available: boolean } | null
-  obstacleCount?: number | null
-  obstacleLabel?: string | null
 }
 
 export interface DashboardSnapshot extends DashboardData {
@@ -61,8 +58,14 @@ export interface DashboardSnapshot extends DashboardData {
 
 function mockDashboard(child: RegisteredChild): DashboardSnapshot {
   const previewState = new URLSearchParams(window.location.search).get('mockDevice')
-  // Explicit preview only. The normal mock home starts with no active hazard.
-  const showHazard = new URLSearchParams(window.location.search).get('mockHazard') === 'lego'
+  // 목업(5174)은 기본으로 위험물이 감지된 상태다.
+  // mockHazard=구슬|동전|배터리(삼킴 위험물) · 전선|콘센트(생활공간 위험요소) · none(위험물 없음), 기본값은 동전
+  const hazardPreview = new URLSearchParams(window.location.search).get('mockHazard')
+  const previewName = hazardPreview === 'living' ? '전선' : !hazardPreview || hazardPreview === 'swallow' ? '동전' : hazardPreview
+  const previewHazard = hazardPreview === 'none'
+    ? null
+    : { hazardId: `preview-${previewName}`, objectName: previewName }
+  const showHazard = previewHazard !== null
   const connectionState: ConnectionState = previewState === 'offline' ? 'OFFLINE' : previewState === 'unknown' ? 'UNKNOWN' : 'ONLINE'
   const today = new Date()
   const month = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
@@ -80,25 +83,29 @@ function mockDashboard(child: RegisteredChild): DashboardSnapshot {
       batteryPercent: connectionState === 'ONLINE' ? 82 : null,
       lastSeenAt: null,
       safetyModeEnabled: connectionState === 'ONLINE',
-      airQualityLabel: connectionState === 'ONLINE' ? '좋음' : null,
-      purifierStateLabel: connectionState === 'ONLINE' ? '가동중' : null,
     },
-    activeHazards: showHazard && connectionState === 'ONLINE' ? [{
-      hazardId: 'preview-lego',
-      objectName: '레고 브릭',
-      riskLevel: 'VERY_HIGH',
+    activeHazards: previewHazard && connectionState === 'ONLINE' ? [{
+      ...previewHazard,
+      riskLevel: 'HIGH',
       detectedAt: new Date().toISOString(),
     }] : [],
-    obstacleCount: 4,
-    obstacleLabel: '소형 완구',
     reportSummary: { reportId: `preview-${month}`, month, available: true },
   }
+}
+
+// 서버가 `/api/v1/...` 같은 상대 경로를 주면 API 서버 주소를 붙여 브라우저가 바로 읽을 수 있게 한다.
+function resolveImageUrl(url: string | null | undefined, baseUrl: string): string | null {
+  const value = url?.trim()
+  if (!value) return null
+  return value.startsWith('/') ? `${baseUrl}${value}` : value
 }
 
 export async function getHazardDetail(hazard: DashboardHazard, isMock: boolean): Promise<HazardDetail> {
   if (isMock) return {
     ...hazard,
-    riskReason: '아이의 성장단계에서 삼킬 위험이 있는 작은 완구입니다.',
+    riskReason: classifyHazard(hazard.objectName) === 'LIVING'
+      ? '아이가 만지거나 걸릴 수 있는 생활공간 위험 요소입니다. 아이가 접근하기 전에 확인해 주세요.'
+      : '아이가 삼킬 수 있는 작은 물체입니다. 아이가 접근하기 전에 바닥에서 치워 주세요.',
     captureImageUrl: null,
   }
 
@@ -117,7 +124,7 @@ export async function getHazardDetail(hazard: DashboardHazard, isMock: boolean):
     riskLevel: data.riskLevel,
     detectedAt: data.detectedAt,
     riskReason: data.riskReason ?? null,
-    captureImageUrl: data.captureImageUrl ?? null,
+    captureImageUrl: resolveImageUrl(data.captureImageUrl, baseUrl),
   }
 }
 
