@@ -22,7 +22,6 @@ backend/
 ├── README.md
 ├── .env.example                 # 비밀번호 설정 예시
 ├── run-local.ps1                # 로컬 .env 로딩 및 서버 실행
-├── examples/robot_db_writer.py  # 다른 PC의 탐지·이동 상태 DB 저장 예제
 └── src/
     ├── main/
     │   ├── java/com/deni/backend/

@@ -83,7 +83,7 @@ DB 트리거가 이 규칙을 적용하므로 직접 SQL로 갱신해도 과거 
 
 ## 4. 다른 PC에서 Python 사용
 
-저장소를 pull하거나 `backend/examples/robot_db_writer.py`를 전달받아 모델 프로그램 옆에 둔다.
+저장소를 pull하거나 `hardware/examples/robot_db_writer.py`를 전달받아 모델 프로그램 옆에 둔다.
 
 ```powershell
 py -m pip install "psycopg[binary]"
