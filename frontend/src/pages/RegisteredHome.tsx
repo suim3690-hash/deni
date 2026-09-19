@@ -22,7 +22,6 @@ const demoHazard: DashboardHazard = {
   hazardId: 'demo-hazard',
   objectName: '레고 브릭',
   riskLevel: 'VERY_HIGH',
-  locationLabel: '거실 러그 위',
   detectedAt: new Date().toISOString(),
 }
 
@@ -223,7 +222,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
                     <span className="shrink-0 rounded-full bg-[#ffe8e9] px-2 py-[3px] text-[10px] font-semibold text-[#b42330]">{loadError ? '최신 조회 실패' : dashboard?.isMock ? '화면 예시' : !device ? '기기 상태 미확인' : isPaused ? '일시정지 중' : '상태 확인 중'}</span>
                   </div>
                   <p className="mt-1 text-[12px] leading-[1.4]">
-                    {activeHazard.locationLabel} <strong className="text-[#b42330]">위험 물체({activeHazard.objectName}) 1개</strong>가 감지되었습니다. {loadError ? '현재 위험물과 기기 상태는 확인할 수 없어요.' : device ? isPaused ? '로봇청소기 운행이 일시정지 중입니다.' : '로봇청소기 운행 상태를 확인 중입니다.' : '기기 운행 상태는 아직 확인할 수 없어요.'}
+                    <strong className="text-[#b42330]">위험 물체({activeHazard.objectName}) 1개</strong>가 감지되었습니다. {loadError ? '현재 위험물과 기기 상태는 확인할 수 없어요.' : device ? isPaused ? '로봇청소기 운행이 일시정지 중입니다.' : '로봇청소기 운행 상태를 확인 중입니다.' : '기기 운행 상태는 아직 확인할 수 없어요.'}
                   </p>
                 </div>
               </div>
@@ -246,7 +245,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
                   <img src={robotDot} alt="" className="absolute right-[5px] top-[4px] size-2" />
                 </div>
                 <div className="min-w-0">
-                  <h2 className="truncate text-[16px] font-bold text-black">{device ? device.name ?? '등록된 로봇청소기' : loadError ? '기기 상태 조회 실패' : dashboard ? '등록된 기기 없음' : '기기 상태 확인 중'}</h2>
+                  <h2 className="truncate text-[16px] font-bold text-black">{device ? device.name ?? '등록된 로봇청소기' : loadError ? '기기 상태 조회 실패' : dashboard ? 'LG 로니 AI 베이비 케어' : '기기 상태 확인 중'}</h2>
                   <span className="mt-1 inline-flex rounded-full bg-[#d1feee] px-[7px] py-[1px] text-[10px] text-[#166b58]">{device ? '로봇' : '연결 전'}</span>
                 </div>
               </div>
@@ -358,7 +357,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
               <p className="mt-4 text-[14px] leading-6 text-[#475569]">{dashboard?.isMock ? '우회 청소는 기기가 위험물을 피해 안전하게 이동하는 방식이 확정된 뒤 사용할 수 있어요. 현재 로봇청소기는 정지 상태를 유지합니다. 위치를 확인하고 위험물을 직접 치워 주세요.' : '우회 청소 기능은 아직 연결되지 않았어요. 기기 운행 상태는 확인할 수 없으므로 위험물 위치를 확인하고 직접 치워 주세요.'}</p>
             ) : modal === 'hazards' ? (
               <div className="mt-4 text-[14px] text-[#475569]">
-                {dashboard?.activeHazards.length ? dashboard.activeHazards.map((hazard) => <button key={hazard.hazardId} type="button" onClick={() => void openHazardDetail(hazard)} className="block w-full border-b border-[#e2e8f0] py-2 text-left focus-visible:outline-[#a50034]">{hazard.objectName} · {hazard.locationLabel} <ArrowRight size={14} className="inline" /></button>) : <p>현재 표시할 위험 감지 내역이 없어요.</p>}
+                {dashboard?.activeHazards.length ? dashboard.activeHazards.map((hazard) => <button key={hazard.hazardId} type="button" onClick={() => void openHazardDetail(hazard)} className="block w-full border-b border-[#e2e8f0] py-2 text-left focus-visible:outline-[#a50034]">{hazard.objectName} <ArrowRight size={14} className="inline" /></button>) : <p>현재 표시할 위험 감지 내역이 없어요.</p>}
               </div>
             ) : (
               <p className="mt-4 text-[14px] leading-6 text-[#475569]">

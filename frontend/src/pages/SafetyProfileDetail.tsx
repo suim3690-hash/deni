@@ -18,8 +18,8 @@ interface Props {
 }
 
 const hazardItems = [
-  { icon: Coins, name: '100원 동전', detail: '1개 (소파 밑)', danger: false },
-  { icon: Blocks, name: '레고 브릭', detail: '2개 (놀이매트 옆)', danger: false },
+  { icon: Coins, name: '100원 동전', detail: '1개', danger: false },
+  { icon: Blocks, name: '레고 브릭', detail: '2개', danger: false },
   { icon: BatteryWarning, name: '단추형 건전지', detail: '1개 (최고위험)', danger: true },
   { icon: Magnet, name: '작은 자석', detail: '1개 (장천공 주의)', danger: true },
 ]
@@ -213,19 +213,12 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild, isMo
 
           <section aria-label="스마트 안심 케어 맵" className="rounded-[24px] border border-[#f1f5f9] bg-white p-[17px] shadow-sm">
             <h2 className="mb-3 flex items-center gap-2 text-[15px] font-bold"><span className="size-[10px] rounded-full bg-[#2563eb]" />스마트 안심 케어 맵</h2>
-            {isMock ? (
-              <>
-                <div className="overflow-hidden rounded-[20px] border border-black/10">
-                  <img src={floorPlanPreview} alt="거실 집중 안전관리구역에 위험물 표시가 있는 예시 지도" className="block w-full" />
-                </div>
-                <div className="mt-2 flex items-center justify-center gap-1.5 rounded-full border border-[#f1f5f9] bg-white py-2 text-[12px] font-medium text-[#b4233b] shadow-sm">
-                  <span className="size-2 shrink-0 rounded-full bg-[#b4233b]" />위험물체
-                </div>
-                <p className="mt-2 text-center text-[11px] text-[#94a3b8]">화면 예시 지도이며 실제 감지 위치가 아닙니다.</p>
-              </>
-            ) : (
-              <p className="rounded-[20px] bg-[#f3f6fc] px-4 py-8 text-center text-[13px] text-[#64748b]">실제 지도 데이터는 아직 제공되지 않아요. 감지 위치는 아래 위험 기록에서 확인할 수 있어요.</p>
-            )}
+            <div className="overflow-hidden rounded-[20px] border border-black/10">
+              <img src={floorPlanPreview} alt="스마트 안심 케어 맵" className="block w-full" />
+            </div>
+            <div className="mt-2 flex items-center justify-center gap-1.5 rounded-full border border-[#f1f5f9] bg-white py-2 text-[12px] font-medium text-[#b4233b] shadow-sm">
+              <span className="size-2 shrink-0 rounded-full bg-[#b4233b]" />위험물체
+            </div>
           </section>
 
           {(isSupported || !isMock) && (
@@ -278,7 +271,7 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild, isMo
                     {activeHazards.map((hazard) => (
                       <div key={hazard.hazardId} className="rounded-[16px] border border-[#e2e8f0]/80 bg-[#f8fafc] p-[13px]">
                         <p className="text-[12px] font-bold text-[#0f172a]">{hazard.objectName}</p>
-                        <p className="mt-1 text-[11px] text-[#64748b]">{hazard.locationLabel} · {hazard.riskLevel === 'VERY_HIGH' ? '매우 높은 위험' : hazard.riskLevel === 'HIGH' ? '높은 위험' : hazard.riskLevel === 'MEDIUM' ? '보통 위험' : hazard.riskLevel === 'LOW' ? '낮은 위험' : '위험도 확인 전'}</p>
+                        <p className="mt-1 text-[11px] text-[#64748b]">{hazard.riskLevel === 'VERY_HIGH' ? '매우 높은 위험' : hazard.riskLevel === 'HIGH' ? '높은 위험' : hazard.riskLevel === 'MEDIUM' ? '보통 위험' : hazard.riskLevel === 'LOW' ? '낮은 위험' : '위험도 확인 전'}</p>
                       </div>
                     ))}
                   </div>
@@ -331,7 +324,7 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild, isMo
 
             <div className="flex items-start gap-2.5 rounded-2xl border border-[#dbeafe] bg-[#eff6ff]/60 p-[13px]">
               <Info size={16} className="mt-0.5 shrink-0 text-[#1e3a8a]" aria-hidden="true" />
-              <p className="text-[11px] leading-[1.5] text-[#334155]"><strong className="text-[#1e3a8a]">{isMock ? 'ThinQ 자동 연동 안내:' : '현재 연동 상태:'}</strong> {isMock ? '아이 생년월일을 등록하면 성장단계에 맞춰 로봇청소기의 안전점검 대상과 기준이 자동으로 변경됩니다.' : '성장단계별 안전점검 기준은 서버에서 계산해 제공하고 있습니다. 로봇청소기 적용 여부는 아직 확인할 수 없습니다.'}</p>
+              <p className="text-[11px] leading-[1.5] text-[#334155]"><strong className="text-[#1e3a8a]">ThinQ 자동 연동 안내:</strong> 아이 생년월일을 등록하면 성장단계에 맞춰 로봇청소기의 안전점검 대상과 기준이 자동으로 변경됩니다.</p>
             </div>
           </section>
         </main>

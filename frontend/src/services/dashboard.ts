@@ -22,7 +22,6 @@ export interface DashboardHazard {
   hazardId: string
   objectName: string
   riskLevel: string
-  locationLabel: string
   detectedAt: string
 }
 
@@ -35,8 +34,6 @@ export interface DashboardProfile {
 export interface HazardDetail extends DashboardHazard {
   riskReason: string | null
   captureImageUrl: string | null
-  mapImageUrl: string | null
-  marker: { x: number; y: number } | null
 }
 
 export interface DashboardData {
@@ -81,7 +78,6 @@ function mockDashboard(child: RegisteredChild): DashboardSnapshot {
       hazardId: 'preview-lego',
       objectName: '레고 브릭',
       riskLevel: 'VERY_HIGH',
-      locationLabel: '거실 러그 위',
       detectedAt: new Date().toISOString(),
     }] : [],
     obstacleCount: 4,
@@ -95,8 +91,6 @@ export async function getHazardDetail(hazard: DashboardHazard, isMock: boolean):
     ...hazard,
     riskReason: '아이의 성장단계에서 삼킬 위험이 있는 작은 완구입니다.',
     captureImageUrl: null,
-    mapImageUrl: null,
-    marker: null,
   }
 
   const baseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
@@ -105,19 +99,16 @@ export async function getHazardDetail(hazard: DashboardHazard, isMock: boolean):
   if (!response.ok) throw await apiErrorFromResponse(response, '위험 상세 정보를 불러오지 못했어요.')
   const data = await response.json() as {
     hazardId: string; object?: { name?: string }; riskLevel: string; riskReason?: string | null
-    detectedAt: string; location?: { label?: string; mapImageUrl?: string | null; marker?: { x: number; y: number } | null }
+    detectedAt: string
     captureImageUrl?: string | null
   }
   return {
     hazardId: data.hazardId,
     objectName: data.object?.name ?? hazard.objectName,
     riskLevel: data.riskLevel,
-    locationLabel: data.location?.label ?? hazard.locationLabel,
     detectedAt: data.detectedAt,
     riskReason: data.riskReason ?? null,
     captureImageUrl: data.captureImageUrl ?? null,
-    mapImageUrl: data.location?.mapImageUrl ?? null,
-    marker: data.location?.marker ?? null,
   }
 }
 
