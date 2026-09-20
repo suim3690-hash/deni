@@ -172,9 +172,9 @@ export default function HazardLocation({ hazard, stage, operationState, detail, 
   return (
     <div className="min-h-screen bg-[#f0f5fd] text-[#1e293b] [zoom:clamp(0.85,calc(100vw/402px),1.4)]">
       <div className="mx-auto min-h-screen max-w-[402px] pb-[112px]">
-        <header className="flex min-h-[66px] items-center gap-4 bg-[#f7f9ff] px-7 py-2">
+        <header className="sticky top-0 z-10 flex min-h-[66px] items-center gap-4 bg-[#f7f9ff] px-7 py-2">
           <button type="button" onClick={onBack} aria-label="홈으로 돌아가기" className="grid size-6 shrink-0 place-items-center focus-visible:outline-[#a50034]"><ArrowLeft size={22} /></button>
-          <h1 className="min-w-0 flex-1 text-[18px] font-bold leading-5">실시간 위험 감지 맵</h1>
+          <h1 className="min-w-0 flex-1 text-[18px] font-bold leading-5">스마트 안심 케어 맵</h1>
           <span className="shrink-0 rounded-full bg-[#e1fff2] px-3 py-1.5 text-[12px] font-medium text-[#167359]">⊙ 드니 모드 ON</span>
         </header>
 

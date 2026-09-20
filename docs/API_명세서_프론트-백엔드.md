@@ -59,7 +59,7 @@
 | 홈 `다시 시작` | `POST /devices/{deviceId}/commands/resume` | 요청 식별키 | 명령 ID 또는 `409` | 위험물 미처리 시 재개 거부. 실제 운행 확인 후 `작동 중` 표시 |
 | 홈 Safety Profile `상세 보기` | `GET /children/{childId}/safety-profile` | 아이 ID | 월령, 적용 단계, 안전 기준 | 조회 결과로 프로필 화면 구성 |
 | 아이 정보 `수정 완료` | `PATCH /children/{childId}` | 이름, 생년월일 | 수정된 아이 정보·재계산 프로필 | 저장 성공 후 프로필 재표시. 실패 시 편집값 유지 |
-| 홈 `실시간 위험 감지 맵` | `GET /hazards?deviceId={deviceId}&status=ACTIVE` | 기기 ID, 상태 | 진행 중 위험 건과 맵 마커 목록 | 맵에 현재 위험 건을 표시. 항목 선택 시 상세 GET |
+| 홈 `스마트 안심 케어 맵` | `GET /hazards?deviceId={deviceId}&status=ACTIVE` | 기기 ID, 상태 | 진행 중 위험 건과 맵 마커 목록 | 맵에 현재 위험 건을 표시. 항목 선택 시 상세 GET |
 | 홈 알림 `위치 확인하기`·맵의 위험 항목 선택 | `GET /hazards/{hazardId}` | 위험 건 ID | 객체·위험도·위치·시간·이미지·판단 사유·맵 좌표 | 선택한 동일 위험 건의 상세 표시 |
 | `위험물을 치웠어요` | `POST /hazards/{hazardId}/removal-checks` | 요청 식별키 | 처리 ID, `CHECKING` | 로봇 정지 유지·`재확인 중` 표시. 최종 결과 조회 |
 | `안전 위치로 이동` | `POST /hazards/{hazardId}/relocations` | 요청 식별키, 필요 시 안전 위치 ID | 처리 ID, `MOVING` | `이동 중` 표시. 실제 이동 완료 후에만 임시 완료 표시 |

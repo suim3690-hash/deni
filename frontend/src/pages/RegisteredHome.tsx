@@ -224,12 +224,12 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
             <div className="mb-3">
               <HazardAlertBox
                 onClick={() => void openHazardDetail(activeHazard)}
-                ariaLabel={`${alert.urgencyLabel} ${alert.title}. 실시간 위험 감지 맵으로 이동`}
+                ariaLabel={`${alert.urgencyLabel} ${alert.title}. 스마트 안심 케어 맵으로 이동`}
                 badge={alert.urgencyLabel}
                 urgent={alert.urgent}
                 riskLabel={alert.risk ? riskLabels[alert.risk] : null}
                 title={`${alert.title}${extraHazardCount > 0 ? ` 외 ${extraHazardCount}건` : ''}`}
-                subtitle={loadError ? '최신 조회 실패 · 마지막으로 확인된 알림이에요' : '눌러서 실시간 위험 감지 맵 확인'}
+                subtitle={loadError ? '최신 조회 실패 · 마지막으로 확인된 알림이에요' : '눌러서 스마트 안심 케어 맵 확인'}
               />
             </div>
           )}
@@ -279,9 +279,9 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
                   onClick={openMap}
                   disabled={!connected}
                   title={!connected ? '로봇청소기를 연결하면 사용할 수 있어요' : undefined}
-                  className="flex min-h-[38px] min-w-[205px] items-center justify-center px-5 py-1.5 rounded-full bg-[#b9003d] text-[14px] font-semibold text-white focus-visible:outline-[#a50034] disabled:cursor-not-allowed disabled:opacity-45"
+                  className={`flex min-h-[38px] min-w-[205px] items-center justify-center rounded-full px-5 py-1.5 text-[14px] font-semibold text-white transition-colors focus-visible:outline-[#a50034] disabled:cursor-not-allowed disabled:opacity-45 ${activeHazard ? 'bg-[#b9003d]' : 'bg-[#167359]'}`}
                 >
-                  실시간 위험 감지 맵 <ArrowRight size={15} className="ml-1" />
+                  스마트 안심 케어 맵 <ArrowRight size={15} className="ml-1" />
                 </button>
               </div>
             </div>
