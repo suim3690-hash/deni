@@ -1,5 +1,20 @@
 # 드니 Safety Care 프론트–백엔드 API 명세서
 
+> **2026-09-20 구현 갱신:** 아래 과거 제안 중 명령 전달 미구현 설명은 이 표로 대체한다.
+> WebSocket과 업로드 상세는 [Socket 명세](Socket_명세서_백엔드-하드웨어.md)를 따른다.
+
+| 변경 | 현재 구현 |
+| --- | --- |
+| PAUSE 요청 | Socket 연결·최근 온라인 보고 시 QUEUED로 접수 후 전달. 미연결 접수는 NOT_CONNECTED |
+| 명령 조회 | status: REQUESTED / SUCCEEDED / FAILED / EXPIRED / UNKNOWN. deliveryState는 QUEUED / SENT / DELIVERED / 최종 상태 |
+| commandsAvailable | 최근 온라인 보고 + 활성 Socket 연결일 때 true. PAUSE만 지원 |
+| 모델 입력 | POST `/api/v1/hardware/detections`, 인증 헤더·multipart 이미지. 200 eventId·hazardId |
+| 위험도 | 새 HTTP 업로드 라벨 5종을 프론트 성장단계 규칙으로 분류·저장 |
+| 미지원 | 재개·이송·모델 재검사·자동 정지·ThinQ 실제 연결 |
+
+프론트 홈은 현재 PAUSE 호출 버튼이 없으며 전원/ThinQ 버튼은 기존 동작을 유지한다.
+이전 DB 직접 저장 이벤트를 자동 변환하지 않으며, 미분류 라벨은 hazardId=null이다.
+
 > 협의안 v0.1 · 2026-09-17  
 > 대상: [3차 화면 설계](https://www.figma.com/design/VRe73HbPynTknNZkfMNuAp/%EA%B8%B0%ED%9A%8D-%EB%A9%98%ED%86%A0%EB%A7%81?node-id=1103-789)의 아이 등록, 홈, Safety Profile, 위험 상세·안전 처리, 월간 리포트  
 > **주의:** 아래 경로와 JSON 필드에는 구현된 API와 미구현 제안 계약이 함께 포함돼 있다. 실제 구현 완료 목록과 DB 구조·제한은 [백엔드 README](../backend/README.md)를 기준으로 확인한다.

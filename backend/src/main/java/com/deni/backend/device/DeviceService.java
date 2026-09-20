@@ -20,6 +20,8 @@ import java.util.UUID;
 
 @Service
 public class DeviceService {
+	@Autowired(required = false)
+	private DeviceChannel channel;
 	private static final Set<String> CONNECTIONS = Set.of("ONLINE", "OFFLINE", "UNKNOWN");
 	private static final Set<String> OPERATIONS = Set.of("RUNNING", "PAUSED", "STOPPING", "RESUMING", "READY_TO_RESUME", "UNKNOWN");
 	private final DeviceRepository devices;
@@ -136,7 +138,8 @@ public class DeviceService {
 				&& Duration.between(device.getLastSeenAt(), now).compareTo(statusMaxAge) < 0;
 		return new DeviceStatus(device.getId(), device.getName(), fresh ? device.getConnectionState() : "UNKNOWN",
 				fresh && device.getConnectionState().equals("ONLINE") ? device.getOperationState() : "UNKNOWN",
-				fresh ? device.getBatteryPercent() : null, device.getLastSeenAt(), false);
+				fresh ? device.getBatteryPercent() : null, device.getLastSeenAt(),
+				fresh && device.getConnectionState().equals("ONLINE") && channel != null && channel.connected(device.getId()));
 	}
 
 	private String text(String value, String field) {

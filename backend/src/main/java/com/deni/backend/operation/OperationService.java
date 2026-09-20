@@ -14,6 +14,8 @@ import java.util.UUID;
 
 @Service
 public class OperationService {
+	@org.springframework.beans.factory.annotation.Autowired(required = false)
+	private org.springframework.jdbc.core.JdbcTemplate deliveryDb;
 	private final OperationRequestRepository requests;
 	private final DeviceService devices;
 	private final HazardService hazards;
@@ -38,7 +40,7 @@ public class OperationService {
 		var device = devices.getStatus(id);
 		String kind = command.equals("pause") ? "PAUSE" : "RESUME";
 		OperationRequest existing = replay(id, key, kind, null);
-		if (existing != null) return new CommandReceipt(existing.getId(), existing.getStatus(), "NOT_CONNECTED");
+		if (existing != null) return new CommandReceipt(existing.getId(), existing.getStatus(), deliveryState(existing.getId()));
 		if (command.equals("resume")) {
 			if (!hazards.findActiveHazardsForChild(devices.getLinkedChildId(id)).isEmpty()) {
 				throw ApiException.conflict("HAZARD_UNRESOLVED", "미처리 위험물이 있어 청소를 재개할 수 없습니다.");
@@ -47,7 +49,11 @@ public class OperationService {
 		}
 		requireOnline(device);
 		OperationRequest saved = requests.saveAndFlush(new OperationRequest(id, null, key, kind, now()));
-		return new CommandReceipt(saved.getId(), saved.getStatus(), "NOT_CONNECTED");
+		if (device.commandsAvailable() && deliveryDb != null) {
+			deliveryDb.update("INSERT INTO device_command_delivery(command_id,device_id,expires_at) VALUES (?,?,?)",
+					saved.getId(),id,now().plusSeconds(10));
+		}
+		return new CommandReceipt(saved.getId(), saved.getStatus(), deliveryState(saved.getId()));
 	}
 
 	@Transactional(readOnly = true)
@@ -59,6 +65,14 @@ public class OperationService {
 			throw ApiException.notFound("COMMAND_NOT_FOUND", "해당 기기의 명령을 찾을 수 없습니다.");
 		}
 		// 기기 현재 상태가 PAUSED여도 이 명령의 성공 증거가 아니므로 확인 결과는 UNKNOWN이다.
+		if (deliveryDb != null) {
+			var result = deliveryDb.query("SELECT status,completed_at FROM device_command_delivery WHERE command_id=?",
+					(rs,n) -> new CommandResult(request.getId(),
+							java.util.Set.of("QUEUED","SENT","DELIVERED").contains(rs.getString("status")) ? "REQUESTED" : rs.getString("status"),
+							rs.getString("status").equals("SUCCEEDED") ? "PAUSED" : "UNKNOWN",
+							rs.getObject("completed_at", OffsetDateTime.class), request.getCreatedAt(),rs.getString("status")),commandId);
+			if (!result.isEmpty()) return result.getFirst();
+		}
 		return new CommandResult(request.getId(), request.getStatus(), "UNKNOWN", null,
 				request.getCreatedAt(), "NOT_CONNECTED");
 	}
@@ -127,6 +141,11 @@ public class OperationService {
 		}
 	}
 	private OffsetDateTime now() { return OffsetDateTime.now(ZoneId.of("Asia/Seoul")); }
+	private String deliveryState(UUID id) {
+		if (deliveryDb == null) return "NOT_CONNECTED";
+		var rows=deliveryDb.queryForList("SELECT status FROM device_command_delivery WHERE command_id=?",String.class,id);
+		return rows.isEmpty()?"NOT_CONNECTED":rows.getFirst();
+	}
 
 	public record CommandReceipt(UUID commandId, String status, String deliveryState) { }
 	public record CommandResult(UUID commandId, String status, String deviceOperationState, OffsetDateTime confirmedAt,

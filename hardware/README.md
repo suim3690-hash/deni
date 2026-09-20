@@ -1,5 +1,16 @@
 # 하드웨어·모델 코드
 
+현재 실행 예제와 메시지 계약은 [Socket 명세](../docs/Socket_명세서_백엔드-하드웨어.md)를 따른다.
+
+| 파일 | 용도 |
+| --- | --- |
+| `simulator.py` | 인증된 Socket 연결·주기 상태·PAUSE ACK/모의 완료 |
+| `examples/upload_detection.py` | JPEG/PNG 탐지 프레임 HTTP 업로드 |
+| `examples/robot_db_writer.py` | 이전 직접 DB 입력 예제, 신규 Socket과 병행 금지 |
+| `requirements.txt` | 시뮬레이터·HTTP 예제 의존성 |
+
+기존 `v2` 브랜치가 있으므로 작업 브랜치는 `hardware`로 만든다 (`v2/hardware`는 Git 이름 충돌).
+
 하드웨어 담당자는 로봇 제어와 객체 탐지 실행 코드를 이 폴더에서 관리한다.
 
 ## 코드 전달 기준

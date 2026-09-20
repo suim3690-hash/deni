@@ -1,160 +1,121 @@
-# 백엔드–하드웨어 WebSocket 명세
+# 백엔드–하드웨어 연결 (2026-09-20)
 
-> 상태: v2 통합 초안 · 실제 하드웨어 지원 기능 확인 후 확정
+현재 구현은 등록 기기 **1대·백엔드 인스턴스 1개** 기준이다. 실제 모터 코드는 하드웨어 담당자가 연결한다.
 
-프론트의 HTTP 요청을 백엔드가 로봇에 전달하고, 로봇의 수신 확인·실행 결과·현재 상태를 백엔드가
-DB에 저장하기 위한 계약이다. WebSocket은 아직 구현되지 않았으며 이 문서는 양쪽 구현 기준이다.
-
-## 1. 연결
-
-| 항목 | 초안 |
-| --- | --- |
-| 주소 | `ws://{backend-host}:8080/ws/devices`·운영 환경은 `wss` |
-| 연결 주체 | 하드웨어 프로그램이 백엔드에 연결하고 재연결 |
-| 식별 | 등록된 `deviceId` |
-| 인증 | 기기별 키 필요. 전달 헤더·발급 방식은 구현 전에 확정 |
-| 시각 | UTC ISO 8601, 예: `2026-09-19T09:00:00Z` |
-| 문자 인코딩 | UTF-8 JSON |
-| 이미지 | WebSocket JSON에 포함하지 않음. 현재는 DB 예제 사용, 이후 HTTP 업로드 계약 확정 |
-
-백엔드는 같은 `deviceId`의 활성 연결을 하나만 인정한다. 연결이 끊기면 하드웨어가 지수 백오프로
-재연결하고, 백엔드는 연결 여부와 마지막 보고 시각을 구분해서 관리한다.
-
-## 2. 공통 메시지 형식
-
-```json
-{
-  "type": "COMMAND",
-  "messageId": "8dc780e3-50ee-4c53-82eb-87f5b49edbd2",
-  "deviceId": "robot-001",
-  "sentAt": "2026-09-19T09:00:00Z",
-  "payload": {}
-}
+```text
+프론트 ── HTTP 조회/요청 ── 백엔드 ── WebSocket 상태/PAUSE ── 하드웨어
+                              │       ← HTTP 이미지 업로드 ── 모델
+                          PostgreSQL
 ```
 
-| 필드 | 규칙 |
+## 연결 설정
+
+| 항목 | 계약 |
 | --- | --- |
-| `type` | 아래 정의된 메시지 종류 |
-| `messageId` | 메시지 UUID. 재전송은 같은 값 사용 |
-| `deviceId` | 연결에 사용한 등록 기기 ID와 일치 |
-| `sentAt` | 송신자가 메시지를 만든 시각 |
-| `payload` | 종류별 데이터 |
+| WebSocket | `ws://백엔드IP:8080/ws/devices` |
+| HTTP 업로드 | `POST http://백엔드IP:8080/api/v1/hardware/detections` |
+| 공통 헤더 | `Authorization: Bearer {키}`, `X-Device-Id: {등록된 기기 ID}` |
+| 백엔드 환경변수 | `ROBOT_DEVICE_ID`, `ROBOT_DEVICE_TOKEN` (최소 32자, 별도 공유) |
+| 연결 제한 | 동일 기기 중복 연결 거부. 키 미설정·잘못된 키는 인증 실패 |
+| 운영 범위 | 개발망 전용. 보호자 인증·권한, TLS, 다중 기기는 후속 작업 |
 
-알 수 없는 타입·필수 필드 누락·연결 기기와 다른 `deviceId`는 실행하지 않고 오류 응답을 보낸다.
+기기는 먼저 `POST /api/v1/devices`로 실제 아이에 등록한다. Socket 연결만으로 온라인이 되지 않고 유효한 상태 보고가 필요하다.
+기존 기기 상태 유효기간 기본값은 300초이며 개발 시 `DEVICE_STATUS_MAX_AGE_SECONDS=10` 설정을 권장한다.
+`/robot-state`는 측정·수신 후 10초가 지나면 미확인이다. Socket 종료 시 commandsAvailable=false가 되고,
+연결 상태는 마지막 보고의 유효기간을 따른다.
 
-## 3. 백엔드에서 하드웨어로 보내는 명령
+## 메시지
 
-```json
-{
-  "type": "COMMAND",
-  "messageId": "8dc780e3-50ee-4c53-82eb-87f5b49edbd2",
-  "deviceId": "robot-001",
-  "sentAt": "2026-09-19T09:00:00Z",
-  "payload": {
-    "commandId": "550e8400-e29b-41d4-a716-446655440000",
-    "command": "PAUSE",
-    "expiresAt": "2026-09-19T09:00:10Z",
-    "parameters": {}
-  }
-}
-```
+모든 기기 메시지는 `type`, UUID `messageId`, `deviceId`, 시간대 포함 `sentAt`, `payload`를 보낸다.
+성공 응답은 `{"type":"RECEIPT","messageId":"...","accepted":true}`이다.
+오류 응답은 `{"type":"ERROR","code":"INVALID_MESSAGE"}`이다.
 
-| 명령 | 의미 | 현재 결정 상태 |
+| 방향 | type | payload |
 | --- | --- | --- |
-| `PAUSE` | 현재 작업을 안전하게 일시정지 | 하드웨어 확인 필요 |
-| `RESUME` | 안전 확인 후 작업 재개 | 하드웨어 확인 필요 |
-| `STOP` | 즉시 또는 완전 정지 | `PAUSE`와 차이를 하드웨어와 확정하기 전 전송 금지 |
-| `RECHECK_HAZARD` | 지정 위험물이 남아 있는지 모델 재검사 | 하드웨어·모델 확인 필요 |
-| `RELOCATE` | 지정 물체를 안전 위치로 이송 | 위치·가능 물체·완료 기준 확정 전 전송 금지 |
+| 기기 → 백 | `ROBOT_STATE` | `operationState`, `movementState`, `sampledAt`, 선택적 `batteryPercent`, `movementDurationMs`, `movementDistanceM` |
+| 백 → 기기 | `COMMAND` | `commandId`, `command:"PAUSE"`, `expiresAt`, `parameters:{}` |
+| 기기 → 백 | `COMMAND_ACK` | `commandId`, `status:"DELIVERED"` |
+| 기기 → 백 | `COMMAND_RESULT` | `commandId`, `status:"SUCCEEDED"` 또는 `"FAILED"`, `operationState`, `completedAt`, 선택적 `errorCode` |
 
-`commandId`는 프론트 HTTP 요청을 받은 백엔드가 생성한다. 같은 명령을 재전송할 때 새 ID를 만들지 않는다.
-하드웨어는 이미 최종 처리한 ID를 다시 받으면 동작을 반복하지 않고 이전 결과를 회신한다. 만료된 명령은
-실행하지 않고 `EXPIRED` 결과를 보낸다.
-
-## 4. 하드웨어에서 백엔드로 보내는 메시지
-
-명령 수신 확인:
-
-```json
-{
-  "type": "COMMAND_ACK",
-  "messageId": "a96cfcab-29ca-4e52-aa42-14e469a2b81d",
-  "deviceId": "robot-001",
-  "sentAt": "2026-09-19T09:00:00.300Z",
-  "payload": {
-    "commandId": "550e8400-e29b-41d4-a716-446655440000",
-    "status": "DELIVERED"
-  }
-}
-```
-
-실행 결과:
-
-```json
-{
-  "type": "COMMAND_RESULT",
-  "messageId": "65156832-915d-45b5-bb0b-8fa0e637b16a",
-  "deviceId": "robot-001",
-  "sentAt": "2026-09-19T09:00:01Z",
-  "payload": {
-    "commandId": "550e8400-e29b-41d4-a716-446655440000",
-    "status": "SUCCEEDED",
-    "operationState": "PAUSED",
-    "errorCode": null,
-    "errorMessage": null,
-    "completedAt": "2026-09-19T09:00:01Z"
-  }
-}
-```
-
-최신 상태:
+상태 전송 예시 (실제 현재 시각으로 바꿔 전송):
 
 ```json
 {
   "type": "ROBOT_STATE",
-  "messageId": "9b780b32-d982-4146-86a6-8f3cfef3d176",
+  "messageId": "8dc780e3-50ee-4c53-82eb-87f5b49edbd2",
   "deviceId": "robot-001",
-  "sentAt": "2026-09-19T09:00:02Z",
+  "sentAt": "2026-09-20T07:00:00Z",
   "payload": {
-    "operationState": "RUNNING",
-    "movementState": "FORWARD",
-    "movementDurationMs": 1200,
-    "movementDistanceM": 0.35,
-    "batteryPercent": null,
-    "sampledAt": "2026-09-19T09:00:02Z"
+    "operationState": "RUNNING", "movementState": "FORWARD",
+    "sampledAt": "2026-09-20T07:00:00Z", "batteryPercent": 80,
+    "movementDurationMs": 1200, "movementDistanceM": 0.35
   }
 }
 ```
 
-| 메시지 | 필수 데이터 | 저장·화면 반영 |
-| --- | --- | --- |
-| `COMMAND_ACK` | 명령 ID, `DELIVERED` 또는 `REJECTED` | 명령 전달 상태 갱신 |
-| `COMMAND_RESULT` | 명령 ID, `SUCCEEDED`·`FAILED`·`EXPIRED`, 완료 시각 | 명령 결과와 실제 운행 상태 갱신 |
-| `ROBOT_STATE` | 동작·이동 상태, 측정 시각 | 최신 상태 저장, 프론트 조회에 반영 |
-| `DETECTION` | 이벤트 ID, 모델, 라벨, 감지 시각, 이미지 업로드 참조 | 원본 탐지 저장 후 위험 변환 규칙 적용 |
-| `HEARTBEAT` | 기기 시각, 선택적 버전 정보 | 연결 생존과 마지막 보고 시각 갱신 |
+| 필드 | 허용값 |
+| --- | --- |
+| 동작 | RUNNING, PAUSED, RELOCATING, UNKNOWN |
+| 이동 | FORWARD, TURNING, BACKWARD, STOPPED, UNKNOWN |
+| 시간·거리 | 현재 구간 기준 ms·m, 미측정은 null |
+| 배터리 | 0~100 또는 null |
 
-## 5. 명령 상태 흐름
+RELOCATING은 원본 상태에 보관하지만 기존 devices.operation_state에는 UNKNOWN으로 표시한다.
+상태는 1초 간격으로 보고한다. 과거 상태는 무시하고 동일 측정 시각에 다른 내용은 거부한다.
+별도 HEARTBEAT나 Socket DETECTION은 아직 지원하지 않는다.
 
-```mermaid
-stateDiagram-v2
-    [*] --> REQUESTED: HTTP 요청·DB 저장
-    REQUESTED --> DELIVERED: COMMAND_ACK
-    REQUESTED --> EXPIRED: 연결 없음·기한 만료
-    DELIVERED --> SUCCEEDED: 실제 실행 완료
-    DELIVERED --> FAILED: 실행 거부·장치 오류
-    DELIVERED --> EXPIRED: 결과 제한시간 만료
+## 일시정지 흐름
+
+| 단계 | 동작 |
+| --- | --- |
+| 1 | HTTP `POST /api/v1/devices/{id}/commands/pause`, `{}`, UUID `Idempotency-Key` |
+| 2 | 최근 온라인 상태와 Socket 연결 시 같은 트랜잭션에서 접수·전달 대기 저장 |
+| 3 | 백엔드가 0.5초 간격으로 커밋된 대기 명령 전송, 기기는 ACK 후 실제 정지 |
+| 4 | 실제 정지 후 같은 commandId로 SUCCEEDED·PAUSED·completedAt 전송 |
+| 5 | `GET /api/v1/devices/{id}/commands/{commandId}`로 결과 확인 |
+
+전달 상태는 QUEUED → SENT → DELIVERED → SUCCEEDED/FAILED다.
+HTTP status는 대기·전달 중 REQUESTED, 최종은 SUCCEEDED/FAILED/EXPIRED/UNKNOWN이다.
+요청 후 10초 동안 보내지 못하면 EXPIRED, 보냈으나 결과가 없으면 UNKNOWN이다.
+늦은 실제 결과는 UNKNOWN에서 확정 가능하다. 자동 재전송하지 않는다. 같은 HTTP 키는 새 명령을 만들지 않는다.
+하드웨어는 commandId와 결과를 영속 저장해 중복 동작을 막고, 만료 명령은 실행하지 않는다.
+서버·기기 시계를 동기화하고 completedAt은 실제 완료 시각을 유지한다.
+PAUSED 상태 보고만으로 명령 성공을 추정하지 않는다. 결과 보고와 별도로 최신 ROBOT_STATE를 계속 전송한다.
+
+이전 접수 기록과 Socket 없이 기록한 요청은 NOT_CONNECTED이며 나중에 자동 실행되지 않는다.
+commandsAvailable은 PAUSE 전달 가능 여부이며 재개·이송 지원을 뜻하지 않는다.
+현재 홈의 전원/ThinQ 버튼은 PAUSE 버튼이 아니다. HTTP 경로는 준비됐지만 화면 버튼 연결은 프론트 담당자가 해야 한다.
+
+## 탐지 이미지 업로드
+
+multipart 필드: `eventId`(UUID), `modelType`(HAZARD/OBJECT), `objectLabel`, `image`(바운딩 박스 JPEG/PNG, 최대 5MiB).
+응답: `200 {"eventId":"...","hazardId":"... 또는 null"}`.
+재전송은 같은 ID·모델·라벨·이미지 사용. 다른 내용 재사용은 409다.
+detected_at은 DB 수신 시각, 이미지 URL은 `/api/v1/devices/{id}/detections/{eventId}/image`다.
+
+| 한글 라벨에 포함된 문자열 | 분류 | 0~11개월 | 12~35개월 | 36~95개월 |
+| --- | --- | --- | --- | --- |
+| 구슬·동전·배터리 | SWALLOW | VERY_HIGH | HIGH | MEDIUM |
+| 전선·콘센트 | LIVING | HIGH | HIGH | VERY_HIGH |
+
+현재 프론트 표시 규칙을 맞춘 개발 정책이다. 두 모델 모두 라벨 기준으로 분류하며 생활공간 분류가 우선한다.
+다른 라벨·지원 연령 밖은 원본만 저장하고 hazardId=null이다. 영어 라벨 매핑은 별도 확정한다.
+기존 직접 DB 저장 이벤트는 자동 변환하지 않는다. 위험 자동 정지·재검사·재개·이송은 아직 미연결이다.
+
+## 하드웨어 실행 예제
+
+```powershell
+py -m pip install -r hardware/requirements.txt
+$env:ROBOT_DEVICE_ID = 'robot-001'
+# ROBOT_DEVICE_TOKEN은 별도 전달받아 환경변수로 설정
+$env:ROBOT_WS_URL = 'ws://백엔드IP:8080/ws/devices'
+py hardware/simulator.py
 ```
 
-`REQUESTED`와 `DELIVERED`는 성공이 아니다. 프론트는 `SUCCEEDED`와 실제 상태 보고를 확인한 뒤 성공을
-표시한다. 연결이 끊기거나 결과를 잃으면 임의로 성공·실패를 추정하지 않고 미확정 상태를 반환한다.
+```powershell
+$env:ROBOT_HTTP_URL = 'http://백엔드IP:8080'
+py hardware/examples/upload_detection.py annotated.png 동전 HAZARD
+```
 
-## 6. 구현 전에 확정할 항목
-
-- 하드웨어가 지원하는 명령과 `PAUSE`·`STOP` 차이
-- 기기 인증키 발급·교체 방식
-- ACK 제한시간, 실행 제한시간, 재전송 횟수
-- 배터리·속도·좌표의 실제 측정 가능 여부와 단위
-- 위험 재검사의 대상 지정 방법과 결과 형식
-- 안전 위치의 좌표계, 이동 가능 물체, 완료 판단 기준
-- 탐지 이미지 HTTP 업로드 경로와 최대 크기
+시뮬레이터는 가짜 상태만 변경한다. 실제 하드웨어는 모터 제어·재연결·commandId/결과 영속 저장을 구현한다.
+시뮬레이터는 자동 재연결하지 않는다. 업로드 실패 시 출력된 EVENT_ID를 환경변수에 설정하고 같은 파일로 재시도한다.
