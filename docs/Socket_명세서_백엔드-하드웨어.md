@@ -21,7 +21,7 @@
 
 기기는 먼저 `POST /api/v1/devices`로 실제 아이에 등록한다. Socket 연결만으로 온라인이 되지 않고 유효한 상태 보고가 필요하다.
 기존 기기 상태 유효기간 기본값은 300초이며 개발 시 `DEVICE_STATUS_MAX_AGE_SECONDS=10` 설정을 권장한다.
-`/robot-state`는 측정·수신 후 10초가 지나면 미확인이다. Socket 종료 시 commandsAvailable=false가 되고,
+`/robot-state`는 측정·수신 후 10초가 지나면 미확인이다. Socket 종료 또는 최신 이동 상태가 `UNKNOWN`이면 commandsAvailable=false가 되고,
 연결 상태는 마지막 보고의 유효기간을 따른다.
 
 ## 메시지
@@ -83,7 +83,7 @@ HTTP status는 대기·전달 중 REQUESTED, 최종은 SUCCEEDED/FAILED/EXPIRED/
 PAUSED 상태 보고만으로 명령 성공을 추정하지 않는다. 결과 보고와 별도로 최신 ROBOT_STATE를 계속 전송한다.
 
 이전 접수 기록과 Socket 없이 기록한 요청은 NOT_CONNECTED이며 나중에 자동 실행되지 않는다.
-commandsAvailable은 PAUSE 전달 가능 여부이며 재개·이송 지원을 뜻하지 않는다.
+commandsAvailable은 활성 Socket과 최신 온라인 보고가 있고, 모터가 10초 이내 보고한 이동 상태가 `UNKNOWN`이 아닐 때의 PAUSE 전달 가능 여부다. 제어 상태 유효기간은 `ROBOT_CONTROL_STATUS_MAX_AGE_SECONDS`로 조정하며 재개·이송 지원을 뜻하지 않는다.
 현재 홈의 전원/ThinQ 버튼은 PAUSE 버튼이 아니다. HTTP 경로는 준비됐지만 화면 버튼 연결은 프론트 담당자가 해야 한다.
 
 ## 탐지 이미지 업로드

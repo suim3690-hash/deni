@@ -2,7 +2,6 @@ package com.deni.backend.child;
 
 import com.deni.backend.hazard.HazardService;
 import com.deni.backend.device.DeviceService;
-import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -14,7 +13,6 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/dashboard")
-@CrossOrigin(origins = {"http://localhost:5173", "http://127.0.0.1:5173"})
 public class DashboardController {
 
 	private final ChildService childService;

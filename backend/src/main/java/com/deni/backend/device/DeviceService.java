@@ -5,6 +5,7 @@ import com.deni.backend.common.ApiException;
 import com.deni.backend.common.IdempotencyGuard;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,27 +23,40 @@ import java.util.UUID;
 public class DeviceService {
 	@Autowired(required = false)
 	private DeviceChannel channel;
+	@Autowired(required = false)
+	private JdbcTemplate jdbc;
 	private static final Set<String> CONNECTIONS = Set.of("ONLINE", "OFFLINE", "UNKNOWN");
 	private static final Set<String> OPERATIONS = Set.of("RUNNING", "PAUSED", "STOPPING", "RESUMING", "READY_TO_RESUME", "UNKNOWN");
 	private final DeviceRepository devices;
 	private final ChildService children;
 	private final IdempotencyGuard guard;
 	private final Duration statusMaxAge;
+	private final Duration controlStateMaxAge;
 	private final Clock clock;
 
 	@Autowired
 	public DeviceService(DeviceRepository devices, ChildService children, IdempotencyGuard guard,
-			@Value("${device.status-max-age-seconds:300}") long statusMaxAgeSeconds) {
-		this(devices, children, guard, statusMaxAgeSeconds, Clock.system(ZoneId.of("Asia/Seoul")));
+			@Value("${device.status-max-age-seconds:300}") long statusMaxAgeSeconds,
+			@Value("${robot.control-status-max-age-seconds:10}") long controlStateMaxAgeSeconds) {
+		this(devices, children, guard, statusMaxAgeSeconds, controlStateMaxAgeSeconds,
+				Clock.system(ZoneId.of("Asia/Seoul")));
 	}
 
 	DeviceService(DeviceRepository devices, ChildService children, IdempotencyGuard guard,
 			long statusMaxAgeSeconds, Clock clock) {
-		if (statusMaxAgeSeconds <= 0) throw new IllegalArgumentException("Device status max age must be positive");
+		this(devices, children, guard, statusMaxAgeSeconds, 10, clock);
+	}
+
+	DeviceService(DeviceRepository devices, ChildService children, IdempotencyGuard guard,
+			long statusMaxAgeSeconds, long controlStateMaxAgeSeconds, Clock clock) {
+		if (statusMaxAgeSeconds <= 0 || controlStateMaxAgeSeconds <= 0) {
+			throw new IllegalArgumentException("Device status max ages must be positive");
+		}
 		this.devices = devices;
 		this.children = children;
 		this.guard = guard;
 		this.statusMaxAge = Duration.ofSeconds(statusMaxAgeSeconds);
+		this.controlStateMaxAge = Duration.ofSeconds(controlStateMaxAgeSeconds);
 		this.clock = clock;
 	}
 
@@ -136,10 +150,25 @@ public class DeviceService {
 				&& !device.getLastReportedAt().isAfter(now) && !device.getLastSeenAt().isAfter(now)
 				&& Duration.between(device.getLastReportedAt(), now).compareTo(statusMaxAge) < 0
 				&& Duration.between(device.getLastSeenAt(), now).compareTo(statusMaxAge) < 0;
+		boolean commandsAvailable = fresh && device.getConnectionState().equals("ONLINE")
+				&& channel != null && channel.connected(device.getId()) && hasControllableMovement(device.getId());
 		return new DeviceStatus(device.getId(), device.getName(), fresh ? device.getConnectionState() : "UNKNOWN",
 				fresh && device.getConnectionState().equals("ONLINE") ? device.getOperationState() : "UNKNOWN",
-				fresh ? device.getBatteryPercent() : null, device.getLastSeenAt(),
-				fresh && device.getConnectionState().equals("ONLINE") && channel != null && channel.connected(device.getId()));
+				fresh ? device.getBatteryPercent() : null, device.getLastSeenAt(), commandsAvailable);
+	}
+
+	private boolean hasControllableMovement(String deviceId) {
+		if (jdbc == null) return false;
+		Boolean available = jdbc.queryForObject("""
+				SELECT EXISTS (
+				    SELECT 1 FROM robot_live_state
+				    WHERE device_id = ? AND movement_state <> 'UNKNOWN'
+				      AND sampled_at <= clock_timestamp() AND received_at <= clock_timestamp()
+				      AND sampled_at > clock_timestamp() - (? * INTERVAL '1 second')
+				      AND received_at > clock_timestamp() - (? * INTERVAL '1 second')
+				)
+				""", Boolean.class, deviceId, controlStateMaxAge.toSeconds(), controlStateMaxAge.toSeconds());
+		return Boolean.TRUE.equals(available);
 	}
 
 	private String text(String value, String field) {

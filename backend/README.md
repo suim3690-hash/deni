@@ -18,7 +18,7 @@ Java 21 · Spring Boot 4.1.1 · PostgreSQL · Flyway V1~V8 · Gradle.
 | 최신 로봇 상태 | GET `/devices/{id}/robot-state` | 10초 경과 시 UNKNOWN |
 | 탐지 원본·이미지 | GET `/devices/{id}/detections`, `/devices/{id}/detections/{eventId}/image` | 최근 50건·JPEG/PNG |
 | 모델 입력 | POST `/hardware/detections` | 기기 인증·multipart 이미지·원본/위험 저장 |
-| 일시정지 | POST `/devices/{id}/commands/pause` | Socket 연결 시 전달 대기열에 저장 |
+| 일시정지 | POST `/devices/{id}/commands/pause` | Socket 연결·최신 온라인 보고·확인된 이동 상태가 있을 때 전달 대기열에 저장 |
 | 명령 결과 | GET `/devices/{id}/commands/{commandId}` | 전달·실제 결과 조회 |
 | 직접 제거 재확인 | POST `/hazards/{id}/removal-checks`, GET `/safety-actions/{id}` | 접수 기록만, 모델 재검사 미연결 |
 | 재개·이송 | POST `/devices/{id}/commands/resume`, `/hazards/{id}/relocations` | 안전 계약 미확정으로 409 |
@@ -26,6 +26,12 @@ Java 21 · Spring Boot 4.1.1 · PostgreSQL · Flyway V1~V8 · Gradle.
 등록·명령 요청은 기존 Idempotency-Key 계약을 따른다. 위험 업로드는 eventId로 중복을 검사한다.
 프론트 UI는 받은 원본을 유지했다. 최신 홈의 전원 버튼은 ThinQ 안내/조회이며 일시정지 실행 버튼이 아니다.
 명령 HTTP 호출 경로는 준비됐고 프론트 담당자의 버튼 연결이 필요하다. ThinQ 실제 제어는 구현하지 않았다.
+
+다른 PC의 프론트에서 접속할 때는 백엔드 실행 전에 해당 Origin을 쉼표로 구분해 설정한다. 주소 끝에 `/`를 붙이지 않는다.
+
+```powershell
+$env:APP_CORS_ALLOWED_ORIGINS = 'http://localhost:5173,http://프론트PC_IP:5173'
+```
 
 ## DB
 

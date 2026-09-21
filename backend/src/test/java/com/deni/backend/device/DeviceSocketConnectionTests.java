@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest(webEnvironment=SpringBootTest.WebEnvironment.RANDOM_PORT,properties={
     "robot.device-id=socket-test-device", "robot.device-token=integration-test-only-token-32-characters",
+    "app.cors.allowed-origins=http://frontend.test:5173",
     "safety.profile-refresh.enabled=false"})
 @EnabledIfEnvironmentVariable(named="RUN_DB_TESTS",matches="true")
 class DeviceSocketConnectionTests {
@@ -24,6 +25,21 @@ class DeviceSocketConnectionTests {
     @Autowired DeviceService devices;
     @Autowired JdbcTemplate jdbc;
     @Autowired tools.jackson.databind.ObjectMapper json;
+    @Test void corsAllowsConfiguredFrontendAndRejectsUnknownOrigin() throws Exception {
+        var client=HttpClient.newHttpClient();
+        URI uri=URI.create("http://localhost:"+port+"/api/v1/dashboard?childId="+UUID.randomUUID());
+        var allowed=client.send(HttpRequest.newBuilder(uri)
+            .header("Origin","http://frontend.test:5173")
+            .header("Access-Control-Request-Method","GET")
+            .method("OPTIONS",HttpRequest.BodyPublishers.noBody()).build(),HttpResponse.BodyHandlers.discarding());
+        assertEquals(200,allowed.statusCode());
+        assertEquals("http://frontend.test:5173",allowed.headers().firstValue("Access-Control-Allow-Origin").orElse(null));
+        var rejected=client.send(HttpRequest.newBuilder(uri)
+            .header("Origin","http://unknown.test:5173")
+            .header("Access-Control-Request-Method","GET")
+            .method("OPTIONS",HttpRequest.BodyPublishers.noBody()).build(),HttpResponse.BodyHandlers.discarding());
+        assertEquals(403,rejected.statusCode());
+    }
     @Test void realWebSocketAuthenticatesAndReceivesState() throws Exception {
         URI uri=URI.create("ws://localhost:"+port+"/ws/devices");
         var client=HttpClient.newHttpClient();

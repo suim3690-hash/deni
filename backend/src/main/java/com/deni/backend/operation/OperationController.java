@@ -2,7 +2,6 @@ package com.deni.backend.operation;
 
 import com.deni.backend.common.ApiException;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -17,7 +16,6 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1")
-@CrossOrigin(origins = {"http://localhost:5173", "http://127.0.0.1:5173"})
 public class OperationController {
 	private final OperationService service;
 	public OperationController(OperationService service) { this.service = service; }

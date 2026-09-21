@@ -7,7 +7,7 @@
 | --- | --- |
 | PAUSE 요청 | Socket 연결·최근 온라인 보고 시 QUEUED로 접수 후 전달. 미연결 접수는 NOT_CONNECTED |
 | 명령 조회 | status: REQUESTED / SUCCEEDED / FAILED / EXPIRED / UNKNOWN. deliveryState는 QUEUED / SENT / DELIVERED / 최종 상태 |
-| commandsAvailable | 최근 온라인 보고 + 활성 Socket 연결일 때 true. PAUSE만 지원 |
+| commandsAvailable | 최근 온라인 보고 + 활성 Socket + 10초 이내 이동 상태가 `UNKNOWN`이 아닐 때 true. PAUSE만 지원 |
 | 모델 입력 | POST `/api/v1/hardware/detections`, 인증 헤더·multipart 이미지. 200 eventId·hazardId |
 | 위험도 | 새 HTTP 업로드 라벨 5종을 프론트 성장단계 규칙으로 분류·저장 |
 | 미지원 | 재개·이송·모델 재검사·자동 정지·ThinQ 실제 연결 |

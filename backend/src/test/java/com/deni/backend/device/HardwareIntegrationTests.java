@@ -33,7 +33,21 @@ class HardwareIntegrationTests {
         String id="hw-test-"+UUID.randomUUID(); devices.register(child.childId(),id,"test"); return id;
     }
     void state(String id,String operation,OffsetDateTime at) {
-        messages.receive(id,"ROBOT_STATE",json.valueToTree(Map.of("operationState",operation,"movementState","STOPPED","sampledAt",at.toString(),"batteryPercent",75)));
+        state(id,operation,"STOPPED",at);
+    }
+    void state(String id,String operation,String movement,OffsetDateTime at) {
+        messages.receive(id,"ROBOT_STATE",json.valueToTree(Map.of("operationState",operation,"movementState",movement,"sampledAt",at.toString(),"batteryPercent",75)));
+    }
+    @Test void cameraOnlyConnectionCannotReceiveCommandsUntilMotorMovementIsObserved() {
+        String id=device(); var session=mock(WebSocketSession.class); when(session.isOpen()).thenReturn(true); channel.register(id,session);
+        try {
+            state(id,"UNKNOWN","STOPPED",OffsetDateTime.now().minusSeconds(11));
+            assertFalse(devices.getStatus(id).commandsAvailable());
+            state(id,"UNKNOWN","UNKNOWN",OffsetDateTime.now().minusSeconds(2));
+            assertFalse(devices.getStatus(id).commandsAvailable());
+            state(id,"UNKNOWN","STOPPED",OffsetDateTime.now().minusSeconds(1));
+            assertTrue(devices.getStatus(id).commandsAvailable());
+        } finally { channel.remove(id,session); }
     }
     @Test void pauseTravelsToSessionAndOnlyMatchingResultConfirmsIt() throws Exception {
         String id=device(); var session=mock(WebSocketSession.class); when(session.isOpen()).thenReturn(true); channel.register(id,session);
