@@ -46,11 +46,12 @@ export async function getSafetyAction(actionId: string): Promise<ActionResult> {
 // isn't finalized server-side, so this call is expected to always come back blocked
 // with RELOCATION_NOT_CONFIGURED today. The caller surfaces that as the FR-028
 // "이동 불가 시 직접 제거 안내" alternate flow rather than treating it as a bug.
-export async function requestRelocation(hazardId: string): Promise<void> {
+export async function requestRelocation(hazardId: string): Promise<ActionReceipt> {
   const response = await fetch(`${apiBase()}/api/v1/hazards/${encodeURIComponent(hazardId)}/relocations`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Idempotency-Key': generateId() },
     body: '{}',
   })
   if (!response.ok) throw await apiErrorFromResponse(response, '안전 위치 이동 요청을 접수하지 못했어요.')
+  return response.json() as Promise<ActionReceipt>
 }

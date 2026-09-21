@@ -40,7 +40,7 @@ export default function GrowthReport({ child, month: initialMonth, onBack }: Pro
   useEffect(() => {
     const controller = new AbortController()
     let current = true
-    void getMonthlyReport(child.childId, child.name, selectedMonth, controller.signal)
+    void getMonthlyReport(child.childId, child.name, child.birthDate, selectedMonth, controller.signal)
       .then((result) => {
         if (current) setRequest({ key: requestKey, report: result, error: '' })
       })
@@ -53,7 +53,7 @@ export default function GrowthReport({ child, month: initialMonth, onBack }: Pro
         setRequest({ key: requestKey, report: null, error: apiErrorMessage(failure, message) })
       })
     return () => { current = false; controller.abort() }
-  }, [child.childId, child.name, selectedMonth, requestKey])
+  }, [child.childId, child.name, child.birthDate, selectedMonth, requestKey])
 
   // 조회 월 선택창에 월별 위험 물체 감지 건수를 보여주기 위해 선택한 연도의 월별 리포트를 미리 조회한다.
   useEffect(() => {
@@ -62,14 +62,14 @@ export default function GrowthReport({ child, month: initialMonth, onBack }: Pro
       const key = monthKey(pickerYear, month)
       if (key > currentMonth || requestedMonths.current.has(key)) continue
       requestedMonths.current.add(key)
-      getMonthlyReport(child.childId, child.name, key)
+      getMonthlyReport(child.childId, child.name, child.birthDate, key)
         .then((result) => setMonthCounts((counts) => ({ ...counts, [key]: result.summary.detectionCount })))
         .catch(() => {
           requestedMonths.current.delete(key)
           setMonthCounts((counts) => ({ ...counts, [key]: null }))
         })
     }
-  }, [pickerOpen, pickerYear, currentMonth, child.childId, child.name])
+  }, [pickerOpen, pickerYear, currentMonth, child.childId, child.name, child.birthDate])
 
   function openPicker() {
     setPickerYear(yearNumber)
@@ -77,10 +77,12 @@ export default function GrowthReport({ child, month: initialMonth, onBack }: Pro
     setPickerOpen(true)
   }
 
+  const monthLabel = selectedMonth === currentMonth ? '이번 달' : `${monthNumber}월`
   const totalCount = report?.summary.detectionCount ?? 0
   const stageChanges = report?.stageChanges ?? (report?.stageChange ? [report.stageChange] : [])
   // 변경 이력이 없을 때 보여줄 기준 단계: 이번 달은 오늘, 지난 달은 그 달 말일의 월령으로 계산한다.
-  const referenceProfile = computeSafetyProfile(child.birthDate, selectedMonth === currentMonth ? new Date() : new Date(yearNumber, monthNumber, 0))
+  const referenceDate = selectedMonth === currentMonth ? new Date() : new Date(yearNumber, monthNumber, 0)
+  const referenceProfile = computeSafetyProfile(child.birthDate, referenceDate)
   const referenceStage = referenceProfile.ageMonths >= 0 ? referenceProfile.stage : null
   let angle = 0
   const donutStops = report?.detectionsByObject.map((item, index) => {
@@ -109,7 +111,7 @@ export default function GrowthReport({ child, month: initialMonth, onBack }: Pro
               <p>{error}</p>
               <button type="button" onClick={() => setReloadKey((value) => value + 1)} className="mt-3 font-bold underline underline-offset-2 focus-visible:outline-[#a50034]">다시 시도</button>
             </div> : report && <>
-              <section aria-label="이번 달 안전 요약" className="rounded-[24px] p-5 text-white shadow-[0_8px_20px_rgba(165,0,52,0.22)]" style={{ backgroundImage: 'linear-gradient(92deg, #ca1048 5%, #fb90b0 99%)' }}>
+              <section aria-label={`${monthLabel} 안전 요약`} className="rounded-[24px] p-5 text-white shadow-[0_8px_20px_rgba(165,0,52,0.22)]" style={{ backgroundImage: 'linear-gradient(92deg, #ca1048 5%, #fb90b0 99%)' }}>
                 <div className="flex items-start justify-between">
                   <span className="flex min-w-0 items-center gap-1.5 rounded-full bg-black/20 px-3 py-1 text-[11px] font-semibold"><ShieldCheck size={12} className="shrink-0" aria-hidden="true" /><span className="">{report.isMock ? '화면 예시' : '저장된 위험 기록 집계'}</span></span>
                   {report.isMock && <MonthlyFeedbackButton shapeClassName="size-10 rounded-full border border-white/20" wrapperClassName="shrink-0" idleBgClassName="bg-white/15" iconSize={20} />}
@@ -118,22 +120,22 @@ export default function GrowthReport({ child, month: initialMonth, onBack }: Pro
                 <p className="pt-1 text-[12px] leading-[1.6] text-white/85">선택한 월의 성장단계 변화와 위험 물체 감지 기록을 확인해 보세요.</p>
               </section>
 
-              <section aria-label="이번 달 성장단계 변화" className="space-y-3 rounded-[24px] border border-[#eef2f6] bg-white p-5 shadow-sm">
+              <section aria-label={`${monthLabel} 성장단계`} className="space-y-3 rounded-[24px] border border-[#eef2f6] bg-white p-5 shadow-sm">
                 <div className="flex items-center justify-between gap-2">
-                  <h2 className="flex min-w-0 items-center gap-2 text-[15px] font-bold"><span className="size-[10px] shrink-0 rounded-full bg-[#2958c7]" aria-hidden="true" />이번 달 성장단계 변화</h2>
+                  <h2 className="flex min-w-0 items-center gap-2 text-[15px] font-bold"><span className="size-[10px] shrink-0 rounded-full bg-[#2958c7]" aria-hidden="true" />{monthLabel} 성장단계</h2>
                   <span className="shrink-0 rounded-full bg-[#eef3ff] px-3 py-1 text-[11px] font-semibold text-[#2958c7]">
-                    {stageChanges.length === 0 ? '변화 없음' : stageChanges.some((change) => change.reason === 'AGE_CHANGED') ? '자동 프로필 갱신됨' : '프로필 변경됨'}
+                    {stageChanges.length === 0 ? (referenceProfile.ageMonths < 0 ? '출생 전' : '변화 없음') : stageChanges.some((change) => change.reason === 'AGE_CHANGED') ? '자동 프로필 갱신됨' : '프로필 변경됨'}
                   </span>
                 </div>
-                <StageChangeTimeline changes={stageChanges} month={selectedMonth} isCurrentMonth={selectedMonth === currentMonth} fallbackStage={referenceStage} ageMonths={referenceProfile.ageMonths} />
+                <StageChangeTimeline changes={stageChanges} month={selectedMonth} isCurrentMonth={selectedMonth === currentMonth} referenceDate={referenceDate} referenceAgeMonths={referenceProfile.ageMonths} fallbackStage={referenceStage} nextStage={report.nextStagePreview ?? null} birthDate={child.birthDate} />
                 <p className="text-[10px] text-[#9ca3af]">{stageChanges.length > 0
                   ? '백엔드에서 변경을 기록한 시각입니다. 생일 경계의 실제 전환 시각이나 기기 적용 완료 시각이 아닙니다.'
-                  : `이력 수집 시작 이전의 변경은 포함되지 않습니다. 위 단계는 생년월일로 계산한 ${monthNumber}월 기준 단계입니다.`}</p>
+                  : `이력 수집 시작 이전의 변경은 포함되지 않습니다. 위 단계는 생년월일로 계산한 ${monthNumber}월 기준 단계입니다.`} 다음 단계 시점은 생년월일 기준 예상 날짜입니다.</p>
               </section>
 
-              <section aria-label="이번 달 위험물 감지 통계" className="space-y-3 rounded-[24px] border border-[#eef2f6] bg-white p-5 shadow-sm">
+              <section aria-label={`${monthLabel} 위험물 감지 통계`} className="space-y-3 rounded-[24px] border border-[#eef2f6] bg-white p-5 shadow-sm">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-[15px] font-bold">이번 달 위험물 감지 통계</h2>
+                  <h2 className="text-[15px] font-bold">{monthLabel} 위험물 감지 통계</h2>
                   <span className="rounded-full bg-[#fef2f2] px-2 py-1 text-[11px] font-bold text-[#a50034]">{totalCount}건</span>
                 </div>
                 {report.detectionsByObject.length === 0 ? <p className="rounded-[16px] bg-[#f8fafc] p-5 text-center text-[12px] text-[#64748b]">선택한 월에 저장된 위험 탐지 기록이 없습니다.<br />탐지 모델 연동 전에는 자동으로 기록이 쌓이지 않습니다.</p> : <>

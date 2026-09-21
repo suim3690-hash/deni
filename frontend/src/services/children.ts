@@ -72,6 +72,14 @@ function ageInCompletedMonths(birthDate: string, today: Date) {
   return months
 }
 
+// 생년월일 기준으로 만 개월수가 처음 `months` 이상이 되는 날짜. 월말 생일도 같은 월령 계산식을 그대로 따른다.
+export function dateReachingAgeMonths(birthDate: string, months: number): Date {
+  const [year, month] = birthDate.split('-').map(Number)
+  const date = new Date(year, month - 1 + months, 1)
+  while (ageInCompletedMonths(birthDate, date) < months) date.setDate(date.getDate() + 1)
+  return date
+}
+
 export function computeSafetyProfile(birthDate: string, referenceDate: Date = new Date()): RegisteredChild['safetyProfile'] {
   const ageMonths = ageInCompletedMonths(birthDate, referenceDate)
   const stage = ageMonths < 12 ? 'INFANT' : ageMonths < 36 ? 'TODDLER' : ageMonths < 96 ? 'ACTIVE_CHILD' : null

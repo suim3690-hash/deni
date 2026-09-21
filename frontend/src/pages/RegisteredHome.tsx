@@ -133,6 +133,24 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     }
   }, [child, onChildUnavailable, onUpdateChild, refreshKey])
 
+  // 실제 모드에서 지도 화면이 열려 있는 동안 위험 상세를 다시 조회해, 서버 좌표가 바뀌면 지도의 마커가 따라 움직이게 한다.
+  useEffect(() => {
+    if (!showMap || !selectedHazard || dashboard?.isMock !== false) return
+    const hazard = selectedHazard
+    let active = true
+    const timer = window.setInterval(() => {
+      getHazardDetail(hazard, false)
+        .then((next) => { if (active) setHazardDetail(next) })
+        .catch(() => {
+          // 조회에 실패하면 마지막으로 받은 상세를 그대로 유지한다.
+        })
+    }, 5000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [showMap, selectedHazard, dashboard?.isMock])
+
   useEffect(() => {
     if (!modal) return
     closeButtonRef.current?.focus()
@@ -247,7 +265,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     onUpdateChild(updated)
   }
 
-  if (showMap) return <HazardLocation hazard={selectedHazard} stage={stage} operationState={operationState} detail={hazardDetail} error={hazardError} errorStatus={hazardErrorStatus} isMock={dashboard?.isMock ?? false} onBack={closeMap} onRetry={() => { if (selectedHazard) void openHazardDetail(selectedHazard) }} />
+  if (showMap) return <HazardLocation hazard={selectedHazard} deviceId={device?.deviceId ?? ''} stage={stage} operationState={operationState} detail={hazardDetail} error={hazardError} errorStatus={hazardErrorStatus} isMock={dashboard?.isMock ?? false} onBack={closeMap} onRetry={() => { if (selectedHazard) void openHazardDetail(selectedHazard) }} />
   if (showSafetyProfile) return <SafetyProfileDetail child={child} onBack={() => setShowSafetyProfile(false)} onUpdateChild={handleProfileChildUpdate} isMock={dashboard?.isMock ?? !import.meta.env.VITE_API_BASE_URL} />
   if (showReport && report && reportAvailable) return <GrowthReport child={child} month={report.month} onBack={() => setShowReport(false)} />
 

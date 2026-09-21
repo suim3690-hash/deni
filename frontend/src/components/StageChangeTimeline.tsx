@@ -1,16 +1,21 @@
 import { ArrowRight } from 'lucide-react'
-import type { ProfileStageChange } from '../services/reports'
+import type { MonthlyReport, ProfileStageChange } from '../services/reports'
+import { dateReachingAgeMonths } from '../services/children'
 import { stageFocusLabels, stageLabels, stageLowerBoundMonths, type Stage } from '../lib/stages'
 
 interface Props {
   changes: ProfileStageChange[]
   month: string
   isCurrentMonth: boolean
+  referenceDate: Date
+  referenceAgeMonths: number
   fallbackStage: Stage | null
-  ageMonths: number
+  nextStage: MonthlyReport['nextStagePreview'] | null
+  birthDate: string
 }
 
 const OUT_OF_RANGE = '지원 범위 밖'
+const DAY_MS = 24 * 60 * 60 * 1000
 
 function stageName(stage: Stage | null) {
   return stage ? stageLabels[stage] : OUT_OF_RANGE
@@ -30,7 +35,19 @@ function kstDate(iso: string) {
   return { month: read('month'), day: read('day') }
 }
 
-function StageCard({ stage, range, badge, active }: { stage: Stage | null; range: string; badge: string; active: boolean }) {
+function startOfDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+}
+
+function shortDate(date: Date, reference: Date) {
+  return date.getFullYear() === reference.getFullYear()
+    ? `${date.getMonth() + 1}/${date.getDate()}`
+    : `${String(date.getFullYear()).slice(2)}.${date.getMonth() + 1}.${date.getDate()}`
+}
+
+function StageCard({ stage, range, badge, active, title, focus }: {
+  stage: Stage | null; range: string; badge: string; active: boolean; title?: string; focus?: string
+}) {
   return (
     <div className={`relative min-w-0 flex-1 rounded-[14px] px-3 pb-3 pt-4 ${active ? 'border-2 border-[#2958c7] bg-[#f5f8ff]' : 'border border-[#d8dee8] bg-white'}`}>
       {active && <span className="absolute -top-2.5 right-3 rounded-full bg-[#2958c7] px-2 py-0.5 text-[10px] font-bold text-white">{badge}</span>}
@@ -38,8 +55,8 @@ function StageCard({ stage, range, badge, active }: { stage: Stage | null; range
         <p className={`text-[11px] ${active ? 'font-bold text-[#2958c7]' : 'text-[#94a3b8]'}`}>{range}</p>
         {!active && <span className="shrink-0 rounded-full bg-[#eef0f4] px-2 py-0.5 text-[10px] font-semibold text-[#64748b]">{badge}</span>}
       </div>
-      <p className={`mt-1.5 break-keep text-[15px] font-extrabold leading-tight ${active ? 'text-[#1e3a8a]' : 'text-[#334155]'}`}>{stageName(stage)}</p>
-      <p className={`mt-1 break-keep text-[11px] leading-[1.35] ${active ? 'text-[#2958c7]' : 'text-[#94a3b8]'}`}>{stage ? stageFocusLabels[stage] : 'Safety Profile 미적용'}</p>
+      <p className={`mt-1.5 break-keep text-[15px] font-extrabold leading-tight ${active ? 'text-[#1e3a8a]' : 'text-[#334155]'}`}>{title ?? stageName(stage)}</p>
+      <p className={`mt-1 break-keep text-[11px] leading-[1.35] ${active ? 'text-[#2958c7]' : 'text-[#94a3b8]'}`}>{focus ?? (stage ? stageFocusLabels[stage] : 'Safety Profile 미적용')}</p>
     </div>
   )
 }
@@ -64,46 +81,64 @@ function ChangeMessage({ change, month, day }: { change: ProfileStageChange; mon
   return <>{date}, 아이가 생후 {months}개월을 맞아 로봇청소기의 <strong className="text-[#a50034]">Safety Profile이 {to}{particle} 자동 전환</strong>되었습니다.</>
 }
 
-export default function StageChangeTimeline({ changes, month, isCurrentMonth, fallbackStage, ageMonths }: Props) {
+// 조회 월의 현재 성장단계와 다음 단계(전환 예정일·D-day)를 보여준다. 그 달에 단계가 바뀌었다면 전환 안내를 함께 보여준다.
+export default function StageChangeTimeline({ changes, month, isCurrentMonth, referenceDate, referenceAgeMonths, fallbackStage, nextStage, birthDate }: Props) {
   const monthNumber = Number(month.slice(5))
   const lastDay = new Date(Number(month.slice(0, 4)), monthNumber, 0).getDate()
   const periodEnd = isCurrentMonth ? '현재' : `${monthNumber}/${lastDay}`
   const activeBadge = isCurrentMonth ? '현재 적용' : '월말 적용'
+  const lastChange = changes.length > 0 ? changes[changes.length - 1] : null
+  const [birthYear, birthMonth, birthDay] = birthDate.split('-').map(Number)
+  const born = new Date(birthYear, birthMonth - 1, birthDay)
 
-  if (changes.length === 0 && !fallbackStage) {
-    return <p className="rounded-[16px] bg-[#f8fafc] p-4 text-[12px] text-[#64748b]">선택한 월에 저장된 성장단계 변경 이력이 없습니다.</p>
+  // 조회 월 기준일에 아직 태어나기 전이면, 출생 전 카드 → 첫 성장단계(출생일) 카드로 같은 형태를 유지한다.
+  if (!lastChange && referenceAgeMonths < 0) {
+    const daysToBirth = Math.max(Math.round((startOfDay(born) - startOfDay(referenceDate)) / DAY_MS), 0)
+    const firstStage: Stage = 'INFANT'
+    const firstName = stageLabels[firstStage]
+    return (
+      <div className="space-y-3 rounded-[20px] border border-[#e6eefc] bg-[#f8fbff] p-3.5">
+        <div className="flex items-stretch gap-2">
+          <StageCard stage={null} title="출생 전" focus="Safety Profile 적용 전" range={`${monthNumber}/1 ~ ${periodEnd}`} badge="출생 전" active />
+          <ArrowRight size={16} className="shrink-0 self-center text-[#2958c7]" aria-hidden="true" />
+          <StageCard stage={firstStage} range={`${shortDate(born, referenceDate)} ~`} badge={daysToBirth === 0 ? 'D-Day' : `D-${daysToBirth}`} active={false} />
+        </div>
+        <InfoBox>
+          등록된 생년월일은 <strong className="text-[#1e3a8a]">{birthYear}년 {birthMonth}월 {birthDay}일</strong>이에요. {isCurrentMonth ? '' : `${monthNumber}월 말 기준 `}아직 태어나기 전이라 Safety Profile이 적용되기 전입니다. 출생일부터 <strong className="text-[#a50034]">{firstName}{directionParticle(firstName)} 적용</strong>되며, 출생까지 <strong className="text-[#1e3a8a]">{daysToBirth}일</strong> 남았어요.
+        </InfoBox>
+      </div>
+    )
   }
+
+  const changedAt = lastChange ? kstDate(lastChange.changedAt) : null
+  const currentStage = lastChange ? lastChange.to : fallbackStage
+  const isBirthMonth = birthYear === Number(month.slice(0, 4)) && birthMonth === monthNumber
+  const currentRange = changedAt ? `${changedAt.month}/${changedAt.day} ~ ${periodEnd}` : `${monthNumber}/${isBirthMonth ? birthDay : 1} ~ ${periodEnd}`
+
+  const next = nextStage?.stage ?? null
+  const nextMonths = next ? stageLowerBoundMonths[next] : 0
+  const nextDate = next ? dateReachingAgeMonths(birthDate, nextMonths) : null
+  const daysLeft = nextDate ? Math.max(Math.round((startOfDay(nextDate) - startOfDay(referenceDate)) / DAY_MS), 0) : 0
+  const nextName = next ? stageLabels[next] : ''
+  const nextRange = nextDate ? `${shortDate(nextDate, referenceDate)} ~` : ''
 
   return (
     <div className="space-y-3 rounded-[20px] border border-[#e6eefc] bg-[#f8fbff] p-3.5">
-      {changes.length > 0 ? changes.map((change, index) => {
-        const at = kstDate(change.changedAt)
-        const previous = index > 0 ? kstDate(changes[index - 1].changedAt) : null
-        const next = index < changes.length - 1 ? kstDate(changes[index + 1].changedAt) : null
-        const isLast = index === changes.length - 1
-        const fromStart = previous ? `${previous.month}/${previous.day}` : `${monthNumber}/1`
-        const fromRange = at.day > 1 ? `${fromStart} ~ ${at.month}/${at.day - 1}` : '이전 달까지'
-        const toEnd = next ? (next.day > 1 ? `${next.month}/${next.day - 1}` : `${at.month}/${at.day}`) : periodEnd
-        return (
-          <div key={`${change.changedAt}:${index}`} className="space-y-3">
-            <div className="flex items-stretch gap-2">
-              <StageCard stage={change.from} range={fromRange} badge="완료" active={false} />
-              <ArrowRight size={16} className="shrink-0 self-center text-[#2958c7]" aria-hidden="true" />
-              <StageCard stage={change.to} range={`${at.month}/${at.day} ~ ${toEnd}`} badge={isLast ? activeBadge : '완료'} active={isLast} />
-            </div>
-            <InfoBox><ChangeMessage change={change} month={at.month} day={at.day} /></InfoBox>
-          </div>
-        )
-      }) : (
-        <>
-          <div className="flex">
-            <StageCard stage={fallbackStage} range={`${monthNumber}/1 ~ ${periodEnd}`} badge={activeBadge} active />
-          </div>
-          <InfoBox>
-            아이가 생후 {ageMonths}개월이어서 로봇청소기의 <strong className="text-[#a50034]">Safety Profile이 {stageName(fallbackStage)} 그대로 유지</strong>되었습니다. {monthNumber}월에는 성장단계 변화가 없습니다.
-          </InfoBox>
-        </>
-      )}
+      <div className="flex items-stretch gap-2">
+        <StageCard stage={currentStage} range={currentRange} badge={activeBadge} active />
+        {next && nextDate && (
+          <>
+            <ArrowRight size={16} className="shrink-0 self-center text-[#2958c7]" aria-hidden="true" />
+            <StageCard stage={next} range={nextRange} badge={daysLeft === 0 ? 'D-Day' : `D-${daysLeft}`} active={false} />
+          </>
+        )}
+      </div>
+      {lastChange && changedAt && <InfoBox><ChangeMessage change={lastChange} month={changedAt.month} day={changedAt.day} /></InfoBox>}
+      {next && nextDate ? (
+        <InfoBox>
+          <strong className="text-[#1e3a8a]">{nextDate.getFullYear()}년 {nextDate.getMonth() + 1}월 {nextDate.getDate()}일</strong>, 아이가 생후 {nextMonths}개월을 맞아 로봇청소기의 <strong className="text-[#a50034]">Safety Profile이 {nextName}{directionParticle(nextName)} 자동 전환</strong>될 예정입니다. {isCurrentMonth ? '' : `${monthNumber}월 말 기준 `}전환까지 <strong className="text-[#1e3a8a]">{daysLeft}일</strong> 남았어요.
+        </InfoBox>
+      ) : nextStage && <InfoBox>{nextStage.description}</InfoBox>}
     </div>
   )
 }
