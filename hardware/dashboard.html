@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Robot Drive Console</title><style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#0c131b;color:#e9f0f5}*{box-sizing:border-box}
+body{max-width:1280px;margin:auto;padding:28px}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+.eyebrow{color:#5ce1b5;font:12px monospace;letter-spacing:2px}h1{font-size:28px;margin:8px 0}main{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:20px}
+.panel{background:#141f2b;border:1px solid #263647;border-radius:16px;padding:20px}.stage{padding:0;overflow:hidden;position:relative;min-height:280px;aspect-ratio:4/3;background:#070b10}
+#video{width:100%;height:100%;object-fit:contain;display:block}.overlay{position:absolute;bottom:16px;left:16px;right:16px;padding:12px;background:#0c131be8;border-radius:8px;color:#ffc776}
+.badge{font:13px monospace;color:#5ce1b5;background:#16382e;padding:9px 12px;border-radius:30px}h2{font-size:15px;margin:0 0 18px}.keys{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:20px 0}
+button{border:1px solid #3a4f62;background:#1f3041;color:#fff;border-radius:9px;padding:14px;cursor:pointer;font:600 15px system-ui;touch-action:none;user-select:none}
+button:hover{background:#2b4054}button.pressed{background:#5ce1b5;color:#08271e;border-color:#5ce1b5;box-shadow:0 0 20px #5ce1b530}
+button:disabled{opacity:.45;cursor:not-allowed}.full{width:100%}.enable{background:#195944;border-color:#297d60}.stop{background:#612b30;border-color:#96505b}.key-label{display:block;font-size:11px;opacity:.7;font-weight:400;margin-top:5px}
+.small{font-size:13px;color:#9fb0bf;line-height:1.65}.row{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #273747;font-size:13px}.value{font-family:monospace;color:#e4f0fa}
+#message{min-height:48px;color:#ffc776;font-size:13px;line-height:1.6;margin-top:14px}footer{margin-top:18px}.hint{margin:16px 0 0}
+@media(max-width:800px){body{padding:16px}main{grid-template-columns:1fr}header{align-items:flex-start}.stage{min-height:220px}}
+</style></head><body>
+<header><div><div class="eyebrow">DX PROJECT / ROBOT CONTROL</div><h1>Robot Drive Console</h1></div><span id="badge" class="badge">CONNECTING</span></header>
+<main><section><div class="panel stage"><img id="video" alt="Waiting for camera"><div id="overlay" class="overlay">Waiting for fresh video...</div></div>
+<p class="small hint">Hold W / A / S / D to move. Release to stop. Space or X stops.<br>Switching tabs or windows disables controls. Enable again to resume.</p></section>
+<aside class="panel"><h2>DRIVE CONTROLS</h2><button id="enable" class="full enable" disabled>Enable controls</button>
+<div class="keys"><span></span><button data-key="w">W<span class="key-label">FORWARD</span></button><span></span>
+<button data-key="a">A<span class="key-label">LEFT</span></button><button data-key="s">S<span class="key-label">BACKWARD</span></button><button data-key="d">D<span class="key-label">RIGHT</span></button></div>
+<button id="stop" class="full stop">STOP / DISABLE</button><div id="message">Start both Raspberry Pi services. Waiting for connections.</div>
+<div class="row"><span>Requested motion</span><span id="motion" class="value">STOP</span></div>
+<div class="row"><span>Arduino ACK</span><span id="ack" class="value">--</span></div>
+<div class="row"><span>Preview updates</span><span id="fps" class="value">0 FPS</span></div>
+<div class="row"><span>Motor TCP</span><span id="motorConnection" class="value">--</span></div><div class="row"><span>ACK round trip</span><span id="ackTime" class="value">--</span></div><p id="stopReason" class="small" style="color:#ffc776">최근 제어 해제 사유: 없음</p><p class="small">ACK confirms a command, not physical wheel movement. Start with wheels lifted.</p></aside></main>
+<footer class="small">Video and controls share this screen but run independently. Frame receipt is monitored; total camera-to-screen delay is not measured.</footer>
+<script>
+const SECRET='__SECRET__';
+const $=id=>document.getElementById(id), pressed=new Set();
+const names={F:'FORWARD',B:'BACKWARD',L:'LEFT',R:'RIGHT',S:'STOP'}, cmds={w:'F',s:'B',a:'L',d:'R'};
+let armed=false,arming=false,motorReady=false,owner='',seq=0,busy=false,frameSeq=0,videoAt=0,imageURL=null,count=0;
+function fresh(){return frameSeq>0&&performance.now()-videoAt<650}
+function desired(){return armed&&pressed.size===1?cmds[[...pressed][0]]:'S'}
+function visuals(){document.querySelectorAll('[data-key]').forEach(b=>b.classList.toggle('pressed',armed&&pressed.has(b.dataset.key)));$('motion').textContent=names[desired()];$('enable').disabled=armed||arming||!motorReady||!fresh();$('badge').textContent=armed?'CONTROLS ENABLED':'STOPPED / DISABLED'}
+async function post(path,data,timeout=350){const c=new AbortController(),t=setTimeout(()=>c.abort(),timeout);try{const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({secret:SECRET,...data}),signal:c.signal});const out=await r.json();if(!r.ok)throw Error(out.error||'Request failed');return out}finally{clearTimeout(t)}}
+function disable(reason){const old=owner;armed=false;pressed.clear();$('message').textContent=reason;if(old)$('stopReason').textContent='최근 제어 해제 사유: '+reason;visuals();if(old)navigator.sendBeacon('/stop',JSON.stringify({secret:SECRET,owner:old,reason:reason.slice(0,200)}));owner=''}
+async function pump(){if(!armed||busy)return;if(!fresh()||!document.hasFocus()||document.hidden){disable('Video or focus lost. Enable controls again.');return}const current=owner;busy=true;try{await post('/control',{owner:current,seq:++seq,command:desired(),frame:frameSeq})}catch(e){if(owner===current)disable('Control stopped: '+e.message)}finally{busy=false;visuals()}}
+$('enable').onclick=async()=>{if(!fresh()||!motorReady||arming)return;arming=true;const current=crypto.randomUUID();owner=current;seq=0;pressed.clear();try{await post('/arm',{owner:current,frame:frameSeq});if(owner!==current)return;armed=true;$('message').textContent='Hold a direction key or button. Release to stop.';pump()}catch(e){if(owner===current)disable(e.message)}finally{arming=false;visuals()}};
+$('stop').onclick=()=>disable('Stopped. Enable controls to resume.');
+document.addEventListener('keydown',e=>{const k=e.key.toLowerCase();if(k===' '||k==='x'||k==='escape'){e.preventDefault();disable('Stopped. Enable controls to resume.');return}if(k in cmds){e.preventDefault();if(armed&&!e.repeat){pressed.add(k);visuals();pump()}}});
+document.addEventListener('keyup',e=>{const k=e.key.toLowerCase();if(k in cmds){e.preventDefault();pressed.delete(k);visuals();pump()}});
+document.querySelectorAll('[data-key]').forEach(b=>{b.addEventListener('pointerdown',e=>{e.preventDefault();if(!armed)return;b.setPointerCapture(e.pointerId);pressed.add(b.dataset.key);visuals();pump()});const release=()=>{pressed.delete(b.dataset.key);visuals();pump()};b.addEventListener('pointerup',release);b.addEventListener('pointercancel',release);b.addEventListener('lostpointercapture',release)});
+window.addEventListener('blur',()=>disable('Window focus lost. Enable controls again.'));
+window.addEventListener('pagehide',()=>disable('Page closed.'));
+document.addEventListener('visibilitychange',()=>{if(document.hidden)disable('Tab hidden. Enable controls again.')});
+setInterval(pump,75);setInterval(()=>{if(armed&&!fresh())disable('Video stopped. Enable controls after video recovers.');visuals()},100);
+setInterval(()=>{$('fps').textContent=count+' FPS';count=0},1000);
+async function preview(){let nextURL=null;const c=new AbortController(),t=setTimeout(()=>c.abort(),800);try{
+const r=await fetch('/frame?t='+Date.now(),{cache:'no-store',signal:c.signal});if(!r.ok)throw Error('Video unavailable');const next=Number(r.headers.get('X-Frame-Sequence'));
+if(next>frameSeq){nextURL=URL.createObjectURL(await r.blob());$('video').src=nextURL;await $('video').decode();if(imageURL)URL.revokeObjectURL(imageURL);imageURL=nextURL;nextURL=null;frameSeq=next;videoAt=performance.now();count++;$('overlay').style.display='none'}
+}catch(e){$('overlay').style.display='block';$('overlay').textContent='Video unavailable. Controls disabled.';if(armed)disable('Video unavailable. Wait for video, then enable controls.')}finally{clearTimeout(t);if(nextURL)URL.revokeObjectURL(nextURL);setTimeout(preview,60)}}
+async function status(){const c=new AbortController(),t=setTimeout(()=>c.abort(),800);try{const r=await fetch('/state',{signal:c.signal,cache:'no-store'});const s=await r.json();motorReady=s.ready;$('motorConnection').textContent=s.ready?'CONNECTED':'DISCONNECTED';$('ackTime').textContent=s.ack_ms==null?'--':s.ack_ms+' ms';if(s.last_stop)$('stopReason').textContent='최근 제어 해제 사유: '+s.last_stop;$('ack').textContent=names[s.ack]||s.ack;if(armed&&!s.ready)disable(s.error||'Motor disconnected');if(!armed&&!arming)$('message').textContent=s.camera_error||s.error||'Ready. Click Enable controls.'}catch(e){motorReady=false;disable('Dashboard connection lost.')}finally{clearTimeout(t);visuals();setTimeout(status,400)}}
+preview();status();visuals();
+</script><script src="/detections/ui.js" defer></script></body></html>
