@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowRight, BatteryFull, Loader2, Power, Smile, X } from 'lucide-react'
+import { Activity, ArrowRight, BatteryFull, Loader2, Power, Smile, X } from 'lucide-react'
 import Header from '../components/Header'
 import HazardLocation from './HazardLocation'
 import SafetyProfileDetail from './SafetyProfileDetail'
@@ -13,20 +13,42 @@ import robotDot from '../assets/figma/home/imgVector6.svg'
 import reportIcon from '../assets/figma/home/imgContainer1.svg'
 import type { RegisteredChild } from '../services/children'
 import { ApiRequestError, apiErrorMessage } from '../services/apiError'
-import { getDashboard, getHazardDetail, type DashboardHazard, type DashboardSnapshot, type HazardDetail } from '../services/dashboard'
+import { getDashboard, getHazardDetail, type DashboardHazard, type DashboardSnapshot, type HazardDetail, type RobotState } from '../services/dashboard'
 import { stageBannerSubtitles, stageTitles } from '../lib/stages'
 import { describeHazard, riskLabels } from '../lib/hazardRisk'
 import HazardAlertBox from '../components/HazardAlertBox'
 
 type Modal = 'device' | null
 
+const operationLabels: Record<RobotState['operationState'], string | null> = {
+  RUNNING: '작동 중',
+  PAUSED: '일시 정지',
+  RELOCATING: '이송 중',
+  UNKNOWN: null,
+}
+
+const movementLabels: Record<RobotState['movementState'], string | null> = {
+  FORWARD: '전진',
+  TURNING: '회전',
+  BACKWARD: '후진',
+  STOPPED: '정지',
+  UNKNOWN: null,
+}
+
+function robotStatusText(state: RobotState): string | null {
+  const movement = state.operationState === 'PAUSED' ? null : movementLabels[state.movementState]
+  const parts = [operationLabels[state.operationState], movement].filter(Boolean)
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
 function PowerButton({ onClick, state, label }: { onClick: () => void, state: 'off' | 'connecting' | 'on', label: string }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      disabled={state !== 'off'}
+      disabled={state === 'connecting'}
       aria-label={label}
+      title={label}
       className="relative grid size-[46px] shrink-0 place-items-center rounded-full bg-gradient-to-b from-white to-[#d6d6da] p-[3px] shadow-[0_3px_6px_rgba(15,23,42,0.22)] transition-transform active:scale-95 disabled:cursor-default disabled:active:scale-100"
     >
       <span className="grid size-full place-items-center rounded-full bg-[radial-gradient(circle_at_35%_28%,#ffffff_0%,#f4f4f5_45%,#dcdce0_100%)] shadow-[inset_0_1px_1px_rgba(255,255,255,0.95),inset_0_-2px_3px_rgba(15,23,42,0.12)]">
@@ -131,8 +153,9 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   const exampleReportAvailable = Boolean(dashboard?.isMock && report?.available)
   const activeHazard = dashboard?.activeHazards[0]
   const extraHazardCount = Math.max((dashboard?.activeHazards.length ?? 0) - 1, 0)
-  const alert = activeHazard ? describeHazard(activeHazard, stage) : null
+  const alert = activeHazard ? describeHazard(activeHazard, stage, !dashboard?.isMock) : null
   const robotState = loadError ? null : dashboard?.robotState
+  const robotStatus = connected && robotState && !robotState.stale ? robotStatusText(robotState) : null
   const operationState = dashboard?.isMock ? 'RUNNING' : robotState && !robotState.stale ? robotState.operationState : device?.operationState ?? 'UNKNOWN'
   const displayName = dashboard?.child.childId === child.childId && dashboard.child.name.trim() ? dashboard.child.name : child.name
   const lastResponseTime = lastResponseAt?.toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -171,8 +194,21 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     setSelectedHazard(null)
   }
 
+  function handlePowerOff() {
+    if (dashboard?.isMock) {
+      setConnectError('')
+      setMockPowered(false)
+      return
+    }
+    setConnectError('앱에서 전원을 끄는 기능은 아직 지원되지 않아요.')
+  }
+
   async function handlePower() {
-    if (connecting || connected || !dashboard) return
+    if (connecting || !dashboard) return
+    if (connected) {
+      handlePowerOff()
+      return
+    }
     setConnectError('')
     setConnecting(true)
     try {
@@ -260,7 +296,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
                   <span className="mt-1 inline-flex rounded-full bg-[#d1feee] px-[7px] py-[1px] text-[10px] text-[#166b58]">로봇청소기</span>
                 </div>
               </div>
-              <PowerButton onClick={() => void handlePower()} state={connected ? 'on' : connecting ? 'connecting' : 'off'} label={connected ? 'ThinQ 연결됨' : connecting ? 'ThinQ 연결 중' : '전원 켜고 ThinQ 연결'} />
+              <PowerButton onClick={() => void handlePower()} state={connected ? 'on' : connecting ? 'connecting' : 'off'} label={connected ? 'ThinQ 연결됨 · 눌러서 전원 끄기' : connecting ? 'ThinQ 연결 중' : '전원 켜고 ThinQ 연결'} />
             </div>
 
             <div className="mt-3 border-t border-[#e8edf5] pt-3">
@@ -268,6 +304,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="inline-flex items-center gap-1 rounded-full bg-[#f5f8ff] px-3 py-1.5 text-[12px] font-medium text-[#334155]"><BatteryFull size={15} className="text-[#10b981]" aria-hidden="true" />배터리 {device?.batteryPercent != null ? `${device.batteryPercent}%` : '확인 전'}</span>
                   <span className="rounded-full bg-[#e1fff2] px-3 py-1.5 text-[12px] font-medium text-[#167359]">⊙ 드니 모드 ON</span>
+                  {robotStatus && <span role="status" className="inline-flex items-center gap-1 rounded-full bg-[#f5f8ff] px-3 py-1.5 text-[12px] font-medium text-[#334155]"><Activity size={15} className="text-[#2958c7]" aria-hidden="true" />{robotStatus}</span>}
                 </div>
               ) : (
                 <p className="text-[12px] leading-[1.5] text-[#64748b]">{connecting ? 'ThinQ에 연결하고 있어요…' : '전원 버튼을 누르면 ThinQ에 연결하고 로봇청소기를 가동해요.'}</p>

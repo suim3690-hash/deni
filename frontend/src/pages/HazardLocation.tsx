@@ -51,7 +51,7 @@ export default function HazardLocation({ hazard, stage, operationState, detail, 
 
   // 목업에서는 조치가 끝나면(running) 위험 물체가 해결된 것으로 본다.
   const activeHazard = flow === 'running' ? null : hazard
-  const alert = activeHazard ? describeHazard({ objectName: name, riskLevel: detail?.riskLevel ?? activeHazard.riskLevel }, stage) : null
+  const alert = activeHazard ? describeHazard({ objectName: name, riskLevel: detail?.riskLevel ?? activeHazard.riskLevel }, stage, !isMock) : null
   const alertStyle = riskStyles[alert?.risk ?? 'HIGH']
   const isLiving = alert?.category === 'LIVING'
   const riskLabel = alert?.risk ? riskLabels[alert.risk] : '확인 전'
@@ -199,8 +199,8 @@ export default function HazardLocation({ hazard, stage, operationState, detail, 
               <>
                 <div className="relative overflow-hidden rounded-[20px] border border-black/10">
                   <img src={floorPlanPreview} alt="스마트 안심 케어 맵" className="block w-full" />
-                  {activeHazard && (
-                    <span role="img" aria-label="위험 물체 위치" className="absolute w-[7.5%] -translate-x-1/2 -translate-y-1/2 animate-blink motion-reduce:animate-none" style={{ left: '29.6%', top: '42.9%' }}>
+                  {activeHazard && detail?.marker && (
+                    <span role="img" aria-label="위험 물체 위치" className="absolute w-[7.5%] -translate-x-1/2 -translate-y-1/2 animate-blink motion-reduce:animate-none" style={{ left: `${detail.marker.x * 100}%`, top: `${detail.marker.y * 100}%` }}>
                       <span className="grid aspect-square place-items-center rounded-full bg-[#e11d48]/20">
                         <span className="grid size-[62%] place-items-center rounded-full border-[3px] border-white bg-[#a5003a] text-[11px] font-bold leading-none text-white">!</span>
                       </span>

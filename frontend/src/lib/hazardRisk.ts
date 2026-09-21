@@ -63,16 +63,18 @@ export interface HazardAlert {
 }
 
 // 분류가 가능하면 성장 단계 기준으로 위험도를 정하고, 분류할 수 없는 물체는 서버가 준 위험도를 그대로 쓴다.
-export function describeHazard(hazard: { objectName: string; riskLevel: string }, stage: Stage | null): HazardAlert {
+// showObjectName=false: 목업 화면에서 임시로 물체 이름 괄호 표기를 뺀다.
+export function describeHazard(hazard: { objectName: string; riskLevel: string }, stage: Stage | null, showObjectName = true): HazardAlert {
   const category = classifyHazard(hazard.objectName)
   const risk = category && stage ? riskByStage[stage][category] : serverRisk(hazard.riskLevel)
   const urgent = risk !== 'MEDIUM'
+  const subject = category ? alertSubjects[category] : '위험 물체'
   return {
     category,
     risk,
     urgent,
     urgencyLabel: urgent ? '긴급' : '주의',
-    title: `${category ? alertSubjects[category] : '위험 물체'}(${hazard.objectName}) 발견`,
+    title: showObjectName ? `${subject}(${hazard.objectName}) 발견` : `${subject} 발견`,
   }
 }
 

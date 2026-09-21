@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, Calendar, ChevronDown, ChevronLeft, ChevronRight, ShieldCheck, X } from 'lucide-react'
 import MonthlyFeedbackButton from '../components/MonthlyFeedbackButton'
-import type { RegisteredChild } from '../services/children'
+import StageChangeTimeline from '../components/StageChangeTimeline'
+import { computeSafetyProfile, type RegisteredChild } from '../services/children'
 import { currentReportMonth, getMonthlyReport, type MonthlyReport } from '../services/reports'
 import { ApiRequestError, apiErrorMessage } from '../services/apiError'
-import { stageLabels } from '../lib/stages'
 
 interface Props {
   child: RegisteredChild
@@ -79,6 +79,9 @@ export default function GrowthReport({ child, month: initialMonth, onBack }: Pro
 
   const totalCount = report?.summary.detectionCount ?? 0
   const stageChanges = report?.stageChanges ?? (report?.stageChange ? [report.stageChange] : [])
+  // 변경 이력이 없을 때 보여줄 기준 단계: 이번 달은 오늘, 지난 달은 그 달 말일의 월령으로 계산한다.
+  const referenceProfile = computeSafetyProfile(child.birthDate, selectedMonth === currentMonth ? new Date() : new Date(yearNumber, monthNumber, 0))
+  const referenceStage = referenceProfile.ageMonths >= 0 ? referenceProfile.stage : null
   let angle = 0
   const donutStops = report?.detectionsByObject.map((item, index) => {
     const start = angle
@@ -116,13 +119,16 @@ export default function GrowthReport({ child, month: initialMonth, onBack }: Pro
               </section>
 
               <section aria-label="이번 달 성장단계 변화" className="space-y-3 rounded-[24px] border border-[#eef2f6] bg-white p-5 shadow-sm">
-                <h2 className="text-[15px] font-bold">이번 달 성장단계 변화</h2>
-                {stageChanges.length > 0
-                  ? stageChanges.map((change, index) => <div key={`${change.changedAt}:${index}`} className="rounded-[16px] bg-[#eff6ff] p-4 text-[12px]">
-                    <p className="font-bold">{change.from ? stageLabels[change.from] : '지원 범위 밖'} → {change.to ? stageLabels[change.to] : '지원 범위 밖'}</p>
-                    <p className="mt-1">{new Date(change.changedAt).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })} · {change.reason === 'BIRTH_DATE_UPDATED' ? '생년월일 수정' : '월령 기준 갱신'}</p>
-                  </div>) : <p className="rounded-[16px] bg-[#f8fafc] p-4 text-[12px] text-[#64748b]">선택한 월에 저장된 성장단계 변경 이력이 없습니다. 이력 수집 시작 이전의 변경은 포함되지 않습니다.</p>}
-                <p className="text-[10px] text-[#9ca3af]">백엔드에서 변경을 기록한 시각입니다. 생일 경계의 실제 전환 시각이나 기기 적용 완료 시각이 아닙니다.</p>
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="flex min-w-0 items-center gap-2 text-[15px] font-bold"><span className="size-[10px] shrink-0 rounded-full bg-[#2958c7]" aria-hidden="true" />이번 달 성장단계 변화</h2>
+                  <span className="shrink-0 rounded-full bg-[#eef3ff] px-3 py-1 text-[11px] font-semibold text-[#2958c7]">
+                    {stageChanges.length === 0 ? '변화 없음' : stageChanges.some((change) => change.reason === 'AGE_CHANGED') ? '자동 프로필 갱신됨' : '프로필 변경됨'}
+                  </span>
+                </div>
+                <StageChangeTimeline changes={stageChanges} month={selectedMonth} isCurrentMonth={selectedMonth === currentMonth} fallbackStage={referenceStage} ageMonths={referenceProfile.ageMonths} />
+                <p className="text-[10px] text-[#9ca3af]">{stageChanges.length > 0
+                  ? '백엔드에서 변경을 기록한 시각입니다. 생일 경계의 실제 전환 시각이나 기기 적용 완료 시각이 아닙니다.'
+                  : `이력 수집 시작 이전의 변경은 포함되지 않습니다. 위 단계는 생년월일로 계산한 ${monthNumber}월 기준 단계입니다.`}</p>
               </section>
 
               <section aria-label="이번 달 위험물 감지 통계" className="space-y-3 rounded-[24px] border border-[#eef2f6] bg-white p-5 shadow-sm">

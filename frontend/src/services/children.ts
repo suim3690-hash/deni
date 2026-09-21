@@ -72,8 +72,8 @@ function ageInCompletedMonths(birthDate: string, today: Date) {
   return months
 }
 
-export function computeSafetyProfile(birthDate: string): RegisteredChild['safetyProfile'] {
-  const ageMonths = ageInCompletedMonths(birthDate, new Date())
+export function computeSafetyProfile(birthDate: string, referenceDate: Date = new Date()): RegisteredChild['safetyProfile'] {
+  const ageMonths = ageInCompletedMonths(birthDate, referenceDate)
   const stage = ageMonths < 12 ? 'INFANT' : ageMonths < 36 ? 'TODDLER' : ageMonths < 96 ? 'ACTIVE_CHILD' : null
   return {
     status: stage ? 'APPLIED' : 'UNSUPPORTED',

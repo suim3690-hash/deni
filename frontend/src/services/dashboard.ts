@@ -30,23 +30,39 @@ export interface DashboardProfile {
   ageMonths: number
 }
 
+export interface HazardMarker {
+  x: number
+  y: number
+}
+
 export interface HazardDetail extends DashboardHazard {
   riskReason: string | null
   captureImageUrl: string | null
+  marker: HazardMarker | null
+}
+
+// 서버 좌표는 지도 이미지 기준 0~1 비율이다. 범위를 벗어나거나 한쪽만 있으면 위치 없음으로 본다.
+function parseMarker(marker: { x?: unknown; y?: unknown } | null | undefined): HazardMarker | null {
+  const { x, y } = marker ?? {}
+  if (typeof x !== 'number' || typeof y !== 'number') return null
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || x > 1 || y < 0 || y > 1) return null
+  return { x, y }
+}
+
+export interface RobotState {
+  operationState: 'RUNNING' | 'PAUSED' | 'RELOCATING' | 'UNKNOWN'
+  movementState: 'FORWARD' | 'TURNING' | 'BACKWARD' | 'STOPPED' | 'UNKNOWN'
+  movementDurationMs: number | null
+  movementDistanceM: number | null
+  sampledAt: string | null
+  receivedAt: string | null
+  stale: boolean
 }
 
 export interface DashboardData {
   child: { childId: string; name: string }
   device: DashboardDevice | null
-  robotState?: {
-    operationState: 'RUNNING' | 'PAUSED' | 'RELOCATING' | 'UNKNOWN'
-    movementState: 'FORWARD' | 'TURNING' | 'BACKWARD' | 'STOPPED' | 'UNKNOWN'
-    movementDurationMs: number | null
-    movementDistanceM: number | null
-    sampledAt: string | null
-    receivedAt: string | null
-    stale: boolean
-  } | null
+  robotState?: RobotState | null
   currentProfile: DashboardProfile
   activeHazards: DashboardHazard[]
   reportSummary: { reportId: string | null; month: string; available: boolean } | null
@@ -66,6 +82,7 @@ function mockDashboard(child: RegisteredChild): DashboardSnapshot {
     ? null
     : { hazardId: `preview-${previewName}`, objectName: previewName }
   const showHazard = previewHazard !== null
+  const paused = showHazard || previewState === 'paused'
   const connectionState: ConnectionState = previewState === 'offline' ? 'OFFLINE' : previewState === 'unknown' ? 'UNKNOWN' : 'ONLINE'
   const today = new Date()
   const month = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
@@ -79,11 +96,20 @@ function mockDashboard(child: RegisteredChild): DashboardSnapshot {
       name: 'LG 로니 AI 베이비 케어',
       commandsAvailable: true,
       connectionState,
-      operationState: connectionState === 'ONLINE' ? showHazard || previewState === 'paused' ? 'PAUSED' : 'RUNNING' : 'UNKNOWN',
+      operationState: connectionState === 'ONLINE' ? paused ? 'PAUSED' : 'RUNNING' : 'UNKNOWN',
       batteryPercent: connectionState === 'ONLINE' ? 82 : null,
       lastSeenAt: null,
       safetyModeEnabled: connectionState === 'ONLINE',
     },
+    robotState: connectionState === 'ONLINE' ? {
+      operationState: paused ? 'PAUSED' : 'RUNNING',
+      movementState: paused ? 'STOPPED' : 'FORWARD',
+      movementDurationMs: null,
+      movementDistanceM: null,
+      sampledAt: today.toISOString(),
+      receivedAt: today.toISOString(),
+      stale: false,
+    } : null,
     activeHazards: previewHazard && connectionState === 'ONLINE' ? [{
       ...previewHazard,
       riskLevel: 'HIGH',
@@ -107,6 +133,7 @@ export async function getHazardDetail(hazard: DashboardHazard, isMock: boolean):
       ? '아이가 만지거나 걸릴 수 있는 생활공간 위험 요소입니다. 아이가 접근하기 전에 확인해 주세요.'
       : '아이가 삼킬 수 있는 작은 물체입니다. 아이가 접근하기 전에 바닥에서 치워 주세요.',
     captureImageUrl: null,
+    marker: { x: 0.296, y: 0.429 },
   }
 
   const baseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
@@ -117,6 +144,7 @@ export async function getHazardDetail(hazard: DashboardHazard, isMock: boolean):
     hazardId: string; object?: { name?: string }; riskLevel: string; riskReason?: string | null
     detectedAt: string
     captureImageUrl?: string | null
+    location?: { marker?: { x?: unknown; y?: unknown } | null } | null
   }
   return {
     hazardId: data.hazardId,
@@ -125,6 +153,7 @@ export async function getHazardDetail(hazard: DashboardHazard, isMock: boolean):
     detectedAt: data.detectedAt,
     riskReason: data.riskReason ?? null,
     captureImageUrl: resolveImageUrl(data.captureImageUrl, baseUrl),
+    marker: parseMarker(data.location?.marker),
   }
 }
 

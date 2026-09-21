@@ -58,11 +58,15 @@ export async function getMonthlyReport(childId: string, childName: string, month
   signal?: AbortSignal): Promise<MonthlyReport> {
   const baseUrl = import.meta.env.VITE_API_BASE_URL
   const mockDetections = mockMonthlyDetections(month)
+  // 목업: 주소에 ?mockStageChange 를 붙이면 그 달 19일에 걸음마 시기 → 유아 활동기로 전환된 리포트를 보여준다.
+  const mockChange: ProfileStageChange | null = new URLSearchParams(window.location.search).has('mockStageChange')
+    ? { from: 'TODDLER', to: 'ACTIVE_CHILD', changedAt: `${month}-19T00:05:00+09:00`, fromStatus: 'APPLIED', toStatus: 'APPLIED', reason: 'AGE_CHANGED' }
+    : null
   if (!baseUrl) return {
     reportId: `preview-${childId}-${month}`,
     childId, childName, month, isMock: true,
-    stageChange: null,
-    stageChanges: [],
+    stageChange: mockChange,
+    stageChanges: mockChange ? [mockChange] : [],
     summary: { detectionCount: mockDetections.reduce((sum, item) => sum + item.count, 0), avoidanceRatePercent: null, safeCleanedAreaSquareMeters: null },
     detectionsByObject: mockDetections,
     criteriaChanges: [],
