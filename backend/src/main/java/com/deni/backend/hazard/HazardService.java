@@ -124,6 +124,17 @@ public class HazardService {
 			}
 			return toDetail(existing);
 		}
+		// 같은 물체가 아직 미해결이면 새 건을 만들지 않고 최신 탐지로 갱신한다.
+		// 탐지 1프레임마다 알림이 쌓여 실제 물체 수와 어긋나는 문제를 막는다.
+		Hazard sameObject = hazardRepository
+				.findFirstByDeviceIdAndChildIdAndObjectTypeAndObjectNameAndStatusOrderByDetectedAtDesc(
+						deviceId, input.childId(), objectType, objectName, HazardStatus.ACTIVE)
+				.orElse(null);
+		if (sameObject != null) {
+			sameObject.refreshFromDetection(input.detectedAt(), normalizeOptional(input.captureImageUrl()),
+					operationState, now);
+			return toDetail(sameObject);
+		}
 		return toDetail(hazardRepository.save(hazard));
 	}
 

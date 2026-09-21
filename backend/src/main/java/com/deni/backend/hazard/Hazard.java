@@ -112,6 +112,21 @@ class Hazard {
 		this.updatedAt = now;
 	}
 
+	/** 같은 물체가 계속 보일 때 ACTIVE 건을 갱신한다. 새 행은 만들지 않는다. */
+	void refreshFromDetection(OffsetDateTime detectedAt, String captureImageUrl,
+			DeviceOperationState deviceOperationState, OffsetDateTime now) {
+		if (detectedAt != null && detectedAt.isAfter(this.detectedAt)) {
+			this.detectedAt = detectedAt;
+		}
+		if (captureImageUrl != null) {
+			this.captureImageUrl = captureImageUrl;
+		}
+		if (deviceOperationState != null) {
+			this.deviceOperationState = deviceOperationState;
+		}
+		this.updatedAt = now;
+	}
+
 	UUID getId() {
 		return id;
 	}

@@ -13,6 +13,10 @@ interface HazardRepository extends JpaRepository<Hazard, UUID> {
 
 	Optional<Hazard> findByDeviceIdAndSourceEventId(String deviceId, String sourceEventId);
 
+	/** 미해결 상태의 같은 물체 건. 탐지 중복 병합에 사용한다. */
+	Optional<Hazard> findFirstByDeviceIdAndChildIdAndObjectTypeAndObjectNameAndStatusOrderByDetectedAtDesc(
+			String deviceId, UUID childId, String objectType, String objectName, HazardStatus status);
+
 	List<Hazard> findByDeviceIdAndStatusOrderByDetectedAtDesc(String deviceId, HazardStatus status);
 
 	List<Hazard> findByChildIdAndStatusOrderByDetectedAtDesc(UUID childId, HazardStatus status);
