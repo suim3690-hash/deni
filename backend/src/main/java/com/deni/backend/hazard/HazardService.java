@@ -110,6 +110,8 @@ public class HazardService {
 		validateMarker(input.markerX(), input.markerY());
 		Double markerX = normalizeZero(input.markerX());
 		Double markerY = normalizeZero(input.markerY());
+		// Serialize detection merging with treatment results after validation.
+		idempotencyGuard.lock("device", deviceId);
 
 		OffsetDateTime now = OffsetDateTime.now(SERVICE_ZONE);
 		Hazard hazard = new Hazard(UUID.randomUUID(), input.childId(), deviceId, HazardStatus.ACTIVE,

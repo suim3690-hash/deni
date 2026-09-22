@@ -49,6 +49,10 @@ function parseMarker(marker: { x?: unknown; y?: unknown } | null | undefined): H
   return { x, y }
 }
 
+// 기기가 보고한 전원·작업 상태다. powerEnabled=false는 모터와 탐지가 멈춘 상태이며 통신은 유지된다.
+// 서버가 오래된 보고를 stale로 표시하면 값이 null이 되므로 전원 상태를 단정하지 않는다.
+export type TaskState = 'OFF' | 'RUNNING' | 'PAUSED' | 'HAZARD_PAUSED' | 'RECHECKING' | 'PUSHING' | 'BACKING' | 'TURNING_AROUND'
+
 export interface RobotState {
   operationState: 'RUNNING' | 'PAUSED' | 'RELOCATING' | 'UNKNOWN'
   movementState: 'FORWARD' | 'TURNING' | 'BACKWARD' | 'STOPPED' | 'UNKNOWN'
@@ -57,6 +61,8 @@ export interface RobotState {
   sampledAt: string | null
   receivedAt: string | null
   stale: boolean
+  powerEnabled: boolean | null
+  taskState: TaskState | string | null
 }
 
 export interface DashboardData {
@@ -112,6 +118,8 @@ function mockDashboard(child: RegisteredChild): DashboardSnapshot {
       sampledAt: today.toISOString(),
       receivedAt: today.toISOString(),
       stale: false,
+      powerEnabled: true,
+      taskState: paused ? 'HAZARD_PAUSED' : 'RUNNING',
     } : null,
     activeHazards: previewHazard && connectionState === 'ONLINE' ? Array.from({ length: hazardCount }, (_, index) => {
       const mockNames = hazardPreview === 'living'
@@ -171,10 +179,14 @@ export async function getHazardDetail(hazard: DashboardHazard, isMock: boolean):
   }
 }
 
-export async function sendDeviceCommand(deviceId: string, action: 'pause' | 'resume', isMock: boolean): Promise<OperationState> {
+// power-on은 자동 전진과 탐지를 시작하고, power-off는 둘을 멈추되 통신은 유지한다.
+// pause/resume은 청소 흐름만 멈추거나 재개한다.
+export type DeviceCommand = 'pause' | 'resume' | 'power-on' | 'power-off'
+
+export async function sendDeviceCommand(deviceId: string, action: DeviceCommand, isMock: boolean): Promise<OperationState> {
   if (isMock) {
     await new Promise((resolve) => setTimeout(resolve, 600))
-    return action === 'pause' ? 'PAUSED' : 'RUNNING'
+    return action === 'pause' || action === 'power-off' ? 'PAUSED' : 'RUNNING'
   }
 
   const baseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')

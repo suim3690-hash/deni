@@ -9,7 +9,7 @@ from bridge import Bridge
 
 STORE = Path(__file__).parent / '.runtime' / 'transport.sqlite3'
 LABELS = {'coin': '동전', 'marble': '구슬', 'battery': '배터리',
-          'socket': '콘센트', 'wire': '전선', 'knife': '칼', 'scissors': '가위'}
+          'socket': '콘센트', 'wire': '전선', 'knife': '칼', 'scissors': '가위', 'dice': '주사위', 'die': '주사위'}
 
 
 def configured():

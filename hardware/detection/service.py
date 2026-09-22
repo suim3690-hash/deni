@@ -54,13 +54,14 @@ def offer(channel, state):
 
 
 class DetectionService:
-    def __init__(self, feed, enabled=True, mode='object'):
+    def __init__(self, feed, enabled=True, mode='object', processing=True):
         if mode not in C.MODES:
             raise ValueError('Choose object or hazard')
         self.mode = mode
         self.generation = C.MODES.index(mode)
         self.feed = feed
         self.enabled = enabled
+        self.processing = processing
         self.state_lock = threading.Lock()
         self.latest = dict(status='loading' if enabled else 'disabled', level=0, mode=mode, generation=self.generation)
         self.local_stop = threading.Event()
@@ -76,7 +77,9 @@ class DetectionService:
         self.results = self.ctx.Queue(maxsize=1)
         self.stop_event = self.ctx.Event()
         self.mode_code = self.ctx.Value('q', self.generation)
-        self.process = self.ctx.Process(target=run, args=(self.mailbox,self.results,self.stop_event,self.mode_code), daemon=True)
+        self.processing_event = self.ctx.Event()
+        if self.processing: self.processing_event.set()
+        self.process = self.ctx.Process(target=run, args=(self.mailbox,self.results,self.stop_event,self.mode_code,self.processing_event), daemon=True)
         try:
             self.process.start()
         except Exception as exc:
@@ -90,6 +93,7 @@ class DetectionService:
     def _bridge(self):
         last = 0
         while not self.local_stop.wait(0.02):
+            if not self.processing: continue
             jpeg, seq, stamp, error = self.feed.snapshot()
             now = time.monotonic()
             if jpeg and seq != last and not error and now-stamp <= C.MAX_INPUT_AGE:
@@ -116,11 +120,19 @@ class DetectionService:
         with self.state_lock:
             if mode == self.mode:
                 return
-            self.generation = (self.generation // 2 + 1) * 2 + C.MODES.index(mode)
+            self.generation = (self.generation // len(C.MODES) + 1) * len(C.MODES) + C.MODES.index(mode)
             self.mode = mode
             self.latest = dict(status='switching', level=0, mode=mode, generation=self.generation)
             if hasattr(self, 'mode_code'):
                 self.mode_code.value = self.generation
+
+    def set_processing(self, enabled):
+        with self.state_lock:
+            self.processing = bool(enabled)
+            self.latest = dict(status='waiting' if enabled else 'disabled', level=0, mode=self.mode)
+            if hasattr(self, 'processing_event'):
+                if enabled: self.processing_event.set()
+                else: self.processing_event.clear()
 
     def state(self):
         with self.state_lock:

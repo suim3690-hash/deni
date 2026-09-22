@@ -179,6 +179,7 @@ class Contracts(unittest.TestCase):
                     "expiresAt": (datetime.now(timezone.utc) + timedelta(seconds=10)).isoformat()}}
                 with self.assertRaises(ValueError):
                     await bridge_with(handler=lambda *_: claim).handle(Capture(), request)
+                request['payload']['commandId'] = str(uuid4())
                 with self.assertRaises(ValueError):
                     await bridge_with(handler=lambda *_: dict(status="PENDING")).handle(Capture(), request)
             finally:

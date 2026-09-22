@@ -5,12 +5,12 @@ from . import config as C
 from .service import offer
 
 
-def run(mailbox, output, stop, mode_code):
+def run(mailbox, output, stop, mode_code, processing=None):
     store = None
     active_code = mode_code.value
     def publish(state):
         if mode_code.value == active_code:
-            offer(output, dict(state, mode=C.MODES[active_code % 2], generation=active_code))
+            offer(output, dict(state, mode=C.MODES[active_code % len(C.MODES)], generation=active_code))
     try:
         os.environ['OMP_NUM_THREADS'] = str(C.CPU_THREADS)
         os.environ['MKL_NUM_THREADS'] = str(C.CPU_THREADS)
@@ -22,6 +22,8 @@ def run(mailbox, output, stop, mode_code):
         from .model_loader import Models
         from .risk_engine import RiskEngine
         from .event_store import EventStore
+        from .markers import MarkerDetector
+        markers = MarkerDetector()
         models = None
         engine = RiskEngine()
         storage_error = None
@@ -42,7 +44,7 @@ def run(mailbox, output, stop, mode_code):
                 engine = RiskEngine()
                 previous_stamp = 0
                 try:
-                    models = Models(C.specs_for_mode(C.MODES[active_code % 2]))
+                    models = Models(C.specs_for_mode(C.MODES[active_code % len(C.MODES)]))
                     publish(dict(status='waiting', level=0, model_errors=models.errors))
                 except Exception as exc:
                     publish(dict(status='error', level=0, error=str(exc)))
@@ -50,6 +52,8 @@ def run(mailbox, output, stop, mode_code):
                 if mode_code.value != active_code:
                     continue
             if models is None:
+                stop.wait(0.05); continue
+            if processing is not None and not processing.is_set():
                 stop.wait(0.05); continue
             item = mailbox.take(last)
             if item is None:
@@ -75,13 +79,14 @@ def run(mailbox, output, stop, mode_code):
                                   sequence=last,skipped_blur=skipped_blur))
                 stop.wait(0.05); continue
             objects, errors = models.infer(frame)
-            if mode_code.value != active_code:
+            if mode_code.value != active_code or (processing is not None and not processing.is_set()):
                 continue
             risk, events = engine.evaluate(objects,stamp)
             processed += 1
             elapsed = time.monotonic()-started
             status = 'error' if all(name in errors for name, *_ in models.models) else ('partial' if errors else 'ok')
             state = dict(risk,status=status,frame_stamp=stamp,sequence=last,
+                         markers=markers.detect(frame), frame_width=frame.shape[1], frame_height=frame.shape[0],
                          frame_time=wall,inference_ms=round(elapsed*1000),blur_score=round(blur,1),
                          processed=processed,skipped_blur=skipped_blur,model_errors=errors,
                          storage_error=storage_error,events_created=0)
@@ -99,9 +104,9 @@ def run(mailbox, output, stop, mode_code):
                     ok, encoded = cv2.imencode('.jpg',picture,[cv2.IMWRITE_JPEG_QUALITY,90])
                     if not ok: raise OSError('JPEG encode failed')
                     # One photo/event for this frame, even when several objects alert.
-                    if mode_code.value != active_code:
+                    if mode_code.value != active_code or (processing is not None and not processing.is_set()):
                         continue
-                    store.save(encoded.tobytes(),dict(mode=C.MODES[active_code % 2], sequence=last,level=max(d['level'] for d in events),
+                    store.save(encoded.tobytes(),dict(mode=C.MODES[active_code % len(C.MODES)], sequence=last,level=max(d['level'] for d in events),
                         detections=events,person_detected=risk['person_detected'],model_errors=errors,
                         inference_ms=state['inference_ms']),wall)
                     storage_error = None

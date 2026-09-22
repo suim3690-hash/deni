@@ -13,7 +13,7 @@ import robotDot from '../assets/figma/home/imgVector6.svg'
 import reportIcon from '../assets/figma/home/imgContainer1.svg'
 import type { RegisteredChild } from '../services/children'
 import { ApiRequestError, apiErrorMessage } from '../services/apiError'
-import { getDashboard, getHazardDetail, type DashboardHazard, type DashboardSnapshot, type HazardDetail, type RobotState } from '../services/dashboard'
+import { getDashboard, getHazardDetail, sendDeviceCommand, type DashboardHazard, type DashboardSnapshot, type HazardDetail, type RobotState } from '../services/dashboard'
 import { stageBannerSubtitles, stageTitles } from '../lib/stages'
 import { describeHazard, riskLabels } from '../lib/hazardRisk'
 import HazardAlertBox from '../components/HazardAlertBox'
@@ -33,6 +33,18 @@ const movementLabels: Record<RobotState['movementState'], string | null> = {
   BACKWARD: '후진',
   STOPPED: '정지',
   UNKNOWN: null,
+}
+
+// 기기가 보고한 작업 단계. 전원이 켜진 뒤 로봇이 무엇을 하고 있는지 알려준다.
+const taskLabels: Record<string, string> = {
+  OFF: '전원 꺼짐',
+  RUNNING: '자동 주행 중',
+  PAUSED: '일시 정지',
+  HAZARD_PAUSED: '위험물 앞에서 정지',
+  RECHECKING: '제거 여부 재확인 중',
+  PUSHING: '위험물 이송 중',
+  BACKING: '이송 후 후진 중',
+  TURNING_AROUND: '이송 후 회전 중',
 }
 
 function robotStatusText(state: RobotState): string | null {
@@ -173,7 +185,13 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   const activeHazardCount = dashboard?.activeHazards.length ?? 0
   const alert = activeHazard ? describeHazard(activeHazard, stage, !dashboard?.isMock) : null
   const robotState = loadError ? null : dashboard?.robotState
-  const robotStatus = connected && robotState && !robotState.stale ? robotStatusText(robotState) : null
+  // 오래된 보고(stale)는 현재 상태의 근거가 아니므로 전원·작업 표시에 쓰지 않는다.
+  const liveRobotState = robotState && !robotState.stale ? robotState : null
+  const robotStatus = connected && liveRobotState ? robotStatusText(liveRobotState) : null
+  // 전원은 통신 연결과 별개다. 전원을 끄면 모터와 탐지만 멈추고 통신은 유지된다.
+  const powered = dashboard?.isMock ? mockPowered && isOnline : liveRobotState?.powerEnabled === true
+  const powerReported = Boolean(dashboard?.isMock) || liveRobotState?.powerEnabled != null
+  const taskLabel = connected && typeof liveRobotState?.taskState === 'string' ? taskLabels[liveRobotState.taskState] ?? null : null
   const operationState = dashboard?.isMock ? 'RUNNING' : robotState && !robotState.stale ? robotState.operationState : device?.operationState ?? 'UNKNOWN'
   const displayName = dashboard?.child.childId === child.childId && dashboard.child.name.trim() ? dashboard.child.name : child.name
   const lastResponseTime = lastResponseAt?.toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -212,39 +230,68 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     setSelectedHazard(null)
   }
 
-  function handlePowerOff() {
-    if (dashboard?.isMock) {
-      setConnectError('')
+  async function refreshDashboard() {
+    const result = await getDashboard(child)
+    setDashboard(result)
+    setLastResponseAt(new Date())
+    setLoadError(false)
+    setLoadErrorMessage('')
+    return result
+  }
+
+  // 목업은 전원 버튼 하나로 ThinQ 연결까지 함께 보여주고, 실제 모드는 연결 확인과 전원 명령을 나눠서 보낸다.
+  async function handleMockPower() {
+    if (powered) {
       setMockPowered(false)
       return
     }
-    setConnectError('앱에서 전원을 끄는 기능은 아직 지원되지 않아요.')
+    setConnecting(true)
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1200))
+      if (dashboard?.device?.connectionState === 'ONLINE') setMockPowered(true)
+      else setConnectError('ThinQ에 연결하지 못했어요. 로봇청소기 전원과 네트워크를 확인해 주세요.')
+    } finally {
+      setConnecting(false)
+    }
   }
 
   async function handlePower() {
     if (connecting || !dashboard) return
-    if (connected) {
-      handlePowerOff()
+    setConnectError('')
+    if (dashboard.isMock) {
+      await handleMockPower()
       return
     }
-    setConnectError('')
     setConnecting(true)
     try {
-      if (dashboard.isMock) {
-        await new Promise((resolve) => setTimeout(resolve, 1200))
-        if (dashboard.device?.connectionState === 'ONLINE') setMockPowered(true)
-        else setConnectError('ThinQ에 연결하지 못했어요. 로봇청소기 전원과 네트워크를 확인해 주세요.')
-      } else {
-        const result = await getDashboard(child)
-        setDashboard(result)
-        setLastResponseAt(new Date())
-        setLoadError(false)
-        setLoadErrorMessage('')
+      // 연결이 확인되지 않은 상태에서는 전원 명령 대신 최신 연결 상태부터 다시 조회한다.
+      if (!isOnline) {
+        const result = await refreshDashboard()
         if (!result.device) setConnectError('등록된 로봇청소기를 찾을 수 없어요.')
         else if (result.device.connectionState !== 'ONLINE') setConnectError('ThinQ에 연결하지 못했어요. 로봇청소기 전원과 네트워크를 확인해 주세요.')
+        return
       }
+      if (!device) {
+        setConnectError('등록된 로봇청소기를 찾을 수 없어요.')
+        return
+      }
+      // 기기가 보고한 전원 상태 없이는 켜기/끄기를 고를 수 없다. PC 런타임이 꺼져 있으면 보고가 오지 않는다.
+      let current: boolean | null = powerReported ? powered : null
+      if (current === null) {
+        const state = (await refreshDashboard()).robotState
+        if (!state || state.stale || state.powerEnabled == null) {
+          setConnectError('기기가 보고한 전원 상태를 아직 받지 못했어요. PC 런타임이 실행 중인지 확인해 주세요.')
+          return
+        }
+        current = state.powerEnabled
+      }
+      await sendDeviceCommand(device.deviceId, current ? 'power-off' : 'power-on', false)
+      // 기기가 보고한 전원 상태를 다시 읽어 화면과 실제 상태를 맞춘다.
+      await refreshDashboard()
     } catch (error) {
-      setConnectError(apiErrorMessage(error, 'ThinQ 연결을 확인하지 못했어요. 잠시 후 다시 시도해 주세요.'))
+      setConnectError(apiErrorMessage(error, powered
+        ? '전원을 끄지 못했어요. 잠시 후 다시 시도해 주세요.'
+        : '전원을 켜지 못했어요. 잠시 후 다시 시도해 주세요.'))
     } finally {
       setConnecting(false)
     }
@@ -318,7 +365,11 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
                   <span className="mt-1 inline-flex rounded-full bg-[#d1feee] px-[7px] py-[1px] text-[10px] text-[#166b58]">로봇청소기</span>
                 </div>
               </div>
-              <PowerButton onClick={() => void handlePower()} state={connected ? 'on' : connecting ? 'connecting' : 'off'} label={connected ? 'ThinQ 연결됨 · 눌러서 전원 끄기' : connecting ? 'ThinQ 연결 중' : '전원 켜고 ThinQ 연결'} />
+              <PowerButton
+                onClick={() => void handlePower()}
+                state={connecting ? 'connecting' : powered ? 'on' : 'off'}
+                label={connecting ? '전원 명령을 보내는 중' : powered ? '전원 켜짐 · 눌러서 전원 끄기' : connected ? '전원 켜기 · 자동 주행과 위험물 탐지 시작' : '전원 켜고 ThinQ 연결'}
+              />
             </div>
 
             <div className="mt-3 border-t border-[#e8edf5] pt-3">
@@ -326,6 +377,10 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="inline-flex items-center gap-1 rounded-full bg-[#f5f8ff] px-3 py-1.5 text-[12px] font-medium text-[#334155]"><BatteryFull size={15} className="text-[#10b981]" aria-hidden="true" />배터리 {device?.batteryPercent != null ? `${device.batteryPercent}%` : '확인 전'}</span>
                   <span className="rounded-full bg-[#e1fff2] px-3 py-1.5 text-[12px] font-medium text-[#167359]">⊙ 드니 모드 ON</span>
+                  <span role="status" className={`rounded-full px-3 py-1.5 text-[12px] font-medium ${powered ? 'bg-[#e1fff2] text-[#167359]' : 'bg-[#fef2f2] text-[#a50034]'}`}>
+                    {powered ? '전원 ON' : powerReported ? '전원 OFF · 통신 유지' : '전원 상태 확인 전'}
+                  </span>
+                  {taskLabel && <span role="status" className="rounded-full bg-[#f5f8ff] px-3 py-1.5 text-[12px] font-medium text-[#334155]">{taskLabel}</span>}
                   {robotStatus && <span role="status" className="inline-flex items-center gap-1 rounded-full bg-[#f5f8ff] px-3 py-1.5 text-[12px] font-medium text-[#334155]"><Activity size={15} className="text-[#2958c7]" aria-hidden="true" />{robotStatus}</span>}
                 </div>
               ) : (
@@ -399,7 +454,11 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
               <button ref={closeButtonRef} type="button" onClick={() => setModal(null)} aria-label="닫기" className="rounded-full p-1 text-[#475569] focus-visible:outline-[#a50034]"><X size={20} /></button>
             </div>
             <p className="mt-4 text-[14px] leading-6 text-[#475569]">
-              {connected ? 'LG RONi가 ThinQ에 연결되어 있어요.' : '전원 버튼을 누르면 LG RONi를 ThinQ에 연결하고 가동해요.'}
+              {!connected
+                ? '전원 버튼을 누르면 LG RONi를 ThinQ에 연결하고 가동해요.'
+                : powered
+                  ? 'LG RONi가 ThinQ에 연결되어 있고, 자동 주행과 위험물 탐지가 켜져 있어요.'
+                  : '연결은 유지되고 있지만 전원이 꺼져 있어요. 전원을 켜면 자동 주행과 위험물 탐지를 시작해요.'}
             </p>
           </section>
         </div>

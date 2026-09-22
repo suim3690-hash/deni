@@ -15,10 +15,15 @@ TOKEN = os.environ.get('ROBOT_DEVICE_TOKEN', 'local-test-token-0123456789abcdef'
 DEVICE = os.environ.get('ROBOT_DEVICE_ID', 'robot-test')
 EVENTS = {}
 LOCK = threading.Lock()
-# Stands in for the frontend -> backend -> device command path. Spring issues
-# PAUSE with a 10s expiry; nothing else reaches the device.
+# Stands in for the frontend -> backend -> device command path.
+# Spring gives acceptance commands a 10s expiry and extends hazard treatment to 180s,
+# because a recheck or a relocation takes longer than the acceptance window.
 PENDING = []
+ISSUED = {}
 COMMAND_TTL = 10
+TREATMENT_TTL = 180
+COMMANDS = {'PAUSE', 'RESUME', 'POWER_ON', 'POWER_OFF', 'RECHECK_HAZARD', 'RELOCATE'}
+HAZARD_COMMANDS = {'RECHECK_HAZARD', 'RELOCATE'}
 
 
 def authorized(headers):
@@ -42,11 +47,27 @@ class Handler(BaseHTTPRequestHandler):
             size = int(self.headers.get('Content-Length', '0'))
             body = json.loads(self.rfile.read(size) or b'{}') if size else {}
             command = body.get('command', 'PAUSE')
-            entry = {'commandId': str(uuid4()), 'command': command,
-                     'expiresAt': (datetime.now(timezone.utc) + timedelta(seconds=COMMAND_TTL)).isoformat()}
+            if command not in COMMANDS:
+                return self.reply(400, {'error': 'command', 'supported': sorted(COMMANDS)})
+            parameters = body.get('parameters') or {}
+            if not isinstance(parameters, dict):
+                return self.reply(400, {'error': 'parameters must be an object'})
+            # Spring only sends hazard parameters with a treatment command, and always sends both.
+            if (command in HAZARD_COMMANDS) != bool(parameters):
+                return self.reply(400, {'error': 'hazard commands need parameters; others take none'})
+            if parameters:
+                try:
+                    parameters = {'hazardId': str(UUID(str(parameters['hazardId']))),
+                                  'objectLabel': str(parameters['objectLabel'])}
+                except (KeyError, ValueError, TypeError):
+                    return self.reply(400, {'error': 'parameters need hazardId (UUID) and objectLabel'})
+            seconds = body.get('ttl', TREATMENT_TTL if parameters else COMMAND_TTL)
+            entry = {'commandId': str(uuid4()), 'command': command, 'parameters': parameters,
+                     'expiresAt': (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()}
             with LOCK:
                 PENDING.append(entry)
-            print(f"WS COMMAND QUEUED commandId={entry['commandId']} command={command}", flush=True)
+                ISSUED[entry['commandId']] = entry
+            print(f"WS COMMAND QUEUED commandId={entry['commandId']} command={command} parameters={parameters}", flush=True)
             return self.reply(200, entry)
         if self.path != '/api/v1/hardware/detections':
             return self.reply(404, {'error': 'path'})
@@ -103,21 +124,41 @@ async def socket_handler(socket):
         await asyncio.gather(pusher, return_exceptions=True)
 
 
+def validate_result(command, payload):
+    """Mirrors CommandResultPolicy: completion evidence is checked per command kind."""
+    if payload['status'] not in {'SUCCEEDED', 'FAILED'}:
+        raise ValueError()
+    datetime.fromisoformat(payload['completedAt'])
+    if payload['status'] != 'SUCCEEDED':
+        return
+    state = payload.get('operationState')
+    expected = {'PAUSE': {'PAUSED'}, 'POWER_OFF': {'PAUSED'}, 'RESUME': {'RUNNING'}}.get(
+        command, {'RUNNING', 'PAUSED'})
+    if state not in expected:
+        raise ValueError()
+    if command in HAZARD_COMMANDS:
+        issued = ISSUED.get(payload['commandId'], {}).get('parameters') or {}
+        if payload.get('hazardId') != issued.get('hazardId'):
+            raise ValueError()
+    if command == 'RECHECK_HAZARD':
+        # Removal is only complete after a continuous absence window, not on a single frame.
+        if payload.get('hazardPresent') is not False or payload.get('absenceDurationMs', 0) < 2000:
+            raise ValueError()
+    if command == 'RELOCATE' and payload.get('relocationCompleted') is not True:
+        raise ValueError()
+
+
 async def acknowledge(socket, message):
-    """Mirrors DeviceMessageService: SUCCEEDED is only valid with operationState PAUSED."""
     payload = message['payload']
     UUID(payload['commandId'])
+    command = ISSUED.get(payload['commandId'], {}).get('command', 'PAUSE')
     if message['type'] == 'COMMAND_ACK':
         if payload['status'] != 'DELIVERED':
             raise ValueError()
         print(f"WS COMMAND_ACK commandId={payload['commandId']} status=DELIVERED", flush=True)
     else:
-        if payload['status'] not in {'SUCCEEDED', 'FAILED'}:
-            raise ValueError()
-        if payload['status'] == 'SUCCEEDED' and payload.get('operationState') != 'PAUSED':
-            raise ValueError()
-        datetime.fromisoformat(payload['completedAt'])
-        print(f"WS COMMAND_RESULT commandId={payload['commandId']} status={payload['status']} "
+        validate_result(command, payload)
+        print(f"WS COMMAND_RESULT commandId={payload['commandId']} command={command} status={payload['status']} "
               f"operation={payload.get('operationState')} error={payload.get('errorCode')}", flush=True)
     await socket.send(json.dumps({'type': 'RECEIPT', 'messageId': message['messageId'], 'accepted': True}))
 
@@ -141,7 +182,8 @@ async def receive_messages(socket):
                 raise ValueError()
             if datetime.fromisoformat(state['sampledAt']).tzinfo is None:
                 raise ValueError()
-            print(f"WS RECEIVED device={DEVICE} operation={state['operationState']} movement={state['movementState']}", flush=True)
+            print(f"WS RECEIVED device={DEVICE} operation={state['operationState']} movement={state['movementState']} "
+                  f"power={state.get('powerEnabled')} task={state.get('taskState')}", flush=True)
             await socket.send(json.dumps({'type': 'RECEIPT', 'messageId': message['messageId'], 'accepted': True}))
         except (ValueError, KeyError, TypeError):
             await socket.send(json.dumps({'type': 'ERROR', 'code': 'INVALID_MESSAGE'}))

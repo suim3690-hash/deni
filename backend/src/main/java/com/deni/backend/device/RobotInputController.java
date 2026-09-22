@@ -40,10 +40,11 @@ public class RobotInputController {
 					fresh ? rs.getString("movement_state") : "UNKNOWN",
 					fresh ? rs.getObject("movement_duration_ms", Long.class) : null,
 					fresh ? rs.getBigDecimal("movement_distance_m") : null,
-					rs.getObject("sampled_at", OffsetDateTime.class), rs.getObject("received_at", OffsetDateTime.class), !fresh);
+					rs.getObject("sampled_at", OffsetDateTime.class), rs.getObject("received_at", OffsetDateTime.class), !fresh,
+					fresh?rs.getObject("power_enabled",Boolean.class):null, fresh?rs.getString("task_state"):null);
 		}, deviceId);
 		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(rows.isEmpty()
-				? new LiveState(deviceId, "UNKNOWN", "UNKNOWN", null, null, null, null, true) : rows.getFirst());
+				? new LiveState(deviceId, "UNKNOWN", "UNKNOWN", null, null, null, null, true, null, null) : rows.getFirst());
 	}
 
 	@GetMapping("/detections")
@@ -71,7 +72,8 @@ public class RobotInputController {
 	}
 
 	public record LiveState(String deviceId, String operationState, String movementState, Long movementDurationMs,
-			java.math.BigDecimal movementDistanceM, OffsetDateTime sampledAt, OffsetDateTime receivedAt, boolean stale) { }
+			java.math.BigDecimal movementDistanceM, OffsetDateTime sampledAt, OffsetDateTime receivedAt, boolean stale,
+			Boolean powerEnabled, String taskState) { }
 	public record Detection(UUID eventId, String modelType, String objectLabel, OffsetDateTime detectedAt, String imageUrl) { }
 	public record DetectionList(List<Detection> items) { }
 }

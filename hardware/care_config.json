@@ -1,0 +1,13 @@
+{
+  "removal_absence_seconds": 2.0,
+  "observation_ttl": 3.0,
+  "max_observation_gap": 1.0,
+  "marker_id": 0,
+  "marker_stop_fill": 0.13126,
+  "bearing_deadband": 0.12,
+  "turn_pulse_seconds": 0.12,
+  "settle_seconds": 0.35,
+  "reverse_seconds": 1.0,
+  "turnaround_seconds": 1.0,
+  "action_timeout_seconds": 120.0
+}

@@ -3,6 +3,7 @@ import argparse
 import asyncio
 import json
 import logging
+import inspect
 import os
 import sqlite3
 import time
@@ -21,7 +22,7 @@ MOVEMENT_STATES = {"FORWARD", "TURNING", "BACKWARD", "STOPPED", "UNKNOWN"}
 # Unmeasured fields stay null; the backend stores them as-is and must not receive estimates.
 UNOBSERVED_STATE = {"operationState": "UNKNOWN", "movementState": "UNKNOWN",
                     "batteryPercent": None, "movementDurationMs": None,
-                    "movementDistanceM": None}
+                    "movementDistanceM": None, "powerEnabled": None, "taskState": None}
 STATE_PERIOD = 1.0
 
 
@@ -47,6 +48,19 @@ class Bridge:
         self.db = sqlite3.connect(store, check_same_thread=False)
         self.db.execute("CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, device TEXT, model TEXT, label TEXT, image BLOB, mime TEXT, status TEXT, response TEXT)")
         self.db.execute("CREATE TABLE IF NOT EXISTS commands (id TEXT, device TEXT, result TEXT, PRIMARY KEY(id,device))")
+        self.db.execute("CREATE TABLE IF NOT EXISTS pending_results (id TEXT, device TEXT, PRIMARY KEY(id,device))")
+        self.db.execute("CREATE TABLE IF NOT EXISTS started_commands (id TEXT, device TEXT, PRIMARY KEY(id,device))")
+        self.inflight = set()
+        self.handlers = set()
+        self.receipts = {}
+        if command_handler is not None:
+            # A process restart cannot safely repeat an unfinished physical task.
+            for (identity,) in self.db.execute("SELECT id FROM started_commands WHERE device=?", (device,)).fetchall():
+                result = dict(commandId=identity, status='FAILED', operationState='UNKNOWN',
+                              completedAt=now(), errorCode='PROCESS_RESTARTED')
+                self.db.execute('INSERT OR IGNORE INTO commands VALUES (?,?,?)', (identity,device,json.dumps(result)))
+                self.db.execute('INSERT OR IGNORE INTO pending_results VALUES (?,?)', (identity,device))
+            self.db.execute('DELETE FROM started_commands WHERE device=?', (device,))
         self.db.commit()
 
     def close(self):
@@ -107,7 +121,9 @@ class Bridge:
             LOG.info("Event %s: %s (HTTP %s)", event, status, response.status_code)
 
     async def send(self, socket, kind, payload):
-        await socket.send(json.dumps({"type": kind, "messageId": str(uuid4()),
+        identity = str(uuid4())
+        if kind == 'COMMAND_RESULT': self.receipts[identity] = payload['commandId']
+        await socket.send(json.dumps({"type": kind, "messageId": identity,
             "deviceId": self.device, "sentAt": now(), "payload": payload}))
 
     async def robot_state(self):
@@ -135,27 +151,41 @@ class Bridge:
                 previous, sent_at = observed, time.monotonic()
             await asyncio.sleep(0.1)
 
-    async def execute(self, command_id, command):
+    async def execute(self, command_id, command, parameters=None):
         """SUCCEEDED requires the hardware to confirm PAUSED; the backend rejects it otherwise."""
         if self.command_handler is None:
             return {"commandId": command_id, "status": "FAILED", "operationState": "UNKNOWN",
                 "completedAt": now(),
                 "errorCode": "HARDWARE_NOT_CONNECTED" if command == "PAUSE" else "UNSUPPORTED_COMMAND"}
-        outcome = await asyncio.to_thread(self.command_handler, command, command_id)
+        try:
+            inspect.signature(self.command_handler).bind(command, command_id, parameters or {})
+            accepts_parameters = True
+        except TypeError:
+            accepts_parameters = False
+        if not accepts_parameters:
+            outcome = await asyncio.to_thread(self.command_handler, command, command_id)
+        else:
+            outcome = await asyncio.to_thread(self.command_handler, command, command_id, parameters or {})
         result = {"commandId": command_id, "status": outcome["status"],
             "operationState": outcome.get("operationState", "UNKNOWN"), "completedAt": now(),
             "errorCode": outcome.get("errorCode")}
         if result["status"] not in {"SUCCEEDED", "FAILED"}:
             raise ValueError("Command handler returned an unsupported status")
-        if result["status"] == "SUCCEEDED" and result["operationState"] != "PAUSED":
+        if result["status"] == "SUCCEEDED" and command in {'PAUSE','POWER_OFF'} and result["operationState"] != "PAUSED":
             raise ValueError("SUCCEEDED requires a confirmed PAUSED state")
         if result["operationState"] not in OPERATION_STATES:
             raise ValueError("Command handler returned a state the backend rejects")
+        for key in ('hazardId','hazardPresent','absenceDurationMs','relocationCompleted'):
+            if key in outcome: result[key] = outcome[key]
         return result
 
     async def handle(self, socket, message):
         if message.get("type") == "RECEIPT":
             if message.get("accepted") is True:
+                command = self.receipts.pop(message.get('messageId'), None)
+                if command:
+                    with self.db:
+                        self.db.execute('DELETE FROM pending_results WHERE id=? AND device=?', (command,self.device))
                 LOG.info("WS RECEIPT accepted=true messageId=%s", message.get("messageId"))
             else:
                 LOG.error("Backend receipt was not accepted")
@@ -167,6 +197,7 @@ class Bridge:
             return
         payload = message["payload"]
         command_id = str(UUID(payload["commandId"]))
+        if command_id in self.inflight: return
         cached = self.db.execute("SELECT result FROM commands WHERE id=? AND device=?", (command_id, self.device)).fetchone()
         if cached:
             await self.send(socket, "COMMAND_RESULT", json.loads(cached[0]))
@@ -177,33 +208,61 @@ class Bridge:
         if expires <= datetime.now(timezone.utc):
             LOG.warning("Expired command ignored: %s", command_id)
             return
-        await self.send(socket, "COMMAND_ACK", {"commandId": command_id, "status": "DELIVERED"})
-        result = await self.execute(command_id, payload["command"])
-        # Persist before sending: duplicate delivery after restart preserves completedAt.
-        with self.db:
-            self.db.execute("INSERT INTO commands VALUES (?,?,?)", (command_id, self.device, json.dumps(result)))
-        await self.send(socket, "COMMAND_RESULT", result)
+        self.inflight.add(command_id)
+        try:
+            await self.send(socket, "COMMAND_ACK", {"commandId": command_id, "status": "DELIVERED"})
+            with self.db:
+                self.db.execute('INSERT OR IGNORE INTO started_commands VALUES (?,?)', (command_id,self.device))
+            result = await self.execute(command_id, payload["command"], payload.get('parameters', {}))
+            with self.db:
+                self.db.execute("INSERT INTO commands VALUES (?,?,?)", (command_id, self.device, json.dumps(result)))
+                self.db.execute('INSERT OR IGNORE INTO pending_results VALUES (?,?)', (command_id,self.device))
+                self.db.execute('DELETE FROM started_commands WHERE id=? AND device=?', (command_id,self.device))
+            try:
+                await self.send(socket, "COMMAND_RESULT", result)
+            except (OSError, WebSocketException):
+                LOG.warning('Result retained for reconnect: %s', command_id)
+        finally:
+            self.inflight.discard(command_id)
 
     async def session(self):
         async with connect(self.ws_url, additional_headers=self.headers,
                            open_timeout=10, ping_interval=20, ping_timeout=20, max_size=16384) as socket:
-            LOG.info("WebSocket connected; motor adapter unavailable")
+            LOG.info("WebSocket connected")
+            self.receipts.clear()
             reporter = asyncio.create_task(self.report(socket))
             async def receive():
                 async for raw in socket:
                     try:
-                        await self.handle(socket, json.loads(raw))
+                        message = json.loads(raw)
+                        if message.get('type') == 'COMMAND':
+                            async def process(message=message):
+                                try: await self.handle(socket, message)
+                                except Exception: LOG.exception('Command processing failed')
+                            task = asyncio.create_task(process())
+                            self.handlers.add(task)
+                            task.add_done_callback(self.handlers.discard)
+                        else:
+                            await self.handle(socket, message)
                     except (ValueError, KeyError, TypeError, AttributeError):
                         LOG.error("Malformed server message ignored")
             receiver = asyncio.create_task(receive())
+            async def resend():
+                while True:
+                    rows = self.db.execute('SELECT c.result FROM commands c JOIN pending_results p ON p.id=c.id AND p.device=c.device WHERE c.device=?', (self.device,)).fetchall()
+                    for (result,) in rows:
+                        await self.send(socket, 'COMMAND_RESULT', json.loads(result))
+                    await asyncio.sleep(2)
+            retry = asyncio.create_task(resend())
             try:
-                done, _ = await asyncio.wait([reporter, receiver], return_when=asyncio.FIRST_COMPLETED)
+                done, _ = await asyncio.wait([reporter, receiver, retry], return_when=asyncio.FIRST_COMPLETED)
                 for task in done:
                     task.result()
             finally:
                 reporter.cancel()
                 receiver.cancel()
-                await asyncio.gather(reporter, receiver, return_exceptions=True)
+                retry.cancel()
+                await asyncio.gather(reporter, receiver, retry, return_exceptions=True)
 
     async def run(self):
         delay = 1

@@ -12,7 +12,11 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
+import org.mockito.ArgumentMatchers;
+
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 class OperationServiceTests {
@@ -56,8 +60,31 @@ class OperationServiceTests {
 				() -> service.requestCommand("robot-1", "resume", key)).getCode());
 		when(hazards.findActiveHazardsForChild(child)).thenReturn(List.of(new HazardService.ActiveHazardSummary(
 				UUID.randomUUID(), "레고", "HIGH", null, OffsetDateTime.now())));
+		assertEquals("SAFETY_CONFIRMATION_REQUIRED", assertThrows(ApiException.class,
+				() -> service.requestCommand("robot-1", "resume", key)).getCode());
+		verify(repository, never()).saveAndFlush(any());
+	}
+
+	// 기기 전달이 연결된 뒤에는 남은 삼킴 위험물이 재개를 막는다.
+	@Test
+	void resumeIsRefusedWhileASwallowHazardIsStillActive() {
+		var db = delivery();
+		online("PAUSED");
+		when(db.queryForObject(anyString(), eq(Boolean.class), ArgumentMatchers.<Object>any())).thenReturn(true);
 		assertEquals("HAZARD_UNRESOLVED", assertThrows(ApiException.class,
 				() -> service.requestCommand("robot-1", "resume", key)).getCode());
+		verify(repository, never()).saveAndFlush(any());
+	}
+
+	// 전원 명령은 저장만으로 끝나지 않는다. 기기에 전달할 수 없으면 접수하지 않는다.
+	@Test
+	void powerCommandsAreRefusedWhenTheDeviceCannotReceiveThem() {
+		delivery();
+		online("PAUSED");
+		for (String command : List.of("power-on", "power-off")) {
+			assertEquals("DEVICE_NOT_CONTROLLABLE", assertThrows(ApiException.class,
+					() -> service.requestCommand("robot-1", command, UUID.randomUUID())).getCode());
+		}
 		verify(repository, never()).saveAndFlush(any());
 	}
 
@@ -127,8 +154,11 @@ class OperationServiceTests {
 	@Test
 	void relocationAndInvalidInputsNeverCreateRequests() {
 		UUID hazard = hazard();
-		assertEquals("RELOCATION_NOT_CONFIGURED", assertThrows(ApiException.class,
-				() -> service.rejectRelocation(hazard, key)).getCode());
+		// 이송은 삼킴 위험물만 대상으로 한다. 생활 위험 요소는 직접 제거 안내로 넘긴다.
+		assertEquals("RELOCATION_NOT_SUPPORTED", assertThrows(ApiException.class,
+				() -> service.requestRelocation(hazard, key)).getCode());
+		assertThrows(ApiException.class, () -> service.requestRelocation(null, key));
+		assertThrows(ApiException.class, () -> service.requestRelocation(hazard, null));
 		assertThrows(ApiException.class, () -> service.requestCommand("robot-1", "pause", null));
 		assertThrows(ApiException.class, () -> service.requestCommand("robot-1", "stop", key));
 		assertThrows(ApiException.class, () -> service.requestCommand("robot/a", "pause", key));
@@ -136,6 +166,11 @@ class OperationServiceTests {
 		verify(repository, never()).saveAndFlush(any());
 	}
 
+	private org.springframework.jdbc.core.JdbcTemplate delivery() {
+		var db = mock(org.springframework.jdbc.core.JdbcTemplate.class);
+		org.springframework.test.util.ReflectionTestUtils.setField(service, "deliveryDb", db);
+		return db;
+	}
 	private void online(String operation) {
 		when(devices.getStatus("robot-1")).thenReturn(new DeviceService.DeviceStatus("robot-1", "로봇", "ONLINE", operation, 82, OffsetDateTime.now(), false));
 	}

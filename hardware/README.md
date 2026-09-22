@@ -1,6 +1,10 @@
 # 하드웨어·모델 코드
 
-**최신 카메라→HTTP 수신 테스트: [TEST_CONNECTION_KO.md](TEST_CONNECTION_KO.md)**
+**통합 실행(전원·탐지·위험물 처리): [CARE_RUNTIME_KO.md](CARE_RUNTIME_KO.md)** — 프론트 전원 버튼부터 Pi 모터까지.
+프론트 없이 확인하려면 `python check_without_frontend.py` 또는 같은 문서의 6장을 본다.
+아래 `pc_dashboard.py` 안내는 모터 없는 카메라·탐지 단독 실행용이다.
+
+**카메라→HTTP 수신 테스트: [TEST_CONNECTION_KO.md](TEST_CONNECTION_KO.md)**
 
 기본 객체 인식판을 이 폴더에 복사했고 `pc_dashboard.py`에서 확정 탐지 이벤트를 HTTP 대기열에 연결했다.
 기본은 모터 없는 카메라 모드이며 `ROBOT_HTTP_URL` 설정 시 자동 업로드한다.

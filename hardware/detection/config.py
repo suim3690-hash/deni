@@ -22,17 +22,16 @@ STABLE_WINDOW = 10
 STABLE_VOTES = 8
 MAX_EVENTS = 500
 # Detection priorities, not medical risk estimates. battery is not a subtype classifier.
-RISK_LEVELS = {'coin': 1, 'marble': 1, 'battery': 2,
+RISK_LEVELS = {'coin': 1, 'marble': 1, 'battery': 2, 'dice': 1, 'die': 1,
                'knife': 2, 'scissors': 2, 'socket': 1, 'wire': 1}
 # Remove socket/wire from this set to keep electrical objects at their base level.
 PERSON_ESCALATION_CLASSES = set(RISK_LEVELS)
 MODEL_SPECS = [('object', WEIGHTS / 'object.pt', None),
                ('hazard', WEIGHTS / 'hazard.pt', None)]
 
-MODES = ('object', 'hazard')
+MODES = ('object', 'hazard', 'both')
 
 def specs_for_mode(mode):
     if mode not in MODES:
         raise ValueError('Choose object or hazard')
-    # Only the selected custom model is loaded.
-    return [spec for spec in MODEL_SPECS if spec[0] == mode]
+    return list(MODEL_SPECS) if mode == 'both' else [spec for spec in MODEL_SPECS if spec[0] == mode]

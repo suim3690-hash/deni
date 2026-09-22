@@ -85,6 +85,7 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
   const [relocationState, setRelocationState] = useState<RealActionState>('idle')
   const [relocationActionId, setRelocationActionId] = useState<string | null>(null)
   const [removalState, setRemovalState] = useState<RealActionState>('idle')
+  const [removalActionId, setRemovalActionId] = useState<string | null>(null)
   const [resuming, setResuming] = useState(false)
   const autoResumeStarted = useRef(false)
   // ?mockRedetect=1 : 목업에서 첫 번째 제거 확인 때 위험 물체가 다시 감지되는 상황을 보여준다.
@@ -104,6 +105,9 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
   const captureSrc = isMock ? capturePreview : serverCaptureUrl && serverCaptureUrl !== failedCaptureUrl ? serverCaptureUrl : null
   // 위험 물체가 안전한 장소로 이동을 마친 상태(목업 흐름 또는 서버가 이송 완료를 알려준 경우)
   const relocationDone = flow === 'relocated' || relocationState === 'done'
+  // 기기가 제거를 확인해 준 상태. 이송과 마찬가지로 처리 완료로 보고 청소를 다시 시작한다.
+  const removalDone = removalState === 'done'
+  const treatmentDone = relocationDone || removalDone
   // 위치 좌표는 화면 검증용 목업값을 사용한다. 유형별로 서로 다른 위치와 모양을 보여주고,
   // 이송 흐름에서는 동일 마커가 안전 구역으로 이동하도록 한다.
   const mockDetectedMarker = alert?.category ? MOCK_HAZARD_MARKERS[alert.category] : DEFAULT_MOCK_MARKER
@@ -138,7 +142,7 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
   }, [flow, isMock])
 
   useEffect(() => {
-    if (!relocationDone) {
+    if (!treatmentDone) {
       autoResumeStarted.current = false
       return
     }
@@ -162,34 +166,47 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
       active = false
       window.clearTimeout(timer)
     }
-  }, [deviceId, isMock, relocationDone])
+  }, [deviceId, isMock, treatmentDone])
 
-  // 실제 모드: 안전 이송 요청 접수 후 처리 결과를 주기적으로 조회한다. 서버가 이송 완료를 알려줄 때만 완료로 표시한다.
+  // 실제 모드에서 접수 대기 중인 처리 요청. 이송과 직접 제거 재확인은 같은 조회 API를 쓴다.
+  const pendingKind: 'relocation' | 'removal' | null = relocationState === 'pending' && relocationActionId
+    ? 'relocation'
+    : removalState === 'pending' && removalActionId ? 'removal' : null
+  const pendingActionId = pendingKind === 'relocation' ? relocationActionId : pendingKind === 'removal' ? removalActionId : null
+
+  // 실제 모드: 요청 접수 후 처리 결과를 주기적으로 조회한다. 서버가 완료를 알려줄 때만 완료로 표시한다.
+  // 전달 결과가 UNKNOWN인 동안에는 기기가 늦게 보고할 수 있으므로 조회를 멈추지 않는다.
   useEffect(() => {
-    if (isMock || !relocationActionId || relocationState !== 'pending') return
+    if (isMock || !pendingActionId || !pendingKind) return
+    const relocation = pendingKind === 'relocation'
+    const setState = relocation ? setRelocationState : setRemovalState
+    const setActionId = relocation ? setRelocationActionId : setRemovalActionId
+    const completed = relocation ? 'TEMPORARY_COMPLETED' : 'COMPLETED'
     let active = true
     async function check(actionId: string) {
       try {
         const result = await getSafetyAction(actionId)
         if (!active) return
-        if (result.status === 'TEMPORARY_COMPLETED' || result.treatmentStatus === 'TEMPORARY_COMPLETED') {
-          setRelocationState('done')
-        } else if (result.status === 'FAILED') {
-          setRelocationState('idle')
-          setRelocationActionId(null)
-          setActionMessage('위험 물체 이송에 실패했어요. 위험 물체를 직접 치워 주세요.')
+        if (result.treatmentStatus === completed) {
+          setState('done')
+        } else if (result.status === 'FAILED' || result.status === 'EXPIRED') {
+          setState('idle')
+          setActionId(null)
+          setActionMessage(relocation
+            ? '위험 물체 이송에 실패했어요. 위험 물체를 직접 치워 주세요.'
+            : '기기가 위험 물체 제거를 확인하지 못했어요. 남아 있는지 확인한 뒤 다시 시도해 주세요.')
         }
       } catch {
-        // 조회에 실패해도 이송 결과를 알 수 없을 뿐이므로 다음 주기에 다시 조회한다.
+        // 조회에 실패해도 처리 결과를 알 수 없을 뿐이므로 다음 주기에 다시 조회한다.
       }
     }
-    void check(relocationActionId)
-    const timer = window.setInterval(() => void check(relocationActionId), 3000)
+    void check(pendingActionId)
+    const timer = window.setInterval(() => void check(pendingActionId), 3000)
     return () => {
       active = false
       window.clearInterval(timer)
     }
-  }, [isMock, relocationActionId, relocationState])
+  }, [isMock, pendingActionId, pendingKind])
 
   function toggleAutoTransport() {
     if (!isMock) {
@@ -235,7 +252,8 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
     if (removalState !== 'idle') return
     setRemovalState('submitting')
     try {
-      await requestRemovalCheck(hazard?.hazardId ?? '')
+      const receipt = await requestRemovalCheck(hazard?.hazardId ?? '')
+      setRemovalActionId(receipt.actionId)
       setRemovalState('pending')
     } catch (err) {
       setRemovalState('idle')
@@ -255,11 +273,11 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
     if (!activeHazard) return <div role="status" className={grayBox}><strong className="text-[14px] font-semibold">{flow === 'running' ? '로봇청소기 작동 중' : defaultStatus}</strong></div>
 
     if (resuming) return <div role="status" className={greenBox}><Loader2 size={18} className="animate-spin" aria-hidden="true" /><strong className="text-[15px] font-bold">청소 재개 중</strong></div>
-    if (relocationDone) {
+    if (treatmentDone) {
       return (
         <div role="status" aria-live="polite" className={`${greenBox} w-full flex-col gap-0.5`}>
           <strong className="text-[14px]">위험물을 처리했습니다</strong>
-          <span className="text-[12px] font-semibold">청소를 다시 시작합니다</span>
+          <span className="text-[12px] font-semibold">{removalDone ? '기기가 제거를 확인했어요 · 청소를 다시 시작합니다' : '청소를 다시 시작합니다'}</span>
         </div>
       )
     }
@@ -268,7 +286,7 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
       if (relocationState === 'submitting') return <div className={grayBox}><Loader2 size={16} className="animate-spin" aria-hidden="true" /><strong className="text-[14px] font-semibold">위험 물체 이송 요청 중</strong></div>
       if (relocationState === 'pending') return <div role="status" className={`${statusBoxClass} flex-col bg-[#eef2ff] text-[#3730a3]`}><strong className="text-[13px] font-bold">위험 물체 이송 요청이 접수됐어요</strong><span className="text-[11px]">이송 결과는 아직 확인되지 않아요. 위험 물체가 보이면 직접 치워 주세요.</span></div>
       if (removalState === 'submitting') return <div className={grayBox}><Loader2 size={16} className="animate-spin" aria-hidden="true" /><strong className="text-[14px] font-semibold">위험 물체 확인 요청 중</strong></div>
-      if (removalState === 'pending') return <div role="status" className={`${statusBoxClass} flex-col bg-[#eef2ff] text-[#3730a3]`}><strong className="text-[13px] font-bold">위험 물체 확인 중</strong><span className="text-[11px]">기기의 확인 결과를 아직 받지 못했어요.</span></div>
+      if (removalState === 'pending') return <div role="status" className={`${statusBoxClass} flex-col bg-[#eef2ff] text-[#3730a3]`}><strong className="text-[13px] font-bold">위험 물체 확인 중</strong><span className="text-[11px]">기기가 다시 살펴보고 있어요. 확인 결과를 기다리는 중이에요.</span></div>
     }
 
     if (flow === 'relocating') return <div role="status" className={greenBox}><Loader2 size={18} className="animate-spin" aria-hidden="true" /><strong className="text-[15px] font-bold">위험 물체 이송 중</strong></div>
