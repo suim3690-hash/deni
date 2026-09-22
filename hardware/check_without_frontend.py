@@ -131,8 +131,8 @@ def main():
         # Driving only starts on the first observation newer than the command, so wait for it.
         check('POWER_ON starts forward driving', wait_for(lambda: 'F' in motor.sent, 'forward driving'))
         wait_for(lambda: finished(power_on['commandId']), 'POWER_ON result')
-        check('POWER_ON is reported as SUCCEEDED/RUNNING',
-              any(power_on['commandId'] in line and 'operation=RUNNING' in line for line in log))
+        check('POWER_ON is confirmed independently of detection warm-up',
+              any(power_on['commandId'] in line and 'status=SUCCEEDED' in line for line in log))
 
         camera.show(['coin'])
         wait_for(lambda: runtime.state()['taskState'] == 'HAZARD_PAUSED', 'hazard stop')

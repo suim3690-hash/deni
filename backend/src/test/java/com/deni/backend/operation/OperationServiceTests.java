@@ -12,7 +12,6 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
-import org.mockito.ArgumentMatchers;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -70,7 +69,8 @@ class OperationServiceTests {
 	void resumeIsRefusedWhileASwallowHazardIsStillActive() {
 		var db = delivery();
 		online("PAUSED");
-		when(db.queryForObject(anyString(), eq(Boolean.class), ArgumentMatchers.<Object>any())).thenReturn(true);
+		when(devices.getLinkedChildId("robot-1")).thenReturn(child);
+		when(db.queryForObject(anyString(), eq(Boolean.class), eq("robot-1"), eq(child))).thenReturn(true);
 		assertEquals("HAZARD_UNRESOLVED", assertThrows(ApiException.class,
 				() -> service.requestCommand("robot-1", "resume", key)).getCode());
 		verify(repository, never()).saveAndFlush(any());

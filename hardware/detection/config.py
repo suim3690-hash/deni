@@ -4,10 +4,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 WEIGHTS = ROOT / 'weights'
 DATA = ROOT / 'data'
-# Tune using scores from actual 640x480 Pi frames; 0 disables blur rejection.
-# Sharp frames of a flat scene (floor, desk surface) score 12-45 on this Pi camera,
-# so DETECTION_BLUR_THRESHOLD overrides this per run while tuning.
-BLUR_THRESHOLD = float(os.environ.get('DETECTION_BLUR_THRESHOLD', '60.0'))
+# Laplacian variance measures how much texture a scene has, not how sharp it is.
+# On this Pi camera a sharp floor scores 12-45 while a patterned one scores 86-125,
+# so no single threshold separates a blurred frame from a sharp flat one. With the
+# default of 60 every floor frame was discarded before inference and the robot never
+# saw anything. Rejection is off by default; the real defence against a bad frame is
+# the stabilizer, which needs STABLE_VOTES agreeing frames before it alerts.
+# Set DETECTION_BLUR_THRESHOLD to a positive number to turn rejection back on.
+BLUR_THRESHOLD = float(os.environ.get('DETECTION_BLUR_THRESHOLD', '0'))
 DETECT_CONF = 0.10
 ALERT_CONF = 0.35
 EMERGENCY_CONF = 0.50

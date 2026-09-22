@@ -24,10 +24,11 @@ MOVEMENT = {'F': 'FORWARD', 'B': 'BACKWARD', 'L': 'TURNING', 'R': 'TURNING', 'S'
 
 
 class Runtime:
-    def __init__(self, motor, detector, stop, settings):
+    def __init__(self, motor, detector, stop, settings, snapshot_path=None):
         self.motor, self.detector, self.stop = motor, detector, stop
         self.controller = CareController(settings)
         self.lock = threading.RLock()
+        self.snapshot_path = snapshot_path
 
     def state(self):
         motor = self.motor.observation()
@@ -52,6 +53,8 @@ class Runtime:
 
     def run(self):
         previous = None
+        next_snapshot = 0
+        snapshot = self.snapshot_path
         while not self.stop.wait(.05):
             observation = self.detector.state()
             motor = self.motor.observation()
@@ -59,9 +62,28 @@ class Runtime:
                 command = self.controller.step(observation, motor, time.monotonic())
                 self.motor.submit(command, time.monotonic()+.15, motor['generation'])
                 state = (self.controller.phase, self.controller.reason, motor['ready'])
+                diagnostic = dict(task=self.controller.phase, reason=self.controller.reason,
+                    powered=self.controller.powered, blocked=sorted(self.controller.blocked),
+                    command=command, motor=motor, detectionStatus=observation.get('status'),
+                    resultAge=observation.get('result_age'), blurScore=observation.get('blur_score'),
+                    inferenceMs=observation.get('inference_ms'), sequence=observation.get('sequence'),
+                    modelErrors=observation.get('model_errors'), cameraUnavailable=observation.get('camera_unavailable',False),
+                    objects=[dict(label=d.get('label'),confidence=d.get('confidence'),stable=d.get('stable')) for d in observation.get('hazards',[])],
+                    markers=observation.get('markers',[]), recordedAt=time.time())
             if state != previous:
-                LOG.info('Task=%s reason=%s motor=%s', *state)
+                LOG.info('Task=%s reason=%s motor=%s detection=%s age=%s blur=%s blocked=%s',
+                         *state, diagnostic['detectionStatus'], diagnostic['resultAge'],
+                         diagnostic['blurScore'], diagnostic['blocked'])
                 previous = state
+            if snapshot is not None and time.monotonic() >= next_snapshot:
+                try:
+                    snapshot.parent.mkdir(exist_ok=True)
+                    temp = snapshot.with_suffix('.tmp')
+                    temp.write_text(json.dumps(diagnostic,ensure_ascii=False),encoding='utf-8')
+                    temp.replace(snapshot)
+                except OSError:
+                    LOG.warning('Could not write care_state.json')
+                next_snapshot = time.monotonic()+1
 
 
 def camera(args, feed, stop):
@@ -101,7 +123,7 @@ def main():
     feed = CameraFeed(rotation=args.rotation)
     detection = DetectionService(feed, mode='both', processing=False)
     motor = MotorOutput(args.host, args.motor_token, args.control_port, DRIVE_REVERSED)
-    runtime = Runtime(motor,detection,stop,settings)
+    runtime = Runtime(motor,detection,stop,settings,log/'care_state.json')
     threads = []
     try:
         # Validate backend settings before starting the motor owner.

@@ -42,6 +42,9 @@ class CareController:
         self.control = None
         self.results = {}
         self.absent_since = None
+        # 정지 이력을 스스로 푸는 데 쓰는 미검출 추적. 재확인 요청의 absent_since와 분리한다.
+        self.clear_since = None
+        self.clear_observed = None
         self.last_sequence = None
         self.last_observation = None
         self.started = 0
@@ -70,6 +73,8 @@ class CareController:
             self.action = None
         self.finishing = False
         self.absent_since = None
+        self.clear_since = None
+        self.clear_observed = None
 
     def _finish_motion(self, now):
         self.blocked.discard(self.action[2]['label'])
@@ -114,6 +119,8 @@ class CareController:
         self.phase = 'RECHECKING' if command == 'RECHECK_HAZARD' else 'PUSHING'
         self.started = now
         self.absent_since = None
+        self.clear_since = None
+        self.clear_observed = None
         self.last_observation = None
         self.require_frame_after = now
         self.pulse_until = self.settle_until = 0
@@ -129,6 +136,7 @@ class CareController:
         if not ready:
             self.last_output = 'S'
             self.absent_since = None
+            self.clear_since = None
             self.require_frame_after = now
             self.reason = 'RECONNECTING'
             return 'S'
@@ -136,6 +144,7 @@ class CareController:
             self.generation = motor.get('generation')
             self.require_frame_after = now
             self.absent_since = None
+            self.clear_since = None
             self.last_output = 'S'
             self.pulse_until = self.settle_until = 0
         if self.control:
@@ -145,9 +154,12 @@ class CareController:
                 self.control = None
                 self.phase = 'PAUSED' if self.powered else 'OFF'
             elif motor.get('acknowledged_at', 0) > requested:
-                stopped = kind in ('PAUSE', 'POWER_OFF') or self.phase == 'HAZARD_PAUSED'
-                if (stopped and ack == 'S') or (not stopped and self.last_output == 'F' and ack == 'F'):
-                    self.results[identity] = dict(status='SUCCEEDED', operationState='PAUSED' if stopped else 'RUNNING')
+                # POWER_ON confirms the mode change while stopped; model warm-up
+                # must not cancel autonomous intent after eight seconds.
+                # Movement still waits for valid detection below.
+                stopped = kind in ('PAUSE', 'POWER_OFF', 'POWER_ON') or self.phase == 'HAZARD_PAUSED'
+                if (stopped and ack == 'S') or ((not stopped or kind == 'POWER_ON') and self.last_output == 'F' and ack == 'F'):
+                    self.results[identity] = dict(status='SUCCEEDED', operationState='PAUSED' if ack == 'S' else 'RUNNING')
                     self.control = None
         if not self.powered:
             self.reason = 'POWER OFF'; self.last_output = 'S'; return 'S'
@@ -160,7 +172,17 @@ class CareController:
                  and stamp > self.require_frame_after)
         if not valid:
             self.absent_since = None
-            self.last_output = 'S'; self.reason = 'WAITING FOR VALID DETECTION'; return 'S'
+            self.clear_since = None
+            self.last_output = 'S'
+            if observation.get('camera_unavailable'):
+                self.reason = 'CAMERA UNAVAILABLE'
+            elif observation.get('status') != 'ok':
+                self.reason = 'DETECTION ' + str(observation.get('status', 'missing')).upper()
+            elif not isinstance(stamp, (int, float)) or not 0 <= now-stamp <= cfg.observation_ttl:
+                self.reason = 'DETECTION STALE'
+            else:
+                self.reason = 'WAIT FOR POST-COMMAND FRAME'
+            return 'S'
         seen = [dict(obj, label='dice' if obj['label']=='die' else obj['label'])
                 for obj in observation.get('hazards', []) if obj.get('label') in SWALLOW]
         labels = {obj['label'] for obj in seen}
@@ -170,9 +192,30 @@ class CareController:
         new_frame = observation.get('sequence') != self.last_sequence
         if new_frame:
             self.last_sequence = observation.get('sequence')
+        if self.finishing and self.action[0] == 'RECHECK_HAZARD' and self.action[2]['label'] in labels:
+            # A fresh redetection invalidates absence before completion ACK.
+            self.finishing = False
+            self.phase = 'RECHECKING'
+            self.absent_since = None
+            self.last_observation = None
         if self.finishing and motor.get('acknowledged_at', 0)>self.finished_at:
             if (self.phase == 'RUNNING' and self.last_output == 'F' and ack == 'F') or (self.phase == 'HAZARD_PAUSED' and ack == 'S'):
                 self._complete_action('SUCCEEDED')
+        # 전원을 다시 켰을 때 지난 정지 이력이 남아 있어도, 새 영상에서 삼킴 위험물이
+        # 연속으로 보이지 않으면 스스로 주행을 재개한다. 처리 요청 중에는 손대지 않는다.
+        if self.phase == 'HAZARD_PAUSED' and not self.action and not self.finishing and new_frame:
+            if labels:
+                self.clear_since = None
+            else:
+                if self.clear_observed is None or stamp-self.clear_observed > cfg.max_observation_gap:
+                    self.clear_since = stamp
+                if self.clear_since is None:
+                    self.clear_since = stamp
+                if stamp-self.clear_since >= cfg.removal_absence_seconds:
+                    self.blocked.clear()
+                    self.phase = 'RUNNING'
+                    self.clear_since = None
+            self.clear_observed = stamp
         command = 'S'
         if self.phase == 'RECHECKING' and new_frame:
             label = self.action[2]['label']
@@ -191,12 +234,18 @@ class CareController:
             label = self.action[2]['label']
             targets = [obj for obj in seen if obj['label']==label]
             marker = next((m for m in observation.get('markers', []) if m['id']==cfg.marker_id), None)
-            if labels - {label}:
-                self.reason = 'OTHER SWALLOW HAZARD'
-            elif marker and marker['fill'] >= cfg.marker_stop_fill:
+            # An explicit relocation selects this class even when other classes
+            # are visible. Keep those hazards blocked for after this action.
+            if marker and marker['fill'] >= cfg.marker_stop_fill:
                 self.phase, self.timed_remaining = 'BACKING', cfg.reverse_seconds
-            elif len(targets) != 1 or not marker or marker.get('skew', 1) > .5:
-                self.reason = 'WAIT FOR ONE TARGET AND MARKER'
+            elif not targets:
+                self.reason = 'TARGET NOT VISIBLE'
+            elif len(targets) != 1:
+                self.reason = 'MULTIPLE TARGETS OF SAME CLASS'
+            elif not marker:
+                self.reason = 'MARKER NOT VISIBLE'
+            elif marker.get('skew', 1) > .5:
+                self.reason = 'MARKER TOO SKEWED'
             elif now >= self.settle_until:
                 x1, _, x2, _ = targets[0]['bbox']
                 bearing = ((x1+x2)/2 / observation['frame_width'])*2-1
@@ -226,5 +275,6 @@ class CareController:
         elif self.phase == 'RUNNING':
             command = 'F'
         self.last_output = command
-        self.reason = self.phase if command != 'S' else self.reason
+        if command != 'S' or self.phase in ('HAZARD_PAUSED','PAUSED','RECHECKING'):
+            self.reason = self.phase
         return command

@@ -102,4 +102,29 @@ class HardwareIntegrationTests {
         assertEquals("PAUSED",devices.getStatus(id).operationState());
         assertEquals("PAUSED",jdbc.queryForObject("SELECT operation_state FROM robot_live_state WHERE device_id=?",String.class,id));
     }
+
+    @Test void otherProfilesHistoricalHazardsDoNotBlockActiveProfileResume() throws Exception {
+        String id=device();
+        var image=new java.awt.image.BufferedImage(2,2,java.awt.image.BufferedImage.TYPE_INT_RGB);
+        var out=new java.io.ByteArrayOutputStream(); javax.imageio.ImageIO.write(image,"png",out);
+        var oldHazard=uploads.save(id,UUID.randomUUID(),"OBJECT","배터리",out.toByteArray());
+        var active=children.register("ACTIVE_"+UUID.randomUUID(),LocalDate.now().minusMonths(20),UUID.randomUUID());
+        devices.register(active.childId(),id,"test");
+        assertEquals(active.childId(),devices.getLinkedChildId(id));
+        var session=mock(WebSocketSession.class); when(session.isOpen()).thenReturn(true); channel.register(id,session);
+        try {
+            state(id,"PAUSED",OffsetDateTime.now().minusSeconds(1));
+            assertEquals("QUEUED",operations.requestCommand(id,"resume",UUID.randomUUID()).deliveryState());
+            assertEquals("ACTIVE",jdbc.queryForObject("SELECT status FROM hazards WHERE id=?",String.class,oldHazard.hazardId()));
+        } finally { channel.remove(id,session); }
+    }
+
+    @Test void activeProfilesUnresolvedSwallowHazardStillBlocksResume() throws Exception {
+        String id=device();
+        var image=new java.awt.image.BufferedImage(2,2,java.awt.image.BufferedImage.TYPE_INT_RGB);
+        var out=new java.io.ByteArrayOutputStream(); javax.imageio.ImageIO.write(image,"png",out);
+        uploads.save(id,UUID.randomUUID(),"OBJECT","동전",out.toByteArray());
+        var error=assertThrows(com.deni.backend.common.ApiException.class,()->operations.requestCommand(id,"resume",UUID.randomUUID()));
+        assertEquals("HAZARD_UNRESOLVED",error.getCode());
+    }
 }

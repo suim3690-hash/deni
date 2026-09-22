@@ -37,6 +37,7 @@ interface Props {
   isMock: boolean
   onBack: () => void
   onRetry: () => void
+  onSelect: (hazard: DashboardHazard) => void
 }
 
 const statusBoxClass = 'flex min-h-[54px] flex-1 items-center justify-center gap-2 rounded-[20px] px-2 text-center'
@@ -71,7 +72,7 @@ function HazardMapMarker({ category, relocated }: { category: HazardCategory | n
   )
 }
 
-export default function HazardLocation({ hazard, hazards, deviceId, stage, operationState, detail, error, errorStatus, isMock, onBack, onRetry }: Props) {
+export default function HazardLocation({ hazard, hazards, deviceId, stage, operationState, detail, error, errorStatus, isMock, onBack, onRetry, onSelect }: Props) {
   const name = detail?.objectName ?? hazard?.objectName ?? ''
   const detectedAt = detail?.detectedAt ?? hazard?.detectedAt
   const displayTime = detectedAt ? new Intl.DateTimeFormat('ko-KR', {
@@ -142,6 +143,7 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
   }, [flow, isMock])
 
   useEffect(() => {
+    if (!isMock) return
     if (!treatmentDone) {
       autoResumeStarted.current = false
       return
@@ -276,8 +278,8 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
     if (treatmentDone) {
       return (
         <div role="status" aria-live="polite" className={`${greenBox} w-full flex-col gap-0.5`}>
-          <strong className="text-[14px]">위험물을 처리했습니다</strong>
-          <span className="text-[12px] font-semibold">{removalDone ? '기기가 제거를 확인했어요 · 청소를 다시 시작합니다' : '청소를 다시 시작합니다'}</span>
+          <strong className="text-[14px]">{name} 처리 완료</strong>
+          <span className="text-[12px] font-semibold">{isMock ? '청소를 다시 시작합니다' : operationState === 'RUNNING' ? '기기가 주행 중입니다' : operationState === 'PAUSED' ? '기기가 정지 중입니다 · 남은 위험물을 선택해 확인해 주세요' : '기기 주행 상태를 확인 중입니다'}</span>
         </div>
       )
     }
@@ -380,7 +382,7 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
                       return (
                         <li key={`${item.hazardId}-${index}`} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${living ? 'border-[#bfdbfe] bg-[#eff6ff] text-[#1d4ed8]' : 'border-[#fecdd3] bg-[#fff1f2] text-[#be123c]'}`}>
                           <span className={`size-1.5 shrink-0 ${living ? 'rotate-45 rounded-[1px] bg-[#2563eb]' : 'rounded-full bg-[#e11d48]'}`} />
-                          <span>{index + 1}. {item.objectName}</span>
+                          <button type="button" disabled={relocationState === 'pending' || relocationState === 'submitting' || removalState === 'pending' || removalState === 'submitting' || item.hazardId === hazard?.hazardId} onClick={() => onSelect(item)} aria-current={item.hazardId === hazard?.hazardId ? 'true' : undefined} className="disabled:cursor-default underline disabled:no-underline">{index + 1}. {item.objectName}{item.hazardId === hazard?.hazardId ? treatmentDone ? ' · 처리 완료' : ' · 선택됨' : ' · 확인'}</button>
                         </li>
                       )
                     })}

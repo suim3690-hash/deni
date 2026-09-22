@@ -43,7 +43,7 @@ public class OperationService {
 		if (existing != null) return new CommandReceipt(existing.getId(), existing.getStatus(), deliveryState(existing.getId()));
 		if (command.equals("resume")) {
 			if (deliveryDb != null && Boolean.TRUE.equals(deliveryDb.queryForObject(
-					"SELECT EXISTS(SELECT 1 FROM hazards WHERE device_id=? AND status='ACTIVE' AND object_type='SWALLOW')", Boolean.class, id))) {
+					"SELECT EXISTS(SELECT 1 FROM hazards WHERE device_id=? AND child_id=? AND status='ACTIVE' AND object_type='SWALLOW')", Boolean.class, id, devices.getLinkedChildId(id)))) {
 				throw ApiException.conflict("HAZARD_UNRESOLVED", "미처리 위험물이 있어 청소를 재개할 수 없습니다.");
 			}
 			if (deliveryDb == null) throw ApiException.conflict("SAFETY_CONFIRMATION_REQUIRED", "기기 재개 전달 기능이 연결되지 않았습니다.");

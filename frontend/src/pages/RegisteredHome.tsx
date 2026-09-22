@@ -99,6 +99,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   const [showReport, setShowReport] = useState(false)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const activatedFor = useRef<string | null>(null)
+  const hazardRequest = useRef(0)
 
   useEffect(() => {
     let current = true
@@ -217,6 +218,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
 
   async function openHazardDetail(hazard: DashboardHazard) {
     if (!dashboard) return
+    const request = ++hazardRequest.current
     setSelectedHazard(hazard)
     setShowMap(true)
     setHazardDetail(null)
@@ -224,8 +226,11 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     setHazardErrorStatus(null)
     setModal(null)
     try {
-      setHazardDetail(await getHazardDetail(hazard, dashboard.isMock))
+      const detail = await getHazardDetail(hazard, dashboard.isMock)
+      if (request !== hazardRequest.current) return
+      setHazardDetail(detail)
     } catch (error) {
+      if (request !== hazardRequest.current) return
       const status = error instanceof ApiRequestError ? error.status : null
       setHazardErrorStatus(status)
       setHazardError(apiErrorMessage(error, '위험 상세 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'))
@@ -245,6 +250,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   }
 
   function closeMap() {
+    hazardRequest.current++
     setShowMap(false)
     setSelectedHazard(null)
   }
@@ -331,7 +337,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     onUpdateChild(updated)
   }
 
-  if (showMap) return <HazardLocation hazard={selectedHazard} hazards={dashboard?.activeHazards ?? []} deviceId={device?.deviceId ?? ''} stage={stage} operationState={operationState} detail={hazardDetail} error={hazardError} errorStatus={hazardErrorStatus} isMock={dashboard?.isMock ?? false} onBack={closeMap} onRetry={() => { if (selectedHazard) void openHazardDetail(selectedHazard) }} />
+  if (showMap) return <HazardLocation key={selectedHazard?.hazardId ?? "none"} onSelect={(hazard) => void openHazardDetail(hazard)} hazard={selectedHazard} hazards={dashboard?.activeHazards ?? []} deviceId={device?.deviceId ?? ''} stage={stage} operationState={operationState} detail={hazardDetail} error={hazardError} errorStatus={hazardErrorStatus} isMock={dashboard?.isMock ?? false} onBack={closeMap} onRetry={() => { if (selectedHazard) void openHazardDetail(selectedHazard) }} />
   if (showSafetyProfile) return <SafetyProfileDetail child={child} onBack={() => setShowSafetyProfile(false)} onUpdateChild={handleProfileChildUpdate} onReregister={() => onChildUnavailable('다른 데모 프로필의 이름과 생년월일을 입력해 주세요.')} isMock={dashboard?.isMock ?? !import.meta.env.VITE_API_BASE_URL} />
   if (showReport && report && reportAvailable) return <GrowthReport child={child} month={report.month} onBack={() => setShowReport(false)} />
 
