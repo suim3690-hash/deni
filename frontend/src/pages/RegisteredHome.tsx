@@ -170,7 +170,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   const reportAvailable = Boolean(report?.available)
   const exampleReportAvailable = Boolean(dashboard?.isMock && report?.available)
   const activeHazard = dashboard?.activeHazards[0]
-  const extraHazardCount = Math.max((dashboard?.activeHazards.length ?? 0) - 1, 0)
+  const activeHazardCount = dashboard?.activeHazards.length ?? 0
   const alert = activeHazard ? describeHazard(activeHazard, stage, !dashboard?.isMock) : null
   const robotState = loadError ? null : dashboard?.robotState
   const robotStatus = connected && robotState && !robotState.stale ? robotStatusText(robotState) : null
@@ -265,7 +265,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     onUpdateChild(updated)
   }
 
-  if (showMap) return <HazardLocation hazard={selectedHazard} deviceId={device?.deviceId ?? ''} stage={stage} operationState={operationState} detail={hazardDetail} error={hazardError} errorStatus={hazardErrorStatus} isMock={dashboard?.isMock ?? false} onBack={closeMap} onRetry={() => { if (selectedHazard) void openHazardDetail(selectedHazard) }} />
+  if (showMap) return <HazardLocation hazard={selectedHazard} hazards={dashboard?.activeHazards ?? []} deviceId={device?.deviceId ?? ''} stage={stage} operationState={operationState} detail={hazardDetail} error={hazardError} errorStatus={hazardErrorStatus} isMock={dashboard?.isMock ?? false} onBack={closeMap} onRetry={() => { if (selectedHazard) void openHazardDetail(selectedHazard) }} />
   if (showSafetyProfile) return <SafetyProfileDetail child={child} onBack={() => setShowSafetyProfile(false)} onUpdateChild={handleProfileChildUpdate} isMock={dashboard?.isMock ?? !import.meta.env.VITE_API_BASE_URL} />
   if (showReport && report && reportAvailable) return <GrowthReport child={child} month={report.month} onBack={() => setShowReport(false)} />
 
@@ -278,12 +278,16 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
             <div className="mb-3">
               <HazardAlertBox
                 onClick={() => void openHazardDetail(activeHazard)}
-                ariaLabel={`${alert.urgencyLabel} ${alert.title}. 스마트 안심 케어 맵으로 이동`}
+                ariaLabel={`${alert.urgencyLabel} ${activeHazardCount > 1 ? `위험 물체 ${activeHazardCount}건이 감지되었어요` : alert.title}. 스마트 안심 케어 맵으로 이동`}
                 badge={alert.urgencyLabel}
                 urgent={alert.urgent}
                 riskLabel={alert.risk ? riskLabels[alert.risk] : null}
-                title={`${alert.title}${extraHazardCount > 0 ? ` 외 ${extraHazardCount}건` : ''}`}
-                subtitle={loadError ? '최신 조회 실패 · 마지막으로 확인된 알림이에요' : '눌러서 스마트 안심 케어 맵 확인'}
+                title={activeHazardCount > 1 ? `위험 물체 ${activeHazardCount}건이 감지되었어요` : alert.title}
+                subtitle={loadError
+                  ? '최신 조회 실패 · 마지막으로 확인된 알림이에요'
+                  : activeHazardCount > 1
+                    ? `대표 감지: ${activeHazard.objectName} · 눌러서 위치 확인`
+                    : '눌러서 스마트 안심 케어 맵 확인'}
               />
             </div>
           )}

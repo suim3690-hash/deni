@@ -76,7 +76,10 @@ function mockDashboard(child: RegisteredChild): DashboardSnapshot {
   const previewState = new URLSearchParams(window.location.search).get('mockDevice')
   // 목업(5174)은 기본으로 위험물이 감지된 상태다.
   // mockHazard=구슬|동전|배터리(삼킴 위험물) · 전선|콘센트(생활공간 위험요소) · none(위험물 없음), 기본값은 동전
-  const hazardPreview = new URLSearchParams(window.location.search).get('mockHazard')
+  const searchParams = new URLSearchParams(window.location.search)
+  const hazardPreview = searchParams.get('mockHazard')
+  const requestedHazardCount = Number(searchParams.get('mockHazardCount') ?? 1)
+  const hazardCount = Number.isInteger(requestedHazardCount) ? Math.min(Math.max(requestedHazardCount, 1), 10) : 1
   const previewName = hazardPreview === 'living' ? '전선' : !hazardPreview || hazardPreview === 'swallow' ? '동전' : hazardPreview
   const previewHazard = hazardPreview === 'none'
     ? null
@@ -110,11 +113,22 @@ function mockDashboard(child: RegisteredChild): DashboardSnapshot {
       receivedAt: today.toISOString(),
       stale: false,
     } : null,
-    activeHazards: previewHazard && connectionState === 'ONLINE' ? [{
-      ...previewHazard,
-      riskLevel: 'HIGH',
-      detectedAt: new Date().toISOString(),
-    }] : [],
+    activeHazards: previewHazard && connectionState === 'ONLINE' ? Array.from({ length: hazardCount }, (_, index) => {
+      const mockNames = hazardPreview === 'living'
+        ? ['전선', '콘센트']
+        : hazardPreview === 'mixed'
+          ? ['동전', '전선', '배터리', '콘센트', '구슬']
+          : hazardPreview === 'swallow' || !hazardPreview
+            ? ['동전', '구슬', '배터리']
+            : [previewName]
+      const objectName = mockNames[index % mockNames.length]
+      return {
+        hazardId: `preview-${objectName}-${index + 1}`,
+        objectName,
+        riskLevel: 'HIGH',
+        detectedAt: new Date(today.getTime() - index * 30_000).toISOString(),
+      }
+    }) : [],
     reportSummary: { reportId: `preview-${month}`, month, available: true },
   }
 }

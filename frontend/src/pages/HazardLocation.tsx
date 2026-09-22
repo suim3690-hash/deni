@@ -6,7 +6,7 @@ import robotIcon from '../assets/figma/home/imgVector5.svg'
 import { sendDeviceCommand, type DashboardHazard, type HazardDetail, type HazardMarker } from '../services/dashboard'
 import { apiErrorMessage } from '../services/apiError'
 import { getSafetyAction, requestRelocation, requestRemovalCheck } from '../services/operations'
-import { describeHazard, riskLabels, riskStyles, withTopicParticle } from '../lib/hazardRisk'
+import { categoryLabels, describeHazard, riskLabels, riskStyles, withTopicParticle, type HazardCategory } from '../lib/hazardRisk'
 import HazardAlertBox from '../components/HazardAlertBox'
 import type { Stage } from '../lib/stages'
 
@@ -16,11 +16,18 @@ type Flow = 'idle' | 'relocating' | 'relocated' | 'removal-guide' | 'checking' |
 
 // 목업 안전 이송 때 위험 물체 마커가 옮겨 가는 안전한 장소(지도의 현관 구역)와 이동 시간
 const SAFE_ZONE_MARKER: HazardMarker = { x: 0.843, y: 0.585 }
+const MOCK_HAZARD_MARKERS: Record<HazardCategory, HazardMarker> = {
+  SWALLOW: { x: 0.296, y: 0.429 },
+  LIVING: { x: 0.655, y: 0.337 },
+}
+const DEFAULT_MOCK_MARKER: HazardMarker = { x: 0.472, y: 0.455 }
 const RELOCATE_MOCK_MS = 3000
+const AUTO_RESUME_MOCK_MS = 1500
 const MARKER_GLIDE_MS = 1200
 
 interface Props {
   hazard: DashboardHazard | null
+  hazards: DashboardHazard[]
   deviceId: string
   stage: Stage | null
   operationState: string
@@ -38,7 +45,33 @@ const grayBox = `${statusBoxClass} bg-[#e5e7eb] text-[#6b7280]`
 const outlineButton = 'min-h-[54px] flex-1 rounded-[20px] border border-[#3755ff] bg-white px-2 text-[13px] font-semibold text-[#2948dd]'
 const primaryButton = 'min-h-[54px] flex-1 rounded-[20px] bg-[#b9003d] px-2 text-[13px] font-bold leading-4 text-white shadow-[0_3px_8px_rgba(185,0,61,0.25)]'
 
-export default function HazardLocation({ hazard, deviceId, stage, operationState, detail, error, errorStatus, isMock, onBack, onRetry }: Props) {
+function HazardMapMarker({ category, relocated }: { category: HazardCategory | null; relocated: boolean }) {
+  if (relocated) {
+    return (
+      <span className="grid aspect-square place-items-center rounded-full bg-[#10b981]/20">
+        <span className="grid size-[62%] place-items-center rounded-full border-[3px] border-white bg-[#10b981] text-[11px] font-bold leading-none text-white">✓</span>
+      </span>
+    )
+  }
+
+  if (category === 'LIVING') {
+    return (
+      <span className="grid aspect-square rotate-45 place-items-center rounded-[24%] bg-[#2563eb]/20">
+        <span className="grid size-[62%] place-items-center rounded-[20%] border-[3px] border-white bg-[#2563eb] text-[11px] font-bold leading-none text-white">
+          <span className="-rotate-45">ϟ</span>
+        </span>
+      </span>
+    )
+  }
+
+  return (
+    <span className="grid aspect-square place-items-center rounded-full bg-[#e11d48]/20">
+      <span className="grid size-[62%] place-items-center rounded-full border-[3px] border-white bg-[#a5003a] text-[11px] font-bold leading-none text-white">!</span>
+    </span>
+  )
+}
+
+export default function HazardLocation({ hazard, hazards, deviceId, stage, operationState, detail, error, errorStatus, isMock, onBack, onRetry }: Props) {
   const name = detail?.objectName ?? hazard?.objectName ?? ''
   const detectedAt = detail?.detectedAt ?? hazard?.detectedAt
   const displayTime = detectedAt ? new Intl.DateTimeFormat('ko-KR', {
@@ -53,12 +86,14 @@ export default function HazardLocation({ hazard, deviceId, stage, operationState
   const [relocationActionId, setRelocationActionId] = useState<string | null>(null)
   const [removalState, setRemovalState] = useState<RealActionState>('idle')
   const [resuming, setResuming] = useState(false)
+  const autoResumeStarted = useRef(false)
   // ?mockRedetect=1 : 목업에서 첫 번째 제거 확인 때 위험 물체가 다시 감지되는 상황을 보여준다.
   const redetectOnce = useRef(new URLSearchParams(window.location.search).get('mockRedetect') === '1')
   const restricted = errorStatus === 403 || errorStatus === 404
 
   // 목업에서는 조치가 끝나면(running) 위험 물체가 해결된 것으로 본다.
   const activeHazard = flow === 'running' ? null : hazard
+  const detectedHazards = hazards.length > 0 ? hazards : hazard ? [hazard] : []
   const alert = activeHazard ? describeHazard({ objectName: name, riskLevel: detail?.riskLevel ?? activeHazard.riskLevel }, stage, !isMock) : null
   const alertStyle = riskStyles[alert?.risk ?? 'HIGH']
   const isLiving = alert?.category === 'LIVING'
@@ -69,7 +104,12 @@ export default function HazardLocation({ hazard, deviceId, stage, operationState
   const captureSrc = isMock ? capturePreview : serverCaptureUrl && serverCaptureUrl !== failedCaptureUrl ? serverCaptureUrl : null
   // 위험 물체가 안전한 장소로 이동을 마친 상태(목업 흐름 또는 서버가 이송 완료를 알려준 경우)
   const relocationDone = flow === 'relocated' || relocationState === 'done'
-  const marker: HazardMarker | null = isMock && (flow === 'relocating' || flow === 'relocated') ? SAFE_ZONE_MARKER : detail?.marker ?? null
+  // 위치 좌표는 화면 검증용 목업값을 사용한다. 유형별로 서로 다른 위치와 모양을 보여주고,
+  // 이송 흐름에서는 동일 마커가 안전 구역으로 이동하도록 한다.
+  const mockDetectedMarker = alert?.category ? MOCK_HAZARD_MARKERS[alert.category] : DEFAULT_MOCK_MARKER
+  const marker: HazardMarker | null = activeHazard
+    ? flow === 'relocating' || relocationDone ? SAFE_ZONE_MARKER : mockDetectedMarker
+    : null
   const markerGlideMs = flow === 'relocating' ? RELOCATE_MOCK_MS : MARKER_GLIDE_MS
   const defaultStatus = operationState === 'RUNNING' ? '로봇청소기 작동 중' : operationState === 'PAUSED' ? '로봇청소기 일시 정지' : '로봇청소기 상태 확인 전'
 
@@ -96,6 +136,33 @@ export default function HazardLocation({ hazard, deviceId, stage, operationState
     const timer = setTimeout(() => setFlow(step[0]), step[1])
     return () => clearTimeout(timer)
   }, [flow, isMock])
+
+  useEffect(() => {
+    if (!relocationDone) {
+      autoResumeStarted.current = false
+      return
+    }
+    if (autoResumeStarted.current) return
+    autoResumeStarted.current = true
+    let active = true
+    const timer = window.setTimeout(() => {
+      setResuming(true)
+      void sendDeviceCommand(deviceId, 'resume', isMock)
+        .then(() => {
+          if (active) setFlow('running')
+        })
+        .catch((err: unknown) => {
+          if (active) setActionMessage(apiErrorMessage(err, '청소를 다시 시작하지 못했어요. 잠시 후 다시 시도해 주세요.'))
+        })
+        .finally(() => {
+          if (active) setResuming(false)
+        })
+    }, AUTO_RESUME_MOCK_MS)
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
+  }, [deviceId, isMock, relocationDone])
 
   // 실제 모드: 안전 이송 요청 접수 후 처리 결과를 주기적으로 조회한다. 서버가 이송 완료를 알려줄 때만 완료로 표시한다.
   useEffect(() => {
@@ -155,19 +222,6 @@ export default function HazardLocation({ hazard, deviceId, stage, operationState
     }
   }
 
-  async function resumeCleaning() {
-    if (resuming) return
-    setResuming(true)
-    try {
-      await sendDeviceCommand(deviceId, 'resume', isMock)
-      setFlow('running')
-    } catch (err) {
-      setActionMessage(apiErrorMessage(err, '청소를 다시 시작하지 못했어요. 잠시 후 다시 시도해 주세요.'))
-    } finally {
-      setResuming(false)
-    }
-  }
-
   function startDirectRemoval() {
     setRedetected(false)
     setFlow('removal-guide')
@@ -203,13 +257,10 @@ export default function HazardLocation({ hazard, deviceId, stage, operationState
     if (resuming) return <div role="status" className={greenBox}><Loader2 size={18} className="animate-spin" aria-hidden="true" /><strong className="text-[15px] font-bold">청소 재개 중</strong></div>
     if (relocationDone) {
       return (
-        <>
-          <div role="status" className={`${statusBoxClass} flex-col bg-[#10b981] text-white`}>
-            <strong className="text-[14px] font-bold">위험물을 처리했습니다</strong>
-            <span className="text-[11px]">안전한 장소로 이동을 완료했어요</span>
-          </div>
-          <button type="button" onClick={() => void resumeCleaning()} className={primaryButton}>청소 재개</button>
-        </>
+        <div role="status" aria-live="polite" className={`${greenBox} w-full flex-col gap-0.5`}>
+          <strong className="text-[14px]">위험물을 처리했습니다</strong>
+          <span className="text-[12px] font-semibold">청소를 다시 시작합니다</span>
+        </div>
       )
     }
 
@@ -267,17 +318,19 @@ export default function HazardLocation({ hazard, deviceId, stage, operationState
                   {activeHazard && marker && (
                     <span
                       role="img"
-                      aria-label={relocationDone ? '안전한 장소로 이동한 위험 물체 위치' : '위험 물체 위치'}
+                      aria-label={relocationDone ? '안전한 장소로 이동한 위험 물체 위치' : `${alert?.category ? categoryLabels[alert.category] : '위험 물체'} 목업 위치`}
                       className={`absolute w-[7.5%] -translate-x-1/2 -translate-y-1/2 motion-reduce:animate-none ${relocationDone ? '' : 'animate-blink'}`}
                       style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%`, transition: `left ${markerGlideMs}ms ease-in-out, top ${markerGlideMs}ms ease-in-out` }}
                     >
-                      <span className={`grid aspect-square place-items-center rounded-full ${relocationDone ? 'bg-[#10b981]/20' : 'bg-[#e11d48]/20'}`}>
-                        <span className={`grid size-[62%] place-items-center rounded-full border-[3px] border-white text-[11px] font-bold leading-none text-white ${relocationDone ? 'bg-[#10b981]' : 'bg-[#a5003a]'}`}>{relocationDone ? '✓' : '!'}</span>
-                      </span>
+                      <HazardMapMarker category={alert?.category ?? null} relocated={relocationDone} />
                     </span>
                   )}
                 </div>
-                {isMock && <p className="mt-2 text-center text-[11px] text-[#94a3b8]">지도는 화면 확인용 예시입니다.</p>}
+                <div className="mt-2 flex items-center justify-center gap-4 text-[10px] text-[#64748b]" aria-label="위험 요소 마커 범례">
+                  <span className="flex items-center gap-1.5"><span className="grid size-4 place-items-center rounded-full bg-[#a5003a] text-[9px] font-bold text-white">!</span>삼킴 위험물</span>
+                  <span className="flex items-center gap-1.5"><span className="grid size-4 rotate-45 place-items-center rounded-[3px] bg-[#2563eb] text-[9px] font-bold text-white"><span className="-rotate-45">ϟ</span></span>생활공간 위험요소</span>
+                </div>
+                <p className="mt-1.5 text-center text-[11px] text-[#94a3b8]">마커 위치는 화면 확인용 예시입니다.</p>
               </>
             )}
           </section>
@@ -296,6 +349,24 @@ export default function HazardLocation({ hazard, deviceId, stage, operationState
                     <strong className="min-w-0 text-[11px] leading-4">{name}</strong>
                     <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${alertStyle.chip}`}>위험도 {riskLabel}</span>
                   </div>
+                </div>
+                <div className="mt-3 rounded-[14px] border border-[#e2e8f0] bg-[#f8fafc] px-3 py-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <strong className="text-[12px] text-[#334155]">감지된 위험물</strong>
+                    <span className="rounded-full bg-[#e2e8f0] px-2 py-0.5 text-[10px] font-bold text-[#475569]">총 {detectedHazards.length}건</span>
+                  </div>
+                  <ul className="mt-2 flex flex-wrap gap-1.5" aria-label={`감지된 위험물 ${detectedHazards.length}건`}>
+                    {detectedHazards.map((item, index) => {
+                      const itemAlert = describeHazard(item, stage, false)
+                      const living = itemAlert.category === 'LIVING'
+                      return (
+                        <li key={`${item.hazardId}-${index}`} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${living ? 'border-[#bfdbfe] bg-[#eff6ff] text-[#1d4ed8]' : 'border-[#fecdd3] bg-[#fff1f2] text-[#be123c]'}`}>
+                          <span className={`size-1.5 shrink-0 ${living ? 'rotate-45 rounded-[1px] bg-[#2563eb]' : 'rounded-full bg-[#e11d48]'}`} />
+                          <span>{index + 1}. {item.objectName}</span>
+                        </li>
+                      )
+                    })}
+                  </ul>
                 </div>
                 <div className="mt-3 break-keep rounded-[12px] border border-[#d7e2ff] bg-[#f4f7ff] px-3 py-3 text-[13px] leading-5">
                   <p><span className="mr-2 font-bold text-[#b9003d]">ⓘ</span>{withTopicParticle(name)} 아이의 성장단계에서 {isLiving ? '만지면 위험한' : '삼킬 위험이 있는'} 물체입니다.</p>
