@@ -3,6 +3,7 @@ package com.deni.backend.device;
 import java.time.OffsetDateTime;
 import java.util.Map;
 import java.util.UUID;
+import com.deni.backend.common.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -39,9 +40,10 @@ public class DeviceSocketHandler extends TextWebSocketHandler {
                 Map.of("type","RECEIPT","messageId",node.path("messageId").asText(),"accepted",true)))); }
         } catch (RuntimeException ex) {
             // 기기 메시지를 거부하면서 이유를 남기지 않으면 현장에서 원인을 찾을 수 없다.
-            LOG.warn("Rejected device message: device={} type={} cause={}: {}", id,
+            LOG.warn("Rejected device message: device={} type={} cause={}: {} {}", id,
                     message.getPayload().length() > 400 ? "(oversized)" : payloadType(message),
-                    ex.getClass().getSimpleName(), ex.getMessage());
+                    ex.getClass().getSimpleName(), ex.getMessage(),
+                    ex instanceof ApiException api && api.getFieldErrors() != null ? api.getFieldErrors() : "");
             synchronized(session) { session.sendMessage(new TextMessage("{\"type\":\"ERROR\",\"code\":\"INVALID_MESSAGE\"}")); }
         }
     }

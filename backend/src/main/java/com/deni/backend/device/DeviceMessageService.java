@@ -21,7 +21,8 @@ public class DeviceMessageService {
             String movement=payload.path("movementState").asText();
             if (!Set.of("RUNNING","PAUSED","RELOCATING","UNKNOWN").contains(operation)) throw new IllegalArgumentException();
             if (!Set.of("FORWARD","TURNING","BACKWARD","STOPPED","UNKNOWN").contains(movement)) throw new IllegalArgumentException();
-            OffsetDateTime sampled=OffsetDateTime.parse(payload.path("sampledAt").asText());
+            // robot_live_state 트리거도 미래 시각을 거부하므로 저장 전에 같은 기준으로 맞춘다.
+            OffsetDateTime sampled=devices.alignReportTime(OffsetDateTime.parse(payload.path("sampledAt").asText()));
             Long duration=payload.path("movementDurationMs").isNull() || payload.path("movementDurationMs").isMissingNode()
                 ? null : Long.valueOf(payload.path("movementDurationMs").asText());
             java.math.BigDecimal distance=payload.path("movementDistanceM").isNull() || payload.path("movementDistanceM").isMissingNode()

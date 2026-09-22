@@ -25,6 +25,9 @@ public class DeviceService {
 	private DeviceChannel channel;
 	@Autowired(required = false)
 	private JdbcTemplate jdbc;
+	// 기기 시계와 서버 시계는 정확히 같을 수 없다. 관측된 어긋남은 밀리초 미만이므로 그만큼만
+	// 흡수하고, 실제로 어긋난 시계는 그대로 거부해 드러낸다.
+	private static final Duration CLOCK_SKEW_ALLOWANCE = Duration.ofMillis(200);
 	private static final Set<String> CONNECTIONS = Set.of("ONLINE", "OFFLINE", "UNKNOWN");
 	private static final Set<String> OPERATIONS = Set.of("RUNNING", "PAUSED", "STOPPING", "RESUMING", "READY_TO_RESUME", "UNKNOWN");
 	private final DeviceRepository devices;
@@ -119,6 +122,18 @@ public class DeviceService {
 				.findFirst().flatMap(devices::findById).map(this::status).orElse(null);
 	}
 
+	/**
+	 * 보고 시각을 서버 시각 기준으로 맞춘다. 시계 정밀도 차이로 수백 마이크로초 앞선 보고가
+	 * 미래로 판정돼 버려지던 문제를 막는다. 흡수 범위를 넘는 어긋남은 그대로 거부해 드러낸다.
+	 */
+	public OffsetDateTime alignReportTime(OffsetDateTime reported) {
+		OffsetDateTime now = OffsetDateTime.now(clock);
+		if (reported == null || reported.isAfter(now.plus(CLOCK_SKEW_ALLOWANCE))) {
+			throw validation("reportedAt", "시간대를 포함한, 서버 시각보다 크게 앞서지 않는 보고 시각이 필요합니다.");
+		}
+		return reported.isAfter(now) ? now : reported;
+	}
+
 	@Transactional(readOnly = true)
 	public UUID getLinkedChildId(String deviceId) {
 		return findDevice(deviceId(deviceId)).getChildId();
@@ -139,11 +154,8 @@ public class DeviceService {
 			throw validation("batteryPercent", "배터리는 0~100 사이여야 합니다.");
 		}
 		OffsetDateTime now = OffsetDateTime.now(clock);
-		if (input.reportedAt() == null || input.reportedAt().isAfter(now)) {
-			throw validation("reportedAt", "시간대를 포함한 현재 이전의 보고 시각이 필요합니다.");
-		}
 		// PostgreSQL TIMESTAMPTZ와 동일한 마이크로초 정밀도로 재전송을 비교한다.
-		OffsetDateTime reportedAt = input.reportedAt().truncatedTo(ChronoUnit.MICROS);
+		OffsetDateTime reportedAt = alignReportTime(input.reportedAt()).truncatedTo(ChronoUnit.MICROS);
 		guard.lock("device", id);
 		Device device = findDevice(id);
 		if (device.getLastReportedAt() != null) {

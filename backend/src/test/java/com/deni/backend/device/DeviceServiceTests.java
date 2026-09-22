@@ -104,6 +104,20 @@ class DeviceServiceTests {
 		verify(devices, never()).saveAndFlush(any());
 	}
 
+	// 기기와 서버 시계는 밀리초 단위로 어긋난다. 그만큼 앞선 보고를 버리면 상태가 끊긴다.
+	@Test
+	void aReportSlightlyAheadOfTheServerClockIsStoredAtServerTime() {
+		Device device = device();
+		when(devices.findById("robot-1")).thenReturn(Optional.of(device));
+		service.recordStatus(new DeviceService.StatusInput("robot-1", "ONLINE", "RUNNING", 80, NOW.plusNanos(500_000)));
+		assertEquals(NOW.toInstant(), device.getLastReportedAt().toInstant());
+
+		assertEquals("VALIDATION_ERROR", assertThrows(ApiException.class, () -> service.recordStatus(
+				new DeviceService.StatusInput("robot-1", "ONLINE", "RUNNING", 80, NOW.plusSeconds(5)))).getCode());
+		assertEquals("VALIDATION_ERROR", assertThrows(ApiException.class, () -> service.recordStatus(
+				new DeviceService.StatusInput("robot-1", "ONLINE", "RUNNING", 80, null))).getCode());
+	}
+
 	@Test
 	void registrationValidatesBeforeStorageAndDoesNotAllowPathCharacters() {
 		assertThrows(ApiException.class, () -> service.register(null, "robot-1", "로봇"));
