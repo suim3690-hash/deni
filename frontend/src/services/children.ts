@@ -1,4 +1,3 @@
-import { generateId } from '../lib/id'
 import { apiErrorFromResponse } from './apiError'
 
 export interface ChildRegistrationInput {
@@ -103,7 +102,7 @@ async function mockRegisterChild(input: ChildRegistrationInput, idempotencyKey: 
   if (previous) return previous
 
   const child: RegisteredChild = {
-    childId: generateId(),
+    childId: idempotencyKey,
     ...input,
     safetyProfile: computeSafetyProfile(input.birthDate),
   }

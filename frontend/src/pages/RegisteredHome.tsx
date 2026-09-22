@@ -313,7 +313,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   }
 
   if (showMap) return <HazardLocation hazard={selectedHazard} hazards={dashboard?.activeHazards ?? []} deviceId={device?.deviceId ?? ''} stage={stage} operationState={operationState} detail={hazardDetail} error={hazardError} errorStatus={hazardErrorStatus} isMock={dashboard?.isMock ?? false} onBack={closeMap} onRetry={() => { if (selectedHazard) void openHazardDetail(selectedHazard) }} />
-  if (showSafetyProfile) return <SafetyProfileDetail child={child} onBack={() => setShowSafetyProfile(false)} onUpdateChild={handleProfileChildUpdate} isMock={dashboard?.isMock ?? !import.meta.env.VITE_API_BASE_URL} />
+  if (showSafetyProfile) return <SafetyProfileDetail child={child} onBack={() => setShowSafetyProfile(false)} onUpdateChild={handleProfileChildUpdate} onReregister={() => onChildUnavailable('다른 데모 프로필의 이름과 생년월일을 입력해 주세요.')} isMock={dashboard?.isMock ?? !import.meta.env.VITE_API_BASE_URL} />
   if (showReport && report && reportAvailable) return <GrowthReport child={child} month={report.month} onBack={() => setShowReport(false)} />
 
   return (

@@ -10,13 +10,15 @@ interface Props {
   child: RegisteredChild
   onBack: () => void
   onUpdateChild: (child: RegisteredChild) => void
+  onReregister: () => void
   isMock: boolean
 }
 
 const stageList: Stage[] = ['INFANT', 'TODDLER', 'ACTIVE_CHILD']
 const categoryList: HazardCategory[] = ['SWALLOW', 'LIVING']
 
-export default function SafetyProfileDetail({ child, onBack, onUpdateChild, isMock }: Props) {
+export default function SafetyProfileDetail({ child, onBack, onUpdateChild, onReregister, isMock }: Props) {
+  const [confirmingReregister, setConfirmingReregister] = useState(false)
   const [profileReloadKey, setProfileReloadKey] = useState(0)
   const profileRequestKey = `${child.childId}:${child.birthDate}:${profileReloadKey}`
   const [profileRequest, setProfileRequest] = useState<{
@@ -195,6 +197,20 @@ export default function SafetyProfileDetail({ child, onBack, onUpdateChild, isMo
                     </div>
                   </div>
                   <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-[#eff6ff] px-[10px] py-1 text-[12px] font-medium text-[#2563eb]"><span className="size-1.5 rounded-full bg-[#3b82f6]" />{isSupported && stage ? stageLabels[stage] : '지원 범위 밖'}</span>
+                </div>
+                <div className="mt-3 border-t border-[#f1f5f9] pt-3">
+                  {confirmingReregister ? (
+                    <div role="alert" className="rounded-[14px] border border-[#fecdd3] bg-[#fff1f2] p-3 text-[12px] leading-[1.6] text-[#9f1239]">
+                      <p className="font-bold">다른 데모 프로필로 들어갈까요?</p>
+                      <p className="mt-1 break-keep">현재 탭의 {child.name} 선택을 해제하고 아이 등록 화면으로 이동해요.</p>
+                      <div className="mt-2 flex gap-2">
+                        <button type="button" onClick={() => setConfirmingReregister(false)} className="flex-1 rounded-[10px] border border-[#fecdd3] bg-white py-2 font-semibold focus-visible:outline-[#a50034]">취소</button>
+                        <button type="button" onClick={onReregister} className="flex-1 rounded-[10px] bg-[#b9003d] py-2 font-semibold text-white focus-visible:outline-[#a50034]">프로필 변경</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button type="button" onClick={() => setConfirmingReregister(true)} className="text-[12px] font-medium text-[#64748b] underline underline-offset-2 focus-visible:outline-[#a50034]">다른 데모 프로필로 변경</button>
+                  )}
                 </div>
               </>
             )}

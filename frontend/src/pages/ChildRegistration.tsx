@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import Header from '../components/Header'
 import babyFaceIcon from '../assets/icons/baby-face.svg'
 import calendarIcon from '../assets/icons/calendar.svg'
@@ -6,7 +6,7 @@ import checkIcon from '../assets/icons/check.svg'
 import { computeSafetyProfile, localToday, registerChild, type RegisteredChild } from '../services/children'
 import { ApiRequestError, apiErrorMessage } from '../services/apiError'
 import { stageByOrder, stageDisplayNames, stageOrder, stageRegistrationAgeLabels, stageTitles } from '../lib/stages'
-import { generateId } from '../lib/id'
+import { childRegistrationKey } from '../lib/id'
 
 type RegistrationStatus = 'editing' | 'loading' | 'success' | 'failure'
 
@@ -22,7 +22,6 @@ export default function ChildRegistration({ onGoHome, notice }: ChildRegistratio
   const [error, setError] = useState('')
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [registeredChild, setRegisteredChild] = useState<RegisteredChild | null>(null)
-  const requestKey = useRef(generateId())
 
   const isReadOnly = status === 'loading' || status === 'success'
   const previewStage = birthDate && birthDate <= localToday() ? computeSafetyProfile(birthDate).stage : null
@@ -31,7 +30,6 @@ export default function ChildRegistration({ onGoHome, notice }: ChildRegistratio
     setStatus('editing')
     setError('')
     setFieldErrors({})
-    requestKey.current = generateId()
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -62,7 +60,7 @@ export default function ChildRegistration({ onGoHome, notice }: ChildRegistratio
     try {
       const child = await registerChild(
         { name: trimmedName, birthDate },
-        requestKey.current,
+        childRegistrationKey(trimmedName, birthDate),
       )
       setRegisteredChild(child)
       setName(child.name)
@@ -174,6 +172,7 @@ export default function ChildRegistration({ onGoHome, notice }: ChildRegistratio
                 </div>
                 {fieldErrors.birthDate && <p id="child-birthday-error" role="alert" className="text-[11px] text-[#a50034]">{fieldErrors.birthDate}</p>}
               </div>
+              <p className="px-0.5 text-[11px] leading-[1.5] text-[#64748b]">데모 프로필은 처음 등록한 이름과 생년월일을 동일하게 입력하면 같은 아이로 접속해요.</p>
             </div>
 
             <div className="mt-4 space-y-2">
