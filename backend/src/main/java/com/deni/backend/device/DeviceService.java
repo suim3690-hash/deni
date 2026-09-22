@@ -70,16 +70,40 @@ public class DeviceService {
 		guard.lock("device", id);
 		guard.lock("child-device", childId.toString());
 		Device existing = devices.findById(id).orElse(null);
-		if (existing != null) {
-			if (!existing.getChildId().equals(childId) || !existing.getName().equals(normalizedName)) {
-				throw ApiException.conflict("DEVICE_ALREADY_REGISTERED", "이미 등록된 기기 ID의 아이 또는 이름을 바꿀 수 없습니다.");
-			}
-			return registration(existing);
+		if (existing != null && !existing.getName().equals(normalizedName)) {
+			throw ApiException.conflict("DEVICE_ALREADY_REGISTERED", "이미 등록된 기기 ID의 이름을 바꿀 수 없습니다.");
 		}
-		if (devices.findByChildId(childId).isPresent()) {
-			throw ApiException.conflict("CHILD_DEVICE_ALREADY_LINKED", "해당 아이에게 이미 기기가 연결되어 있습니다.");
+		requireNoOtherDevice(childId, id);
+		OffsetDateTime now = OffsetDateTime.now(clock);
+		if (existing == null) {
+			Device created = devices.saveAndFlush(new Device(id, childId, normalizedName, now));
+			link(id, childId, now);
+			return registration(created);
 		}
-		return registration(devices.saveAndFlush(new Device(id, childId, normalizedName, OffsetDateTime.now(clock))));
+		link(id, childId, now);
+		// 새로 연결한 프로필이 곧바로 이 기기의 활성 프로필이 된다.
+		if (!existing.getChildId().equals(childId)) {
+			existing.activate(childId, now);
+			devices.saveAndFlush(existing);
+		}
+		return registration(existing);
+	}
+
+	/** 이 기기의 탐지를 귀속시킬 아이를 바꾼다. 이미 연결된 아이만 활성으로 만들 수 있다. */
+	@Transactional
+	public DeviceStatus activateChild(String deviceId, UUID childId) {
+		if (childId == null) throw validation("childId", "아이 ID는 필수입니다.");
+		String id = deviceId(deviceId);
+		guard.lock("device", id);
+		Device device = findDevice(id);
+		if (!linkedChildren(id).contains(childId)) {
+			throw ApiException.conflict("CHILD_DEVICE_NOT_LINKED", "이 기기에 연결된 아이가 아닙니다.");
+		}
+		if (!device.getChildId().equals(childId)) {
+			device.activate(childId, OffsetDateTime.now(clock));
+			devices.saveAndFlush(device);
+		}
+		return status(device);
 	}
 
 	@Transactional(readOnly = true)
@@ -89,7 +113,10 @@ public class DeviceService {
 
 	@Transactional(readOnly = true)
 	public DeviceStatus findStatusForChild(UUID childId) {
-		return devices.findByChildId(childId).map(this::status).orElse(null);
+		if (jdbc == null) return devices.findByChildId(childId).map(this::status).orElse(null);
+		return jdbc.queryForList("SELECT device_id FROM device_children WHERE child_id=? ORDER BY linked_at LIMIT 1",
+						String.class, childId).stream()
+				.findFirst().flatMap(devices::findById).map(this::status).orElse(null);
 	}
 
 	@Transactional(readOnly = true)
@@ -134,6 +161,28 @@ public class DeviceService {
 		device.recordStatus(input.connectionState(), input.operationState(), input.batteryPercent(), reportedAt,
 				now.truncatedTo(ChronoUnit.MICROS));
 		return status(device);
+	}
+
+	/** 이 기기를 함께 쓸 수 있는 아이들. 링크 테이블이 없는 단위 테스트에서는 활성 프로필만 본다. */
+	private java.util.List<UUID> linkedChildren(String deviceId) {
+		if (jdbc == null) return devices.findById(deviceId).map(Device::getChildId).map(java.util.List::of).orElse(java.util.List.of());
+		return jdbc.queryForList("SELECT child_id FROM device_children WHERE device_id=?", UUID.class, deviceId);
+	}
+
+	private void link(String deviceId, UUID childId, OffsetDateTime now) {
+		if (jdbc == null) return;
+		jdbc.update("INSERT INTO device_children(device_id,child_id,linked_at) VALUES (?,?,?) ON CONFLICT DO NOTHING",
+				deviceId, childId, now);
+	}
+
+	private void requireNoOtherDevice(UUID childId, String deviceId) {
+		boolean linkedElsewhere = jdbc == null
+				? devices.findByChildId(childId).filter(device -> !device.getId().equals(deviceId)).isPresent()
+				: !jdbc.queryForList("SELECT device_id FROM device_children WHERE child_id=? AND device_id<>?",
+						String.class, childId, deviceId).isEmpty();
+		if (linkedElsewhere) {
+			throw ApiException.conflict("CHILD_DEVICE_ALREADY_LINKED", "해당 아이에게 이미 다른 기기가 연결되어 있습니다.");
+		}
 	}
 
 	private Device findDevice(String id) {

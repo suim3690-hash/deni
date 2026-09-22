@@ -13,7 +13,7 @@ import robotDot from '../assets/figma/home/imgVector6.svg'
 import reportIcon from '../assets/figma/home/imgContainer1.svg'
 import type { RegisteredChild } from '../services/children'
 import { ApiRequestError, apiErrorMessage } from '../services/apiError'
-import { getDashboard, getHazardDetail, sendDeviceCommand, type DashboardHazard, type DashboardSnapshot, type HazardDetail, type RobotState } from '../services/dashboard'
+import { activateChildOnDevice, getDashboard, getHazardDetail, sendDeviceCommand, type DashboardHazard, type DashboardSnapshot, type HazardDetail, type RobotState } from '../services/dashboard'
 import { stageBannerSubtitles, stageTitles } from '../lib/stages'
 import { describeHazard, riskLabels } from '../lib/hazardRisk'
 import HazardAlertBox from '../components/HazardAlertBox'
@@ -98,6 +98,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   const [showSafetyProfile, setShowSafetyProfile] = useState(false)
   const [showReport, setShowReport] = useState(false)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
+  const activatedFor = useRef<string | null>(null)
 
   useEffect(() => {
     let current = true
@@ -144,6 +145,24 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
       window.removeEventListener('focus', refreshWhenVisible)
     }
   }, [child, onChildUnavailable, onUpdateChild, refreshKey])
+
+  // 로봇 한 대를 데모 프로필 세 개가 함께 쓴다. 지금 열어 둔 프로필을 기기의 활성 프로필로 만들어,
+  // 이후 탐지가 이 아이의 위험물로 기록되게 한다. 프로필·기기 조합마다 한 번만 보낸다.
+  useEffect(() => {
+    const deviceId = dashboard?.device?.deviceId
+    if (dashboard?.isMock !== false || !deviceId) return
+    const token = `${deviceId}|${child.childId}`
+    if (activatedFor.current === token) return
+    activatedFor.current = token
+    let active = true
+    void activateChildOnDevice(deviceId, child.childId).catch((error) => {
+      if (!active) return
+      // 다음 조회에서 다시 시도할 수 있도록 표시를 지운다.
+      activatedFor.current = null
+      setConnectError(apiErrorMessage(error, '이 프로필을 로봇에 연결하지 못했어요. 다시 조회해 주세요.'))
+    })
+    return () => { active = false }
+  }, [dashboard?.device?.deviceId, dashboard?.isMock, child.childId])
 
   // 실제 모드에서 지도 화면이 열려 있는 동안 위험 상세를 다시 조회해, 서버 좌표가 바뀌면 지도의 마커가 따라 움직이게 한다.
   useEffect(() => {

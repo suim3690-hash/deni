@@ -14,6 +14,9 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 class DeviceServiceTests {
@@ -46,19 +49,53 @@ class DeviceServiceTests {
 	}
 
 	@Test
-	void sameRegistrationReturnsExistingButLinkOrNameReuseIsConflict() {
+	void sameRegistrationReturnsExistingAndOnlyTheNameIsFixed() {
 		Device existing = new Device("robot-1", childId, "로봇", NOW);
 		when(devices.findById("robot-1")).thenReturn(Optional.of(existing));
 		assertEquals(childId, service.register(childId, "robot-1", "로봇").childId());
 		assertEquals("DEVICE_ALREADY_REGISTERED", assertThrows(ApiException.class,
-				() -> service.register(UUID.randomUUID(), "robot-1", "로봇")).getCode());
-		assertThrows(ApiException.class, () -> service.register(childId, "robot-1", "다른 이름"));
+				() -> service.register(childId, "robot-1", "다른 이름")).getCode());
 		verify(devices, never()).saveAndFlush(any());
+	}
+
+	// 데모 프로필 여러 개가 로봇 한 대를 같이 쓴다. 마지막으로 연결한 프로필이 탐지를 받는다.
+	@Test
+	void anotherChildJoinsTheSameDeviceAndBecomesTheActiveProfile() {
+		var db = mock(org.springframework.jdbc.core.JdbcTemplate.class);
+		org.springframework.test.util.ReflectionTestUtils.setField(service, "jdbc", db);
+		Device existing = new Device("robot-1", childId, "로봇", NOW);
+		when(devices.findById("robot-1")).thenReturn(Optional.of(existing));
+		UUID second = UUID.randomUUID();
+
+		service.register(second, "robot-1", "로봇");
+
+		verify(db).update(contains("INSERT INTO device_children"), eq("robot-1"), eq(second), any());
+		assertEquals(second, existing.getChildId());
+		assertEquals(second, service.getLinkedChildId("robot-1"));
+	}
+
+	@Test
+	void onlyALinkedChildCanBecomeActiveAndTheSwitchIsWhatDetectionsFollow() {
+		var db = mock(org.springframework.jdbc.core.JdbcTemplate.class);
+		org.springframework.test.util.ReflectionTestUtils.setField(service, "jdbc", db);
+		UUID second = UUID.randomUUID();
+		Device existing = new Device("robot-1", second, "로봇", NOW);
+		when(devices.findById("robot-1")).thenReturn(Optional.of(existing));
+
+		assertEquals("CHILD_DEVICE_NOT_LINKED", assertThrows(ApiException.class,
+				() -> service.activateChild("robot-1", childId)).getCode());
+		assertThrows(ApiException.class, () -> service.activateChild("robot-1", null));
+
+		when(db.queryForList(anyString(), eq(UUID.class), any())).thenReturn(java.util.List.of(childId, second));
+		service.activateChild("robot-1", childId);
+		assertEquals(childId, existing.getChildId());
+		assertEquals(childId, service.getLinkedChildId("robot-1"));
 	}
 
 	@Test
 	void secondDeviceForSameChildAndMissingChildAreRejected() {
 		when(devices.findByChildId(childId)).thenReturn(Optional.of(new Device("other", childId, "로봇", NOW)));
+		// 한 아이가 여러 기기에 붙는 것은 여전히 막는다. 공유되는 쪽은 기기이지 아이가 아니다.
 		assertEquals("CHILD_DEVICE_ALREADY_LINKED", assertThrows(ApiException.class,
 				() -> service.register(childId, "robot-1", "로봇")).getCode());
 		doThrow(ApiException.notFound("없는 아이")).when(children).requireRegisteredChild(childId);

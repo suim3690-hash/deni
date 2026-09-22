@@ -212,6 +212,19 @@ export async function sendDeviceCommand(deviceId: string, action: DeviceCommand,
   throw new Error('기기 명령 결과를 확인하는 데 시간이 오래 걸리고 있어요.')
 }
 
+// 로봇 한 대를 여러 데모 프로필이 함께 쓴다. 지금 열어 둔 프로필을 기기의 활성 프로필로 만들어,
+// 이후 탐지가 이 아이의 위험물로 기록되게 한다. 이미 활성이면 서버에서 아무것도 바뀌지 않는다.
+export async function activateChildOnDevice(deviceId: string, childId: string): Promise<void> {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
+  if (!baseUrl) throw new Error('API URL is missing')
+  const response = await fetch(`${baseUrl}/api/v1/devices/${encodeURIComponent(deviceId)}/active-child`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ childId }),
+  })
+  if (!response.ok) throw await apiErrorFromResponse(response, '이 프로필을 로봇에 연결하지 못했어요.')
+}
+
 export async function getDashboard(child: RegisteredChild): Promise<DashboardSnapshot> {
   const baseUrl = import.meta.env.VITE_API_BASE_URL
   if (!baseUrl) return mockDashboard(child)

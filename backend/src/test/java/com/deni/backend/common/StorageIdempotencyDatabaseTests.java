@@ -91,9 +91,11 @@ class StorageIdempotencyDatabaseTests {
 					    detected_at, device_operation_state, created_at, updated_at, source_event_id, detection_input_hash
 					FROM hazards WHERE id = ?
 					""", UUID.randomUUID(), hazardId));
+			// 같은 기기에서 같은 물체를 다시 보면 미해결 건 하나로 합쳐진다. 월간 집계는 프레임 수가 아니라
+			// 실제 위험물 건수를 센다. 다른 기기에서 본 같은 물체는 별개 건이다.
 			hazards.recordDetection(input(childId, device, "different-event", "레고", detectedAt));
 			hazards.recordDetection(input(childId, device + "-other", event, "레고", detectedAt));
-			assertEquals(3L, reports.getMonthlyReport(childId, YearMonth.from(detectedAt).toString()).summary().detectionCount());
+			assertEquals(2L, reports.getMonthlyReport(childId, YearMonth.from(detectedAt).toString()).summary().detectionCount());
 		}
 		finally {
 			cleanupTestRegistration(key);

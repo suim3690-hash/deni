@@ -16,6 +16,7 @@ class Device {
 	@Id
 	@Column(length = 100)
 	private String id;
+	/** 지금 이 기기의 탐지를 귀속시킬 아이. 함께 쓸 수 있는 아이 목록은 device_children이 가진다. */
 	@Column(name = "child_id", nullable = false, unique = true)
 	private UUID childId;
 	@Column(nullable = false, length = 100)
@@ -58,6 +59,11 @@ class Device {
 		this.lastReportedAt = reportedAt;
 		this.lastSeenAt = receivedAt;
 		this.updatedAt = receivedAt;
+	}
+
+	void activate(UUID childId, OffsetDateTime now) {
+		this.childId = childId;
+		this.updatedAt = now;
 	}
 
 	String getId() { return id; }
