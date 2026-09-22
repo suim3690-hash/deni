@@ -76,6 +76,9 @@ class Hazard {
 	@Column(name = "updated_at", nullable = false)
 	private OffsetDateTime updatedAt;
 
+	@Column(name = "acknowledged_at")
+	private OffsetDateTime acknowledgedAt;
+
 	@Version
 	@Column(nullable = false)
 	private long version;
@@ -113,18 +116,26 @@ class Hazard {
 	}
 
 	/** 같은 물체가 계속 보일 때 ACTIVE 건을 갱신한다. 새 행은 만들지 않는다. */
-	void refreshFromDetection(OffsetDateTime detectedAt, String captureImageUrl,
+	void refreshFromDetection(OffsetDateTime detectedAt, String captureImageUrl, RiskLevel riskLevel,
 			DeviceOperationState deviceOperationState, OffsetDateTime now) {
 		if (detectedAt != null && detectedAt.isAfter(this.detectedAt)) {
 			this.detectedAt = detectedAt;
-		}
-		if (captureImageUrl != null) {
+			// 사진과 감지 시각은 한 이벤트의 값이어야 한다. 새 이벤트에 사진이
+			// 없으면 이전 사진을 보여주지 않고 null로 둔다.
 			this.captureImageUrl = captureImageUrl;
+			this.riskLevel = riskLevel;
+			if (deviceOperationState != null) {
+				this.deviceOperationState = deviceOperationState;
+			}
+			this.updatedAt = now;
 		}
-		if (deviceOperationState != null) {
-			this.deviceOperationState = deviceOperationState;
+	}
+
+	void acknowledgeLiving(OffsetDateTime now) {
+		if (acknowledgedAt == null) {
+			acknowledgedAt = now;
+			updatedAt = now;
 		}
-		this.updatedAt = now;
 	}
 
 	UUID getId() {
@@ -145,6 +156,10 @@ class Hazard {
 
 	HazardStatus getStatus() {
 		return status;
+	}
+
+	OffsetDateTime getAcknowledgedAt() {
+		return acknowledgedAt;
 	}
 
 	String getObjectType() {

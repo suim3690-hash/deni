@@ -13,9 +13,9 @@ import robotDot from '../assets/figma/home/imgVector6.svg'
 import reportIcon from '../assets/figma/home/imgContainer1.svg'
 import type { RegisteredChild } from '../services/children'
 import { ApiRequestError, apiErrorMessage } from '../services/apiError'
-import { activateChildOnDevice, getDashboard, getHazardDetail, sendDeviceCommand, type DashboardHazard, type DashboardSnapshot, type HazardDetail, type RobotState } from '../services/dashboard'
+import { activateChildOnDevice, getDashboard, getHazardDetail, getRobotState, sendDeviceCommand, type DashboardHazard, type DashboardSnapshot, type HazardDetail, type RobotState } from '../services/dashboard'
 import { stageBannerSubtitles, stageTitles } from '../lib/stages'
-import { describeHazard, riskLabels } from '../lib/hazardRisk'
+import { classifyHazard, describeHazard, orderHazardsForAttention, riskLabels } from '../lib/hazardRisk'
 import HazardAlertBox from '../components/HazardAlertBox'
 
 type Modal = 'device' | null
@@ -51,6 +51,11 @@ function robotStatusText(state: RobotState): string | null {
   const movement = state.operationState === 'PAUSED' ? null : movementLabels[state.movementState]
   const parts = [operationLabels[state.operationState], movement].filter(Boolean)
   return parts.length > 0 ? parts.join(' · ') : null
+}
+
+function newerHazardDetail(current: HazardDetail | null, next: HazardDetail): HazardDetail {
+  if (!current || current.hazardId !== next.hazardId) return next
+  return new Date(next.detectedAt).getTime() >= new Date(current.detectedAt).getTime() ? next : current
 }
 
 function PowerButton({ onClick, state, label }: { onClick: () => void, state: 'off' | 'connecting' | 'on', label: string }) {
@@ -165,23 +170,28 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     return () => { active = false }
   }, [dashboard?.device?.deviceId, dashboard?.isMock, child.childId])
 
-  // 실제 모드에서 지도 화면이 열려 있는 동안 위험 상세를 다시 조회해, 서버 좌표가 바뀌면 지도의 마커가 따라 움직이게 한다.
+  const currentSelectedHazard = dashboard?.activeHazards.find((item) => item.hazardId === selectedHazard?.hazardId)
+  const selectedDetectedAt = currentSelectedHazard?.detectedAt
+
+  // 같은 위험 건에서 새 사진이 들어오거나 처리 완료되면 상세를 즉시 다시 읽는다.
   useEffect(() => {
     if (!showMap || !selectedHazard || dashboard?.isMock !== false) return
     const hazard = selectedHazard
     let active = true
-    const timer = window.setInterval(() => {
+    const refreshDetail = () => {
       getHazardDetail(hazard, false)
-        .then((next) => { if (active) setHazardDetail(next) })
+        .then((next) => { if (active) setHazardDetail((current) => newerHazardDetail(current, next)) })
         .catch(() => {
           // 조회에 실패하면 마지막으로 받은 상세를 그대로 유지한다.
         })
-    }, 5000)
+    }
+    refreshDetail()
+    const timer = window.setInterval(refreshDetail, 5000)
     return () => {
       active = false
       window.clearInterval(timer)
     }
-  }, [showMap, selectedHazard, dashboard?.isMock])
+  }, [showMap, selectedHazard, selectedDetectedAt, dashboard?.isMock])
 
   useEffect(() => {
     if (!modal) return
@@ -201,8 +211,11 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   const report = dashboard?.reportSummary
   const reportAvailable = Boolean(report?.available)
   const exampleReportAvailable = Boolean(dashboard?.isMock && report?.available)
-  const activeHazard = dashboard?.activeHazards[0]
-  const activeHazardCount = dashboard?.activeHazards.length ?? 0
+  const prioritizedHazards = orderHazardsForAttention(dashboard?.activeHazards ?? [])
+  const pendingHazards = prioritizedHazards.filter((item) => !(classifyHazard(item.objectName) === 'LIVING' && item.acknowledgedAt))
+  const acknowledgedLivingHazards = prioritizedHazards.filter((item) => classifyHazard(item.objectName) === 'LIVING' && item.acknowledgedAt)
+  const activeHazard = pendingHazards[0]
+  const activeHazardCount = pendingHazards.length
   const alert = activeHazard ? describeHazard(activeHazard, stage, !dashboard?.isMock) : null
   const robotState = loadError ? null : dashboard?.robotState
   // 오래된 보고(stale)는 현재 상태의 근거가 아니므로 전원·작업 표시에 쓰지 않는다.
@@ -228,7 +241,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     try {
       const detail = await getHazardDetail(hazard, dashboard.isMock)
       if (request !== hazardRequest.current) return
-      setHazardDetail(detail)
+      setHazardDetail((current) => newerHazardDetail(current, detail))
     } catch (error) {
       if (request !== hazardRequest.current) return
       const status = error instanceof ApiRequestError ? error.status : null
@@ -300,19 +313,26 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
         setConnectError('등록된 로봇청소기를 찾을 수 없어요.')
         return
       }
-      // 기기가 보고한 전원 상태 없이는 켜기/끄기를 고를 수 없다. PC 런타임이 꺼져 있으면 보고가 오지 않는다.
-      let current: boolean | null = powerReported ? powered : null
-      if (current === null) {
-        const state = (await refreshDashboard()).robotState
-        if (!state || state.stale || state.powerEnabled == null) {
-          setConnectError('기기가 보고한 전원 상태를 아직 받지 못했어요. PC 런타임이 실행 중인지 확인해 주세요.')
-          return
-        }
-        current = state.powerEnabled
+      // 화면의 5초 주기 스냅샷이 아닌 최신 기기 보고로 명령 방향을 결정한다.
+      const state = await getRobotState(device.deviceId)
+      if (state.stale || state.powerEnabled == null) {
+        setConnectError('기기가 보고한 전원 상태를 아직 받지 못했어요. PC 런타임이 실행 중인지 확인해 주세요.')
+        return
       }
-      await sendDeviceCommand(device.deviceId, current ? 'power-off' : 'power-on', false)
-      // 기기가 보고한 전원 상태를 다시 읽어 화면과 실제 상태를 맞춘다.
+      const targetPower = !state.powerEnabled
+      await sendDeviceCommand(device.deviceId, targetPower ? 'power-on' : 'power-off', false)
+      // 명령 성공은 전원 상태 보고와 별개이므로 목표 상태가 보고될 때까지 버튼을 잠근다.
+      let confirmed = false
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        const latest = await getRobotState(device.deviceId)
+        if (!latest.stale && latest.powerEnabled === targetPower) {
+          confirmed = true
+          break
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
       await refreshDashboard()
+      if (!confirmed) throw new Error('명령은 전달됐지만 전원 상태 확인이 늦어지고 있어요. 현재 표시를 확인한 뒤 다시 시도해 주세요.')
     } catch (error) {
       setConnectError(apiErrorMessage(error, powered
         ? '전원을 끄지 못했어요. 잠시 후 다시 시도해 주세요.'
@@ -337,7 +357,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     onUpdateChild(updated)
   }
 
-  if (showMap) return <HazardLocation key={selectedHazard?.hazardId ?? "none"} onSelect={(hazard) => void openHazardDetail(hazard)} hazard={selectedHazard} hazards={dashboard?.activeHazards ?? []} deviceId={device?.deviceId ?? ''} stage={stage} operationState={operationState} detail={hazardDetail} error={hazardError} errorStatus={hazardErrorStatus} isMock={dashboard?.isMock ?? false} onBack={closeMap} onRetry={() => { if (selectedHazard) void openHazardDetail(selectedHazard) }} />
+  if (showMap) return <HazardLocation key={selectedHazard?.hazardId ?? "none"} onSelect={(hazard) => void openHazardDetail(hazard)} onLivingAcknowledged={(next) => { setHazardDetail(next); void refreshDashboard().catch(() => setLoadError(true)) }} hazard={currentSelectedHazard ?? selectedHazard} hazards={prioritizedHazards} deviceId={device?.deviceId ?? ''} stage={stage} operationState={operationState} detail={hazardDetail} error={hazardError} errorStatus={hazardErrorStatus} isMock={dashboard?.isMock ?? false} onBack={closeMap} onRetry={() => { if (selectedHazard) void openHazardDetail(selectedHazard) }} />
   if (showSafetyProfile) return <SafetyProfileDetail child={child} onBack={() => setShowSafetyProfile(false)} onUpdateChild={handleProfileChildUpdate} onReregister={() => onChildUnavailable('다른 데모 프로필의 이름과 생년월일을 입력해 주세요.')} isMock={dashboard?.isMock ?? !import.meta.env.VITE_API_BASE_URL} />
   if (showReport && report && reportAvailable) return <GrowthReport child={child} month={report.month} onBack={() => setShowReport(false)} />
 
@@ -362,6 +382,11 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
                     : '눌러서 스마트 안심 케어 맵 확인'}
               />
             </div>
+          )}
+          {acknowledgedLivingHazards.length > 0 && (
+            <button type="button" onClick={() => void openHazardDetail(acknowledgedLivingHazards[0])} className="mb-3 w-full rounded-xl border border-[#bfdbfe] bg-[#eff6ff] px-3 py-2 text-left text-[12px] font-semibold text-[#1d4ed8]">
+              확인한 생활공간 위험요소 {acknowledgedLivingHazards.length}건 · 지도에서 보기
+            </button>
           )}
           <div className="mb-3 rounded-xl border border-[#e2e8f0] bg-white px-3 py-2 text-[11px] text-[#475569]">
             <div className="flex items-center justify-between gap-2">

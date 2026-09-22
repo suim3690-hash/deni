@@ -47,8 +47,7 @@ public class DetectionUploadService {
         var profile=children.getSafetyProfile(child);
         if(category==null || profile.stage()==null) return new Receipt(event,null);
         String stage=String.valueOf(profile.stage());
-        String risk=category.equals("SWALLOW") ? (stage.equals("INFANT")?"VERY_HIGH":stage.equals("TODDLER")?"HIGH":"MEDIUM")
-            : stage.equals("ACTIVE_CHILD")?"VERY_HIGH":"HIGH";
+        String risk=riskForStage(category,stage);
         OffsetDateTime detected=jdbc.queryForObject("SELECT detected_at FROM detection_events WHERE event_id=?",OffsetDateTime.class,event);
         var hazard=hazards.recordDetection(new HazardService.DetectionInput(child,id,category,label,risk,
             "성장단계별 "+category+" 분류 기준 (v2)",detected,null,null,null,null,
@@ -56,6 +55,16 @@ public class DetectionUploadService {
         entityManager.flush();
         jdbc.update("UPDATE detection_events SET hazard_id=? WHERE event_id=?",hazard.hazardId(),event);
         return new Receipt(event,hazard.hazardId());
+    }
+    static String riskForStage(String category,String stage) {
+        if(category.equals("SWALLOW")) return switch(stage) {
+            case "INFANT" -> "HIGH";
+            case "TODDLER" -> "VERY_HIGH";
+            case "ACTIVE_CHILD" -> "MEDIUM";
+            default -> throw new IllegalArgumentException("Unsupported growth stage");
+        };
+        if(category.equals("LIVING")) return stage.equals("ACTIVE_CHILD")?"VERY_HIGH":"HIGH";
+        throw new IllegalArgumentException("Unsupported hazard category");
     }
     private ApiException invalid() { return ApiException.validation("탐지 값 또는 JPEG/PNG 이미지를 확인하세요.",Map.of("detection","유효한 라벨·모델·5MiB 이하 이미지가 필요합니다.")); }
     public record Receipt(UUID eventId,UUID hazardId) { }

@@ -93,7 +93,7 @@ class HardwareIntegrationTests {
         var saved=uploads.save(id,event,"HAZARD","동전",out.toByteArray());
         assertNotNull(saved.hazardId());
         assertEquals(saved,uploads.save(id,event,"HAZARD","동전",out.toByteArray()));
-        assertEquals("VERY_HIGH",jdbc.queryForObject("SELECT risk_level FROM hazards WHERE id=?",String.class,saved.hazardId()));
+        assertEquals("HIGH",jdbc.queryForObject("SELECT risk_level FROM hazards WHERE id=?",String.class,saved.hazardId()));
         assertEquals(1,jdbc.queryForObject("SELECT count(*) FROM detection_events WHERE event_id=?",Integer.class,event));
     }
     @Test void oldTelemetryCannotReplaceCurrentState() {

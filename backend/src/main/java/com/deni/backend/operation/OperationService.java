@@ -89,11 +89,15 @@ public class OperationService {
 		var device = devices.getStatus(id);
 		OperationRequest existing = replay(id, key, "DIRECT_REMOVAL_CHECK", hazardId);
 		if (existing != null) return new ActionReceipt(existing.getId(), existing.getKind(), existing.getStatus(), deliveryState(existing.getId()));
+		if (!"SWALLOW".equals(hazard.object().type())) {
+			throw ApiException.conflict("REMOVAL_CHECK_NOT_SUPPORTED", "삼킴 위험물만 로봇에 제거 재확인을 요청할 수 있습니다.");
+		}
 		hazards.requireActiveAssociation(hazardId, devices.getLinkedChildId(id), id);
 		requireOnline(device);
 		if (!device.operationState().equals("PAUSED")) {
 			throw ApiException.conflict("DEVICE_NOT_PAUSED", "일시정지 상태가 확인된 기기만 재확인 요청을 접수할 수 있습니다.");
 		}
+		requirePoweredPause(id);
 		OperationRequest saved = requests.saveAndFlush(new OperationRequest(id, hazardId, key, "DIRECT_REMOVAL_CHECK", now()));
 		queueAction(saved, device);
 		return new ActionReceipt(saved.getId(), saved.getKind(), saved.getStatus(), deliveryState(saved.getId()));
@@ -138,6 +142,7 @@ public class OperationService {
 		var device=devices.getStatus(id);
 		requireOnline(device); requireDelivery(device);
 		if(!device.operationState().equals("PAUSED")) throw ApiException.conflict("DEVICE_NOT_PAUSED","정지 상태에서 이송을 요청해 주세요.");
+		requirePoweredPause(id);
 		var saved=requests.saveAndFlush(new OperationRequest(id,hazardId,key,"RELOCATE",now()));
 		queueAction(saved,device);
 		return new ActionReceipt(saved.getId(),saved.getKind(),saved.getStatus(),deliveryState(saved.getId()));
@@ -151,6 +156,24 @@ public class OperationService {
 	}
 	private void requireDelivery(DeviceService.DeviceStatus device) {
 		if(deliveryDb==null || !device.commandsAvailable()) throw ApiException.conflict("DEVICE_NOT_CONTROLLABLE","기기 연결과 최신 모터 상태를 확인해 주세요.");
+	}
+	private void requirePoweredPause(String deviceId) {
+		if (deliveryDb == null) return;
+		var rows = deliveryDb.queryForList("""
+				SELECT power_enabled, task_state FROM robot_live_state
+				WHERE device_id = ? AND sampled_at <= clock_timestamp() AND received_at <= clock_timestamp()
+				  AND sampled_at > clock_timestamp() - INTERVAL '10 seconds'
+				  AND received_at > clock_timestamp() - INTERVAL '10 seconds'
+				""", deviceId);
+		if (rows.isEmpty()) throw ApiException.conflict("DEVICE_STATE_STALE", "기기의 최신 전원·작업 상태를 확인한 뒤 다시 시도해 주세요.");
+		var state = rows.getFirst();
+		if (!Boolean.TRUE.equals(state.get("power_enabled"))) {
+			throw ApiException.conflict("DEVICE_POWERED_OFF", "로봇 전원이 꺼져 있습니다. 전원을 켠 뒤 위험물 제거를 확인해 주세요.");
+		}
+		Object task = state.get("task_state");
+		if (!"HAZARD_PAUSED".equals(task) && !"PAUSED".equals(task)) {
+			throw ApiException.conflict("DEVICE_NOT_PAUSED", "로봇이 위험물 앞에 멈춘 상태인지 확인한 뒤 다시 시도해 주세요.");
+		}
 	}
 
 	private OperationRequest replay(String deviceId, UUID key, String kind, UUID hazardId) {

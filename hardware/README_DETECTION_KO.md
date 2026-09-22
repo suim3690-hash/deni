@@ -1,5 +1,7 @@
 # PC 객체 인식 통합판 — COCO 제외 / 모터 세션 진단
 
+> 이전 PC 대시보드 통합 기록이다. 현재 전원·탐지·위험물 처리 실행은 [하드웨어 README](README.md)의 `care_runtime.py`와 [통합 실행 안내](CARE_RUNTIME_KO.md)를 따른다. 아래 ZIP 덮어쓰기·`pc_dashboard.py` 지침을 현재 런타임 설치 절차로 사용하지 않는다.
+
 기존 PC 대시보드에 선택형 객체 인식과 ByteTrack 추적을 연결한 버전입니다. 사용자 PC에 자동 적용되지는 않습니다. Raspberry Pi와 Arduino 파일은 수정하지 않습니다.
 
 ## 이번 변경

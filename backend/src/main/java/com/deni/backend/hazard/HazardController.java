@@ -2,6 +2,7 @@ package com.deni.backend.hazard;
 
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -27,6 +28,11 @@ public class HazardController {
 	@GetMapping("/{hazardId}")
 	HazardService.HazardDetailResult getHazard(@PathVariable UUID hazardId) {
 		return hazardService.getHazard(hazardId);
+	}
+
+	@PostMapping("/{hazardId}/acknowledgements")
+	HazardService.HazardDetailResult acknowledgeLiving(@PathVariable UUID hazardId) {
+		return hazardService.acknowledgeLiving(hazardId);
 	}
 
 	public record HazardItemsResponse(List<HazardService.HazardListItem> items) {

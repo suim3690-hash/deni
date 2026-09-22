@@ -38,7 +38,7 @@ public class DashboardController {
 				new CurrentProfile(state.status(), state.stage(), state.ageMonths()),
 				hazardService.findActiveHazardsForChild(childId).stream()
 						.map(hazard -> new HazardSummary(hazard.hazardId(), hazard.objectName(),
-								hazard.riskLevel(), hazard.locationLabel(), hazard.detectedAt()))
+						hazard.riskLevel(), hazard.locationLabel(), hazard.detectedAt(), hazard.acknowledgedAt()))
 						.toList(),
 				monthlyReportService.getCurrentSummary(childId));
 	}
@@ -54,7 +54,7 @@ public class DashboardController {
 	}
 
 	public record HazardSummary(UUID hazardId, String objectName, String riskLevel, String locationLabel,
-			OffsetDateTime detectedAt) {
+			OffsetDateTime detectedAt, OffsetDateTime acknowledgedAt) {
 	}
 
 }

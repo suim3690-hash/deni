@@ -1,6 +1,7 @@
 import { stageByOrder, stageCriteriaDescriptions, stageOrder, type Stage } from '../lib/stages'
 import { apiErrorFromResponse } from './apiError'
 import { computeSafetyProfile } from './children'
+import { riskByStage, type HazardCategory } from '../lib/hazardRisk'
 
 export interface ProfileStageChange {
   from: Stage | null
@@ -36,21 +37,25 @@ export function currentReportMonth() {
   }).format(new Date())
 }
 
-const mockObjects = [
-  { objectType: 'SWALLOW', label: '구슬', riskLevel: 'VERY_HIGH' },
-  { objectType: 'SWALLOW', label: '동전', riskLevel: 'VERY_HIGH' },
-  { objectType: 'SWALLOW', label: '배터리', riskLevel: 'VERY_HIGH' },
-  { objectType: 'LIVING', label: '전선', riskLevel: 'HIGH' },
-  { objectType: 'LIVING', label: '콘센트', riskLevel: 'HIGH' },
+const mockObjects: { objectType: HazardCategory; label: string }[] = [
+  { objectType: 'SWALLOW', label: '구슬' },
+  { objectType: 'SWALLOW', label: '동전' },
+  { objectType: 'SWALLOW', label: '배터리' },
+  { objectType: 'LIVING', label: '전선' },
+  { objectType: 'LIVING', label: '콘센트' },
 ]
 
 // 목업 리포트: 월마다 다른 값이 나오도록 월과 물체 이름으로 결정적인 건수를 만든다.
-function mockMonthlyDetections(month: string) {
+function mockMonthlyDetections(month: string, birthDate: string) {
+  const [year, monthNumber] = month.split('-').map(Number)
+  const referenceDate = month === currentReportMonth() ? new Date() : new Date(year, monthNumber, 0)
+  const stage = computeSafetyProfile(birthDate, referenceDate).stage
+  if (!stage) return []
   return mockObjects
     .map((item) => {
       let hash = 0
       for (const char of `${month}:${item.label}`) hash = (hash * 31 + char.charCodeAt(0)) % 9973
-      return { ...item, count: hash % 4 }
+      return { ...item, riskLevel: riskByStage[stage][item.objectType], count: hash % 4 }
     })
     .filter((item) => item.count > 0)
 }
@@ -88,7 +93,7 @@ function mockNextStagePreview(month: string, birthDate: string): MonthlyReport['
 export async function getMonthlyReport(childId: string, childName: string, birthDate: string, month: string,
   signal?: AbortSignal): Promise<MonthlyReport> {
   const baseUrl = import.meta.env.VITE_API_BASE_URL
-  const mockDetections = mockMonthlyDetections(month)
+  const mockDetections = mockMonthlyDetections(month, birthDate)
   // 주소에 ?mockStageChange 를 붙이면 모든 달에 19일 걸음마 시기 → 유아 활동기 전환을 강제로 보여준다(디자인 확인용).
   const forcedChange: ProfileStageChange | null = new URLSearchParams(window.location.search).has('mockStageChange')
     ? { from: 'TODDLER', to: 'ACTIVE_CHILD', changedAt: `${month}-19T00:05:00+09:00`, fromStatus: 'APPLIED', toStatus: 'APPLIED', reason: 'AGE_CHANGED' }

@@ -24,10 +24,10 @@ export const riskLabels: Record<RiskLevel, string> = {
   MEDIUM: '보통',
 }
 
-// 성장 단계별 위험도 기준: 삼킴 위험물은 나이가 들수록 낮아지고 생활공간 위험요소는 활동 반경이 넓어질수록 높아진다.
+// 성장 단계별 위험도 기준: 삼킴 위험물은 걸음마 시기가 가장 높고, 생활공간 위험요소는 활동 반경이 넓어질수록 높아진다.
 export const riskByStage: Record<Stage, Record<HazardCategory, RiskLevel>> = {
-  INFANT: { SWALLOW: 'VERY_HIGH', LIVING: 'HIGH' },
-  TODDLER: { SWALLOW: 'HIGH', LIVING: 'HIGH' },
+  INFANT: { SWALLOW: 'HIGH', LIVING: 'HIGH' },
+  TODDLER: { SWALLOW: 'VERY_HIGH', LIVING: 'HIGH' },
   ACTIVE_CHILD: { SWALLOW: 'MEDIUM', LIVING: 'VERY_HIGH' },
 }
 
@@ -38,7 +38,7 @@ export const riskStyles: Record<RiskLevel, { chip: string; dot: string; text: st
 }
 
 // 삼킴 위험물: 구슬·동전·배터리 / 생활공간 위험요소: 전선·콘센트
-export const swallowKeywords = ['구슬', '동전', '배터리']
+export const swallowKeywords = ['구슬', '동전', '배터리', '주사위']
 export const livingKeywords = ['전선', '콘센트']
 
 export function classifyHazard(objectName: string): HazardCategory | null {
@@ -46,6 +46,14 @@ export function classifyHazard(objectName: string): HazardCategory | null {
   if (livingKeywords.some((keyword) => name.includes(keyword))) return 'LIVING'
   if (swallowKeywords.some((keyword) => name.includes(keyword))) return 'SWALLOW'
   return null
+}
+
+// 동시 감지 시 미처리 삼킴 위험을 먼저 보여주고, 확인한 생활 위험은 지도 목록에 남긴다.
+export function orderHazardsForAttention<T extends { objectName: string; detectedAt: string; acknowledgedAt?: string | null }>(items: T[]): T[] {
+  const priority = (item: T) => classifyHazard(item.objectName) === 'SWALLOW' ? 0
+    : classifyHazard(item.objectName) === 'LIVING' ? item.acknowledgedAt ? 2 : 1 : 3
+  return [...items].sort((a, b) => priority(a) - priority(b)
+    || Date.parse(b.detectedAt) - Date.parse(a.detectedAt))
 }
 
 function serverRisk(riskLevel: string): RiskLevel | null {

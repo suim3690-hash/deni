@@ -71,7 +71,7 @@ class DashboardControllerTests {
 		when(childService.getDashboardChild(childId)).thenReturn(new ChildService.DashboardChildState(
 				childId, "김튼튼", ProfileStatus.APPLIED, GrowthStage.TODDLER, 30));
 		when(hazardService.findActiveHazardsForChild(childId)).thenReturn(List.of(
-				new HazardService.ActiveHazardSummary(hazardId, "레고 브릭", "VERY_HIGH", "거실 러그 위", detectedAt)));
+				new HazardService.ActiveHazardSummary(hazardId, "레고 브릭", "VERY_HIGH", "거실 러그 위", detectedAt, null)));
 
 		DashboardController.DashboardResponse response = new DashboardController(childService, hazardService,
 				mock(MonthlyReportService.class), mock(DeviceService.class))

@@ -1,6 +1,6 @@
 import type { RegisteredChild } from './children'
 import { generateId } from '../lib/id'
-import { classifyHazard } from '../lib/hazardRisk'
+import { classifyHazard, riskByStage } from '../lib/hazardRisk'
 import { apiErrorFromResponse } from './apiError'
 
 export type ConnectionState = 'ONLINE' | 'OFFLINE' | 'UNKNOWN'
@@ -22,6 +22,7 @@ export interface DashboardHazard {
   objectName: string
   riskLevel: string
   detectedAt: string
+  acknowledgedAt: string | null
 }
 
 export interface DashboardProfile {
@@ -36,6 +37,7 @@ export interface HazardMarker {
 }
 
 export interface HazardDetail extends DashboardHazard {
+  status: 'ACTIVE' | 'RESOLVED'
   riskReason: string | null
   captureImageUrl: string | null
   marker: HazardMarker | null
@@ -91,7 +93,7 @@ function mockDashboard(child: RegisteredChild): DashboardSnapshot {
     ? null
     : { hazardId: `preview-${previewName}`, objectName: previewName }
   const showHazard = previewHazard !== null
-  const paused = showHazard || previewState === 'paused'
+  const paused = (showHazard && hazardPreview !== 'living') || previewState === 'paused'
   const connectionState: ConnectionState = previewState === 'offline' ? 'OFFLINE' : previewState === 'unknown' ? 'UNKNOWN' : 'ONLINE'
   const today = new Date()
   const month = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
@@ -130,11 +132,13 @@ function mockDashboard(child: RegisteredChild): DashboardSnapshot {
             ? ['동전', '구슬', '배터리']
             : [previewName]
       const objectName = mockNames[index % mockNames.length]
+      const category = classifyHazard(objectName)
       return {
         hazardId: `preview-${objectName}-${index + 1}`,
         objectName,
-        riskLevel: 'HIGH',
+        riskLevel: category && child.safetyProfile.stage ? riskByStage[child.safetyProfile.stage][category] : 'HIGH',
         detectedAt: new Date(today.getTime() - index * 30_000).toISOString(),
+        acknowledgedAt: null,
       }
     }) : [],
     reportSummary: { reportId: `preview-${month}`, month, available: true },
@@ -151,6 +155,7 @@ function resolveImageUrl(url: string | null | undefined, baseUrl: string): strin
 export async function getHazardDetail(hazard: DashboardHazard, isMock: boolean): Promise<HazardDetail> {
   if (isMock) return {
     ...hazard,
+    status: 'ACTIVE',
     riskReason: classifyHazard(hazard.objectName) === 'LIVING'
       ? '아이가 만지거나 걸릴 수 있는 생활공간 위험 요소입니다. 아이가 접근하기 전에 확인해 주세요.'
       : '아이가 삼킬 수 있는 작은 물체입니다. 아이가 접근하기 전에 바닥에서 치워 주세요.',
@@ -160,16 +165,18 @@ export async function getHazardDetail(hazard: DashboardHazard, isMock: boolean):
 
   const baseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
   if (!baseUrl) throw new Error('API URL is missing')
-  const response = await fetch(`${baseUrl}/api/v1/hazards/${encodeURIComponent(hazard.hazardId)}`)
+  const response = await fetch(`${baseUrl}/api/v1/hazards/${encodeURIComponent(hazard.hazardId)}`, { cache: 'no-store' })
   if (!response.ok) throw await apiErrorFromResponse(response, '위험 상세 정보를 불러오지 못했어요.')
   const data = await response.json() as {
-    hazardId: string; object?: { name?: string }; riskLevel: string; riskReason?: string | null
+    hazardId: string; status: 'ACTIVE' | 'RESOLVED'; acknowledgedAt?: string | null; object?: { name?: string }; riskLevel: string; riskReason?: string | null
     detectedAt: string
     captureImageUrl?: string | null
     location?: { marker?: { x?: unknown; y?: unknown } | null } | null
   }
   return {
     hazardId: data.hazardId,
+    acknowledgedAt: data.acknowledgedAt ?? null,
+    status: data.status,
     objectName: data.object?.name ?? hazard.objectName,
     riskLevel: data.riskLevel,
     detectedAt: data.detectedAt,
@@ -225,19 +232,33 @@ export async function activateChildOnDevice(deviceId: string, childId: string): 
   if (!response.ok) throw await apiErrorFromResponse(response, '이 프로필을 로봇에 연결하지 못했어요.')
 }
 
+export async function acknowledgeLivingHazard(hazard: DashboardHazard): Promise<HazardDetail> {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
+  if (!baseUrl) throw new Error('API URL is missing')
+  const response = await fetch(`${baseUrl}/api/v1/hazards/${encodeURIComponent(hazard.hazardId)}/acknowledgements`, { method: 'POST' })
+  if (!response.ok) throw await apiErrorFromResponse(response, '생활공간 위험요소를 확인하지 못했어요.')
+  return getHazardDetail(hazard, false)
+}
+
+export async function getRobotState(deviceId: string): Promise<RobotState> {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
+  if (!baseUrl) throw new Error('API URL is missing')
+  const response = await fetch(`${baseUrl}/api/v1/devices/${encodeURIComponent(deviceId)}/robot-state`)
+  if (!response.ok) throw await apiErrorFromResponse(response, '로봇 동작 정보를 불러오지 못했어요.')
+  return response.json() as Promise<RobotState>
+}
+
 export async function getDashboard(child: RegisteredChild): Promise<DashboardSnapshot> {
   const baseUrl = import.meta.env.VITE_API_BASE_URL
   if (!baseUrl) return mockDashboard(child)
 
   const query = new URLSearchParams({ childId: child.childId })
-  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/dashboard?${query}`)
+  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/dashboard?${query}`, { cache: 'no-store' })
   if (!response.ok) throw await apiErrorFromResponse(response, '홈 정보를 불러오지 못했어요.')
   const data = await response.json() as DashboardData
   let robotState: DashboardData['robotState'] = null
   if (data.device) {
-    const stateResponse = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/devices/${encodeURIComponent(data.device.deviceId)}/robot-state`)
-    if (!stateResponse.ok) throw await apiErrorFromResponse(stateResponse, '로봇 동작 정보를 불러오지 못했어요.')
-    robotState = await stateResponse.json() as NonNullable<DashboardData['robotState']>
+    robotState = await getRobotState(data.device.deviceId)
   }
   return { ...data, robotState, isMock: false }
 }

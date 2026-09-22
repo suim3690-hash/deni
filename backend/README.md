@@ -1,83 +1,60 @@
-# Deuni 백엔드
+# 백엔드
 
-Java 21 · Spring Boot 4.1.1 · PostgreSQL · Flyway V1~V8 · Gradle.
-프론트 HTTP API, DB 저장, 하드웨어 WebSocket 중계를 담당한다.
+Java 21 · Spring Boot · Gradle · PostgreSQL · Flyway. 프론트에는 HTTP API를 제공하고, 로봇 PC와는 WebSocket(명령·상태) 및 HTTP(탐지 이미지)로 통신한다. DB에는 백엔드만 접속한다.
 
-## 구현 API
-
-기본 경로 `/api/v1`.
-
-| 기능 | API | 상태 |
-| --- | --- | --- |
-| 아이 등록·수정 | POST `/children`, PATCH `/children/{id}` | DB 저장·월령 계산·프로필 갱신 |
-| Safety Profile | GET `/children/{id}/safety-profile` | 0~11 / 12~35 / 36~95개월 |
-| 홈 | GET `/dashboard?childId=...` | 아이·기기·활성 위험·리포트 요약 |
-| 위험 목록·상세 | GET `/hazards?deviceId=...&status=ACTIVE`, `/hazards/{id}` | DB 조회 |
-| 월간 리포트 | GET `/reports/monthly?childId=...&month=YYYY-MM` | 월별 집계·프로필 변경 이력 |
-| 기기 등록·상태 | POST `/devices`, GET `/devices/{id}/status` | 아이당 한 기기 |
-| 최신 로봇 상태 | GET `/devices/{id}/robot-state` | 10초 경과 시 UNKNOWN |
-| 탐지 원본·이미지 | GET `/devices/{id}/detections`, `/devices/{id}/detections/{eventId}/image` | 최근 50건·JPEG/PNG |
-| 모델 입력 | POST `/hardware/detections` | 기기 인증·multipart 이미지·원본/위험 저장 |
-| 일시정지 | POST `/devices/{id}/commands/pause` | Socket 연결·최신 온라인 보고·확인된 이동 상태가 있을 때 전달 대기열에 저장 |
-| 명령 결과 | GET `/devices/{id}/commands/{commandId}` | 전달·실제 결과 조회 |
-| 직접 제거 재확인 | POST `/hazards/{id}/removal-checks`, GET `/safety-actions/{id}` | 접수 기록만, 모델 재검사 미연결 |
-| 재개·이송 | POST `/devices/{id}/commands/resume`, `/hazards/{id}/relocations` | 안전 계약 미확정으로 409 |
-
-등록·명령 요청은 기존 Idempotency-Key 계약을 따른다. 위험 업로드는 eventId로 중복을 검사한다.
-프론트 UI는 받은 원본을 유지했다. 최신 홈의 전원 버튼은 ThinQ 안내/조회이며 일시정지 실행 버튼이 아니다.
-명령 HTTP 호출 경로는 준비됐고 프론트 담당자의 버튼 연결이 필요하다. ThinQ 실제 제어는 구현하지 않았다.
-
-다른 PC의 프론트에서 접속할 때는 백엔드 실행 전에 해당 Origin을 쉼표로 구분해 설정한다. 주소 끝에 `/`를 붙이지 않는다.
-
-```powershell
-$env:APP_CORS_ALLOWED_ORIGINS = 'http://localhost:5173,http://프론트PC_IP:5173'
-```
-
-## DB
-
-| 테이블 | 용도 | 마이그레이션 |
-| --- | --- | --- |
-| children | 아이·현재 성장단계 | V1, V4 |
-| hazards | 분류된 위험·이미지 URL·원본 eventId | V2, V4 |
-| profile_history | 성장단계 변경·기준 스냅샷 | V3 |
-| devices | 아이 연결·동작·배터리·최근 보고 | V5 |
-| operation_requests | 사용자 요청과 중복 키 | V6 |
-| detection_events | 원본 탐지·JPEG/PNG 바이트 | V7 |
-| robot_live_state | 기기당 최신 상태·이동 정보 | V7 |
-| device_command_delivery | PAUSE 전달 상태·만료·결과·완료 시각 | V8 |
-
-V8은 기존 요청을 자동 실행하지 않는다. 새 Socket 연결 중 접수한 PAUSE만 전달 대상으로 저장한다.
-접수와 전달 행은 한 트랜잭션에서 저장하며 0.5초 주기로 전송한다. 10초 경과 시 미전송은 EXPIRED,
-전송 후 결과 미확인은 UNKNOWN이다. 자동 재전송하지 않으며 늦은 실제 결과로 UNKNOWN을 확정할 수 있다.
-실제 완료 결과의 commandId와 deviceId가 일치해야 한다. 일반 PAUSED 상태만으로 명령 완료를 추정하지 않는다.
-
-## 하드웨어 연결
-
-[Socket 명세](../docs/Socket_명세서_백엔드-하드웨어.md)에 헤더·메시지·업로드 형식과 Python 예제가 있다.
-현재 한 기기·한 서버 프로세스 기준이다. 백엔드와 하드웨어에 같은 ID·키를 별도로 설정한다.
+## 실행·검증
 
 ```powershell
 cd backend
-$env:ROBOT_DEVICE_ID = 'robot-001'
-# ROBOT_DEVICE_TOKEN: 별도 공유한 32자 이상 키를 환경변수 또는 로컬 .env에 설정
-$env:DEVICE_STATUS_MAX_AGE_SECONDS = '10'
-$env:SERVER_ADDRESS = '0.0.0.0'
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+# .env에 DB_PASSWORD, ROBOT_DEVICE_ID, ROBOT_DEVICE_TOKEN 설정
 powershell -ExecutionPolicy Bypass -File .\run-local.ps1
 ```
 
-backend/.env의 DB_PASSWORD가 필요하다. 새 PostgreSQL 서버 설치 없이 기존 공유 DB를 사용한다.
-키를 설정하지 않으면 하드웨어 접속은 거부된다. 보호자 인증·소유권 검증과 TLS는 아직 없으므로 개발망에서 사용한다.
-하드웨어 상태는 Socket으로 한 프로그램만 작성하며 동일 기기의 직접 DB 저장과 병행하지 않는다.
-
-## 검증 및 제한
+`DB_PASSWORD`는 별도 전달받는다. 기기 토큰은 로봇 PC와 같아야 하며 Git에 올리지 않는다. 로컬 프론트 외의 Origin을 허용하려면 `APP_CORS_ALLOWED_ORIGINS`를 설정한다. **공용 DB와 한 기기에는 백엔드 한 인스턴스만 실행**한다.
 
 ```powershell
-cd backend
-# DB_PASSWORD 환경변수에 로컬 비밀번호 설정 후 실행
+.\gradlew.bat test                 # DB 통합 테스트 제외
 $env:RUN_DB_TESTS = 'true'
-.\gradlew.bat test
+.\gradlew.bat test                 # 공유 DB를 사용하는 통합 테스트 포함
 ```
 
-테스트는 실제 DB를 사용한다. 대부분 롤백하고 실제 Socket 테스트는 고유 테스트 아이와 전용 기기의 행만 정리한다.
-기존 위험 원본은 자동 변환하지 않는다. HTTP로 새로 받은 한글 라벨 5종만 현재 프론트 규칙으로 위험에 연결한다.
-자동 정지·재개·이송·재검사·보호자 인증·평가 저장은 후속 구현이다. 실제 모터 동작은 검증 전이다.
+## HTTP API
+
+기본 경로는 `/api/v1`이다. 상세 요청·응답은 [API 명세](../docs/API_명세서_프론트-백엔드.md)를 따른다.
+
+| 영역 | 주요 경로 | 현재 동작 |
+| --- | --- | --- |
+| 아이·프로필 | `POST /children`, `PATCH /children/{id}`, `GET /children/{id}/safety-profile` | 등록·월령/단계 계산·변경 이력 |
+| 홈·리포트 | `GET /dashboard`, `GET /reports/monthly` | 선택 아이의 위험·로봇 상태·월간 집계 |
+| 기기 | `POST /devices`, `POST /devices/{id}/active-child`, `GET /devices/{id}/status`, `GET /devices/{id}/robot-state` | 데모 프로필 3명이 한 기기를 공유, 마지막 선택 프로필에 새 탐지 귀속 |
+| 위험 | `GET /hazards`, `GET /hazards/{id}`, `POST /hazards/{id}/acknowledgements` | 목록·상세·생활공간 위험 확인 시각 저장 |
+| 탐지 | `POST /hardware/detections`, `GET /devices/{id}/detections`, `GET /devices/{id}/detections/{eventId}/image` | 원본 이벤트·이미지 저장, 지원 라벨은 위험 건 생성/갱신 |
+| 제어 | `POST /devices/{id}/commands/{pause\|resume\|power-on\|power-off}`, `GET /devices/{id}/commands/{commandId}` | 기기에 명령 전달, 실제 결과 조회 |
+| 안전 처리 | `POST /hazards/{id}/removal-checks`, `POST /hazards/{id}/relocations`, `GET /safety-actions/{id}` | 기기 재확인/이송 성공 증거가 있을 때만 위험 해결 |
+
+명령·아이 등록은 `Idempotency-Key`를 사용하고 탐지 업로드는 `eventId`로 중복을 막는다. 명령 접수만으로 성공 처리하지 않는다. 미처리 삼킴 위험이 있으면 일반 재개를 거부한다. 생활공간 위험은 확인해도 `ACTIVE`로 남아 지도에 표시된다.
+
+| 아이 단계 | 삼킴 위험 | 생활공간 위험 |
+| --- | --- | --- |
+| 영아기 (0~11개월) | HIGH | HIGH |
+| 걸음마 (12~35개월) | VERY_HIGH | HIGH |
+| 유아 활동기 (36~95개월) | MEDIUM | VERY_HIGH |
+
+Flyway V13은 기존 `ACTIVE`·`RESOLVED` 삼킴 위험의 등급을 현재 아이 단계로 다시 계산한다. 과거 기록의 위험도도 바뀌는 데모 정책이며, **백엔드를 다음에 실행할 때** 적용된다.
+이후 아이 생년월일 수정이나 자동 성장단계 전환만으로 기존 모든 위험 행을 다시 계산하지는 않는다. 새 감지는 새 기준을 쓰지만 과거 DB 행의 재계산 정책은 후속으로 정해야 한다.
+
+## DB
+
+| 테이블 | 저장 정보 |
+| --- | --- |
+| `children`, `profile_history` | 아이·성장단계와 변경 이력 |
+| `devices`, `device_children` | 기기·연결 가능한 아이·현재 활성 아이 |
+| `detection_events` | 원본 모델·라벨·수신 시각·바운딩 박스 이미지 |
+| `hazards` | 분류된 위험·위험도·해결 상태·선택 사진 URL·생활 위험 확인 시각 |
+| `robot_live_state` | 기기별 최신 전원·작업·이동 상태 |
+| `operation_requests`, `device_command_delivery` | 요청 중복 키·전달/완료 결과 |
+
+Flyway V1~V13을 사용한다. 한 프레임의 물체는 각각 원본 이벤트로 저장하지만, 같은 기기·아이·분류·이름의 `ACTIVE` 위험은 한 건으로 합친다. 새 감지가 더 최신이면 그 위험의 시간·사진·위험도를 갱신한다. 지원하지 않는 라벨은 원본에만 저장한다.
+
+보호자 인증·접근 권한, TLS, 실측 지도 좌표, 생활공간 위험 해제, 자동 이송은 아직 없다. 실제 장치 실행 및 제한은 [한 PC 통합 실행](../docs/한_PC_통합_실행_가이드.md)과 [통합 테스트](../docs/통합_테스트_시나리오.md)를 참고한다.

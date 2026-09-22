@@ -36,8 +36,7 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.c.phase,'RUNNING')
         self.assertEqual(self.tick(),'F')
 
-    # 전원을 다시 켠 뒤 지난 정지 이력 때문에 영영 서 있으면 안 된다.
-    def test_a_stale_hazard_pause_clears_itself_after_the_absence_window(self):
+    def test_hazard_pause_waits_for_explicit_removal_check(self):
         self.start()
         self.tick(['coin'])
         self.assertEqual(self.c.phase,'HAZARD_PAUSED')
@@ -47,22 +46,27 @@ class CareTests(unittest.TestCase):
         for _ in range(40): self.assertEqual(self.tick(['coin']),'S')
         self.assertEqual(self.c.phase,'HAZARD_PAUSED')
 
-        # 보이지 않는 프레임이 미검출 시간만큼 이어지면 스스로 주행을 재개한다.
-        deadline = self.now + Settings().removal_absence_seconds
+        # 물체가 사라져도 사용자 요청 없이 재개하거나 차단 이력을 지우지 않는다.
+        deadline = self.now + Settings().removal_absence_seconds * 3
         while self.now < deadline: self.tick()
-        self.tick()
+        self.assertEqual(self.c.phase,'HAZARD_PAUSED')
+        self.assertEqual(self.c.blocked,{'coin'})
+        self.assertEqual(self.tick(),'S')
+
+        self.c.request('RECHECK_HAZARD','remove',dict(hazardId='h1',objectLabel='동전'),self.now)
+        for _ in range(30): self.tick()
+        self.assertEqual(self.c.results['remove']['status'],'SUCCEEDED')
         self.assertEqual(self.c.phase,'RUNNING')
         self.assertEqual(self.c.blocked,set())
-        self.assertEqual(self.tick(),'F')
 
-    def test_a_pending_treatment_request_blocks_the_self_clearing_pause(self):
+    def test_pending_treatment_waits_while_target_is_visible(self):
         self.start()
         self.tick(['coin'])
         self.c.request('RECHECK_HAZARD','r1',{'hazardId':'h1','objectLabel':'동전'},self.now)
         self.assertEqual(self.c.phase,'RECHECKING')
         deadline = self.now + Settings().removal_absence_seconds * 3
         while self.now < deadline: self.tick(['coin'])
-        # 요청이 살아 있는 동안에는 자동 해제가 끼어들지 않는다.
+        # 요청 중에도 물체가 보이면 제거 성공으로 처리하지 않는다.
         self.assertEqual(self.c.phase,'RECHECKING')
         self.assertNotIn('r1', self.c.results)
 
@@ -161,6 +165,19 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.c.results['move']['operationState'],'PAUSED')
         self.assertEqual(self.c.blocked,{'coin'})
         self.assertEqual(self.tick(['coin']),'S')
+
+    def test_relocation_does_not_complete_from_marker_without_one_visible_target(self):
+        self.start(); self.tick(['dice'])
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='주사위'),self.now)
+        marker=dict(id=0,fill=.14,bearing=0,skew=0)
+        self.assertEqual(self.tick([],marker=marker),'S')
+        self.assertEqual(self.c.phase,'PUSHING')
+        self.assertEqual(self.c.reason,'TARGET NOT VISIBLE')
+        self.assertEqual(self.tick(['dice','dice'],marker=marker),'S')
+        self.assertEqual(self.c.phase,'PUSHING')
+        self.assertEqual(self.c.reason,'MULTIPLE TARGETS OF SAME CLASS')
+        self.assertEqual(self.tick(['dice'],marker=marker),'S')
+        self.assertEqual(self.c.phase,'BACKING')
 
     def test_configuration_validation(self):
         with self.assertRaises(ValueError): Settings(removal_absence_seconds=1)

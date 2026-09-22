@@ -3,10 +3,10 @@ import { ArrowLeft, CheckCircle2, Loader2, ShieldCheck } from 'lucide-react'
 import floorPlanPreview from '../assets/figma/safety-profile/floor-plan-clean.png'
 import capturePreview from '../assets/figma/hazard/capture.png'
 import robotIcon from '../assets/figma/home/imgVector5.svg'
-import { sendDeviceCommand, type DashboardHazard, type HazardDetail, type HazardMarker } from '../services/dashboard'
+import { acknowledgeLivingHazard, sendDeviceCommand, type DashboardHazard, type HazardDetail, type HazardMarker } from '../services/dashboard'
 import { apiErrorMessage } from '../services/apiError'
 import { getSafetyAction, requestRelocation, requestRemovalCheck } from '../services/operations'
-import { categoryLabels, describeHazard, riskLabels, riskStyles, withTopicParticle, type HazardCategory } from '../lib/hazardRisk'
+import { categoryLabels, classifyHazard, describeHazard, riskLabels, riskStyles, withTopicParticle, type HazardCategory } from '../lib/hazardRisk'
 import HazardAlertBox from '../components/HazardAlertBox'
 import type { Stage } from '../lib/stages'
 
@@ -38,6 +38,7 @@ interface Props {
   onBack: () => void
   onRetry: () => void
   onSelect: (hazard: DashboardHazard) => void
+  onLivingAcknowledged: (detail: HazardDetail) => void
 }
 
 const statusBoxClass = 'flex min-h-[54px] flex-1 items-center justify-center gap-2 rounded-[20px] px-2 text-center'
@@ -72,9 +73,12 @@ function HazardMapMarker({ category, relocated }: { category: HazardCategory | n
   )
 }
 
-export default function HazardLocation({ hazard, hazards, deviceId, stage, operationState, detail, error, errorStatus, isMock, onBack, onRetry, onSelect }: Props) {
-  const name = detail?.objectName ?? hazard?.objectName ?? ''
-  const detectedAt = detail?.detectedAt ?? hazard?.detectedAt
+export default function HazardLocation({ hazard, hazards, deviceId, stage, operationState, detail, error, errorStatus, isMock, onBack, onRetry, onSelect, onLivingAcknowledged }: Props) {
+  // 대시보드가 새 감지 시각을 받았는데 상세 응답은 이전 것이라면 예전 사진을 잠시 숨긴다.
+  const currentDetail = !isMock && detail && hazard &&
+    new Date(detail.detectedAt).getTime() < new Date(hazard.detectedAt).getTime() ? null : detail
+  const name = currentDetail?.objectName ?? hazard?.objectName ?? ''
+  const detectedAt = currentDetail?.detectedAt ?? hazard?.detectedAt
   const displayTime = detectedAt ? new Intl.DateTimeFormat('ko-KR', {
     hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Seoul',
   }).format(new Date(detectedAt)) : ''
@@ -88,21 +92,30 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
   const [removalState, setRemovalState] = useState<RealActionState>('idle')
   const [removalActionId, setRemovalActionId] = useState<string | null>(null)
   const [resuming, setResuming] = useState(false)
+  const [acknowledgingLiving, setAcknowledgingLiving] = useState(false)
+  const [locallyAcknowledgedLiving, setLocallyAcknowledgedLiving] = useState(false)
   const autoResumeStarted = useRef(false)
   // ?mockRedetect=1 : 목업에서 첫 번째 제거 확인 때 위험 물체가 다시 감지되는 상황을 보여준다.
   const redetectOnce = useRef(new URLSearchParams(window.location.search).get('mockRedetect') === '1')
   const restricted = errorStatus === 403 || errorStatus === 404
 
   // 목업에서는 조치가 끝나면(running) 위험 물체가 해결된 것으로 본다.
-  const activeHazard = flow === 'running' ? null : hazard
+  const category = classifyHazard(name)
+  const firstSwallow = hazards.find((item) => classifyHazard(item.objectName) === 'SWALLOW')
+  const deferredLiving = category === 'LIVING' && Boolean(firstSwallow)
+  const acknowledgedLiving = category === 'LIVING' && (locallyAcknowledgedLiving || Boolean(currentDetail?.acknowledgedAt ?? hazard?.acknowledgedAt))
+  const selectedResolved = !isMock && (detail?.status === 'RESOLVED' || removalState === 'done' || relocationState === 'done')
+  const selectedHandled = selectedResolved || acknowledgedLiving || deferredLiving
+  const activeHazard = flow === 'running' || selectedHandled ? null : hazard
+  const remainingHazards = selectedHandled ? hazards.filter((item) => item.hazardId !== hazard?.hazardId && !(classifyHazard(item.objectName) === 'LIVING' && item.acknowledgedAt)) : []
   const detectedHazards = hazards.length > 0 ? hazards : hazard ? [hazard] : []
-  const alert = activeHazard ? describeHazard({ objectName: name, riskLevel: detail?.riskLevel ?? activeHazard.riskLevel }, stage, !isMock) : null
+  const alert = activeHazard ? describeHazard({ objectName: name, riskLevel: currentDetail?.riskLevel ?? activeHazard.riskLevel }, stage, !isMock) : null
   const alertStyle = riskStyles[alert?.risk ?? 'HIGH']
   const isLiving = alert?.category === 'LIVING'
   const riskLabel = alert?.risk ? riskLabels[alert.risk] : '확인 전'
   // 목업 사진은 목업 화면에서만 쓴다. 실제 모드는 서버가 준 감지 사진만 보여주고, 없거나 불러오지 못하면 안내 문구를 표시한다.
-  const captureLoading = !isMock && !detail && !error
-  const serverCaptureUrl = detail?.captureImageUrl ?? null
+  const captureLoading = !isMock && !currentDetail && !error
+  const serverCaptureUrl = currentDetail?.captureImageUrl ?? null
   const captureSrc = isMock ? capturePreview : serverCaptureUrl && serverCaptureUrl !== failedCaptureUrl ? serverCaptureUrl : null
   // 위험 물체가 안전한 장소로 이동을 마친 상태(목업 흐름 또는 서버가 이송 완료를 알려준 경우)
   const relocationDone = flow === 'relocated' || relocationState === 'done'
@@ -112,8 +125,8 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
   // 위치 좌표는 화면 검증용 목업값을 사용한다. 유형별로 서로 다른 위치와 모양을 보여주고,
   // 이송 흐름에서는 동일 마커가 안전 구역으로 이동하도록 한다.
   const mockDetectedMarker = alert?.category ? MOCK_HAZARD_MARKERS[alert.category] : DEFAULT_MOCK_MARKER
-  const marker: HazardMarker | null = activeHazard
-    ? flow === 'relocating' || relocationDone ? SAFE_ZONE_MARKER : mockDetectedMarker
+  const marker: HazardMarker | null = hazard && !selectedResolved && flow !== 'running'
+    ? flow === 'relocating' || relocationDone ? SAFE_ZONE_MARKER : currentDetail?.marker ?? mockDetectedMarker
     : null
   const markerGlideMs = flow === 'relocating' ? RELOCATE_MOCK_MS : MARKER_GLIDE_MS
   const defaultStatus = operationState === 'RUNNING' ? '로봇청소기 작동 중' : operationState === 'PAUSED' ? '로봇청소기 일시 정지' : '로봇청소기 상태 확인 전'
@@ -143,6 +156,8 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
   }, [flow, isMock])
 
   useEffect(() => {
+    // 실제 기기는 재확인/이송 완료 결과에 따라 스스로 재개하거나 다른 위험 앞에 멈춘다.
+    // 별도 RESUME을 보내면 다른 미처리 물체와 충돌할 수 있어 목업에서만 사용한다.
     if (!isMock) return
     if (!treatmentDone) {
       autoResumeStarted.current = false
@@ -263,16 +278,28 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
     }
   }
 
-  function acknowledgeLivingHazard() {
-    if (!isMock) {
-      setActionMessage('위험 요소 확인 결과를 기기에 전달하는 기능은 아직 연동 전이에요.')
+  async function confirmLivingHazard() {
+    if (!hazard || acknowledgingLiving || firstSwallow) return
+    if (isMock) {
+      setLocallyAcknowledgedLiving(true)
       return
     }
-    setFlow('running')
+    setAcknowledgingLiving(true)
+    try {
+      const next = await acknowledgeLivingHazard(hazard)
+      setLocallyAcknowledgedLiving(true)
+      onLivingAcknowledged(next)
+    } catch (err) {
+      setActionMessage(apiErrorMessage(err, '생활공간 위험요소를 확인하지 못했어요.'))
+    } finally {
+      setAcknowledgingLiving(false)
+    }
   }
 
   function renderFooter() {
-    if (!activeHazard) return <div role="status" className={grayBox}><strong className="text-[14px] font-semibold">{flow === 'running' ? '로봇청소기 작동 중' : defaultStatus}</strong></div>
+    if (!activeHazard) return remainingHazards.length > 0
+      ? <button type="button" onClick={() => onSelect(remainingHazards[0])} className={primaryButton}>남은 위험물 {remainingHazards.length}건 확인</button>
+      : <div role="status" className={grayBox}><strong className="text-[14px] font-semibold">{acknowledgedLiving ? '위험요소 확인함 · 지도 표시 유지' : selectedResolved ? '선택한 위험물 처리 완료' : flow === 'running' ? '로봇청소기 작동 중' : defaultStatus}</strong></div>
 
     if (resuming) return <div role="status" className={greenBox}><Loader2 size={18} className="animate-spin" aria-hidden="true" /><strong className="text-[15px] font-bold">청소 재개 중</strong></div>
     if (treatmentDone) {
@@ -296,7 +323,7 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
     if (flow === 'checked') return <div role="status" className={greenBox}><CheckCircle2 size={18} aria-hidden="true" /><strong className="text-[15px] font-bold">위험 물체 확인 완료</strong></div>
     if (flow === 'removal-guide') return <button type="button" onClick={() => void confirmRemoval()} className={primaryButton}>위험 물체 제거 완료</button>
 
-    if (isLiving) return <button type="button" onClick={acknowledgeLivingHazard} className={primaryButton}>위험 요소 확인</button>
+    if (isLiving) return <button type="button" disabled={acknowledgingLiving} onClick={() => void confirmLivingHazard()} className={primaryButton}>{acknowledgingLiving ? '확인 저장 중' : '위험 요소 확인'}</button>
     return (
       <>
         <button type="button" onClick={() => void startRelocation()} className={outlineButton}>위험 물체 안전 이송</button>
@@ -331,18 +358,18 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
 
           <section aria-label="스마트 안심 케어 맵" className="rounded-[22px] bg-white p-4 shadow-[0_2px_8px_rgba(48,60,90,0.06)]">
             <h2 className="mb-3 flex items-center gap-2 text-[15px] font-bold"><span className="size-[10px] rounded-full bg-[#2958c7]" />스마트 안심 케어 맵</h2>
-            {!isMock && hazard && !detail && !error ? <p className="rounded-[16px] bg-[#f3f6fc] p-5 text-center text-[13px] text-[#64748b]">지도를 불러오고 있어요.</p> : (
+            {!isMock && hazard && !currentDetail && !error ? <p className="rounded-[16px] bg-[#f3f6fc] p-5 text-center text-[13px] text-[#64748b]">지도를 불러오고 있어요.</p> : (
               <>
                 <div className="relative overflow-hidden rounded-[20px] border border-black/10">
                   <img src={floorPlanPreview} alt="스마트 안심 케어 맵" className="block w-full" />
-                  {activeHazard && marker && (
+                  {hazard && marker && (
                     <span
                       role="img"
-                      aria-label={relocationDone ? '안전한 장소로 이동한 위험 물체 위치' : `${alert?.category ? categoryLabels[alert.category] : '위험 물체'} 목업 위치`}
+                      aria-label={`${category ? categoryLabels[category] : '위험 물체'} 지도 표시${currentDetail?.marker ? '' : ' (예시 위치)'}`}
                       className={`absolute w-[7.5%] -translate-x-1/2 -translate-y-1/2 motion-reduce:animate-none ${relocationDone ? '' : 'animate-blink'}`}
                       style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%`, transition: `left ${markerGlideMs}ms ease-in-out, top ${markerGlideMs}ms ease-in-out` }}
                     >
-                      <HazardMapMarker category={alert?.category ?? null} relocated={relocationDone} />
+                      <HazardMapMarker category={category} relocated={relocationDone} />
                     </span>
                   )}
                 </div>
@@ -350,7 +377,7 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
                   <span className="flex items-center gap-1.5"><span className="grid size-4 place-items-center rounded-full bg-[#a5003a] text-[9px] font-bold text-white">!</span>삼킴 위험물</span>
                   <span className="flex items-center gap-1.5"><span className="grid size-4 rotate-45 place-items-center rounded-[3px] bg-[#2563eb] text-[9px] font-bold text-white"><span className="-rotate-45">ϟ</span></span>생활공간 위험요소</span>
                 </div>
-                <p className="mt-1.5 text-center text-[11px] text-[#94a3b8]">마커 위치는 화면 확인용 예시입니다.</p>
+                <p className="mt-1.5 text-center text-[11px] text-[#94a3b8]">{currentDetail?.marker ? '선택한 위험물의 서버 좌표를 표시합니다.' : '마커 위치는 화면 확인용 예시입니다.'}</p>
               </>
             )}
           </section>
@@ -407,7 +434,7 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
                 )}
               </>
             ) : (
-              <div className="mt-3 rounded-[12px] border border-[#e2e8f0] bg-[#f8fafc] px-3 py-5 text-center text-[13px] text-[#64748b]">감지된 위험 물체가 없습니다.</div>
+              <div className="mt-3 rounded-[12px] border border-[#e2e8f0] bg-[#f8fafc] px-3 py-5 text-center text-[13px] text-[#64748b]">{acknowledgedLiving ? '생활공간 위험요소를 확인했어요. 지도 표시는 유지됩니다.' : deferredLiving ? '삼킴 위험물을 먼저 처리해 주세요. 생활공간 위험요소는 지도에 표시됩니다.' : selectedResolved ? remainingHazards.length > 0 ? `선택한 위험물은 처리됐어요. 남은 위험물 ${remainingHazards.length}건을 확인해 주세요.` : '선택한 위험물은 처리됐어요.' : '감지된 위험 물체가 없습니다.'}</div>
             )}
           </section>
           {isMock && <p className="text-center text-[11px] text-[#94a3b8]">지도·사진·위험 정보는 화면 확인용 예시입니다.</p>}

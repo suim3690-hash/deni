@@ -42,9 +42,6 @@ class CareController:
         self.control = None
         self.results = {}
         self.absent_since = None
-        # 정지 이력을 스스로 푸는 데 쓰는 미검출 추적. 재확인 요청의 absent_since와 분리한다.
-        self.clear_since = None
-        self.clear_observed = None
         self.last_sequence = None
         self.last_observation = None
         self.started = 0
@@ -73,8 +70,6 @@ class CareController:
             self.action = None
         self.finishing = False
         self.absent_since = None
-        self.clear_since = None
-        self.clear_observed = None
 
     def _finish_motion(self, now):
         self.blocked.discard(self.action[2]['label'])
@@ -119,8 +114,6 @@ class CareController:
         self.phase = 'RECHECKING' if command == 'RECHECK_HAZARD' else 'PUSHING'
         self.started = now
         self.absent_since = None
-        self.clear_since = None
-        self.clear_observed = None
         self.last_observation = None
         self.require_frame_after = now
         self.pulse_until = self.settle_until = 0
@@ -136,7 +129,6 @@ class CareController:
         if not ready:
             self.last_output = 'S'
             self.absent_since = None
-            self.clear_since = None
             self.require_frame_after = now
             self.reason = 'RECONNECTING'
             return 'S'
@@ -144,7 +136,6 @@ class CareController:
             self.generation = motor.get('generation')
             self.require_frame_after = now
             self.absent_since = None
-            self.clear_since = None
             self.last_output = 'S'
             self.pulse_until = self.settle_until = 0
         if self.control:
@@ -172,7 +163,6 @@ class CareController:
                  and stamp > self.require_frame_after)
         if not valid:
             self.absent_since = None
-            self.clear_since = None
             self.last_output = 'S'
             if observation.get('camera_unavailable'):
                 self.reason = 'CAMERA UNAVAILABLE'
@@ -201,21 +191,8 @@ class CareController:
         if self.finishing and motor.get('acknowledged_at', 0)>self.finished_at:
             if (self.phase == 'RUNNING' and self.last_output == 'F' and ack == 'F') or (self.phase == 'HAZARD_PAUSED' and ack == 'S'):
                 self._complete_action('SUCCEEDED')
-        # 전원을 다시 켰을 때 지난 정지 이력이 남아 있어도, 새 영상에서 삼킴 위험물이
-        # 연속으로 보이지 않으면 스스로 주행을 재개한다. 처리 요청 중에는 손대지 않는다.
-        if self.phase == 'HAZARD_PAUSED' and not self.action and not self.finishing and new_frame:
-            if labels:
-                self.clear_since = None
-            else:
-                if self.clear_observed is None or stamp-self.clear_observed > cfg.max_observation_gap:
-                    self.clear_since = stamp
-                if self.clear_since is None:
-                    self.clear_since = stamp
-                if stamp-self.clear_since >= cfg.removal_absence_seconds:
-                    self.blocked.clear()
-                    self.phase = 'RUNNING'
-                    self.clear_since = None
-            self.clear_observed = stamp
+        # 감지 후 정지는 사용자의 처리 선택 전까지 유지한다. 물체가 사라져도
+        # RECHECK_HAZARD 성공 없이 자동 재개하면 DB의 ACTIVE 위험과 어긋난다.
         command = 'S'
         if self.phase == 'RECHECKING' and new_frame:
             label = self.action[2]['label']
@@ -236,9 +213,7 @@ class CareController:
             marker = next((m for m in observation.get('markers', []) if m['id']==cfg.marker_id), None)
             # An explicit relocation selects this class even when other classes
             # are visible. Keep those hazards blocked for after this action.
-            if marker and marker['fill'] >= cfg.marker_stop_fill:
-                self.phase, self.timed_remaining = 'BACKING', cfg.reverse_seconds
-            elif not targets:
+            if not targets:
                 self.reason = 'TARGET NOT VISIBLE'
             elif len(targets) != 1:
                 self.reason = 'MULTIPLE TARGETS OF SAME CLASS'
@@ -246,6 +221,8 @@ class CareController:
                 self.reason = 'MARKER NOT VISIBLE'
             elif marker.get('skew', 1) > .5:
                 self.reason = 'MARKER TOO SKEWED'
+            elif marker['fill'] >= cfg.marker_stop_fill:
+                self.phase, self.timed_remaining = 'BACKING', cfg.reverse_seconds
             elif now >= self.settle_until:
                 x1, _, x2, _ = targets[0]['bbox']
                 bearing = ((x1+x2)/2 / observation['frame_width'])*2-1

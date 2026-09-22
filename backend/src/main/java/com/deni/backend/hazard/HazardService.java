@@ -45,8 +45,25 @@ public class HazardService {
 		}
 		return hazardRepository.findByChildIdAndStatusOrderByDetectedAtDesc(childId, HazardStatus.ACTIVE).stream()
 				.map(hazard -> new ActiveHazardSummary(hazard.getId(), hazard.getObjectName(),
-						hazard.getRiskLevel().name(), hazard.getLocationLabel(), hazard.getDetectedAt()))
+						hazard.getRiskLevel().name(), hazard.getLocationLabel(), hazard.getDetectedAt(),
+						hazard.getAcknowledgedAt()))
 				.toList();
+	}
+
+	@Transactional
+	public HazardDetailResult acknowledgeLiving(UUID hazardId) {
+		Hazard hazard = hazardRepository.findById(hazardId)
+				.orElseThrow(() -> ApiException.notFound("HAZARD_NOT_FOUND", "위험 감지 정보를 찾을 수 없습니다."));
+		idempotencyGuard.lock("device", hazard.getDeviceId());
+		if (!"LIVING".equals(hazard.getObjectType()) || hazard.getStatus() != HazardStatus.ACTIVE) {
+			throw ApiException.conflict("LIVING_ACK_NOT_AVAILABLE", "활성 생활공간 위험요소만 확인할 수 있습니다.");
+		}
+		if (hazard.getAcknowledgedAt() == null && hazardRepository.existsByDeviceIdAndChildIdAndObjectTypeAndStatus(
+				hazard.getDeviceId(), hazard.getChildId(), "SWALLOW", HazardStatus.ACTIVE)) {
+			throw ApiException.conflict("SWALLOW_HAZARD_FIRST", "삼킴 위험물을 먼저 처리해 주세요.");
+		}
+		hazard.acknowledgeLiving(OffsetDateTime.now(SERVICE_ZONE));
+		return toDetail(hazard);
 	}
 
 	@Transactional(readOnly = true)
@@ -134,7 +151,7 @@ public class HazardService {
 				.orElse(null);
 		if (sameObject != null) {
 			sameObject.refreshFromDetection(input.detectedAt(), normalizeOptional(input.captureImageUrl()),
-					operationState, now);
+					riskLevel, operationState, now);
 			return toDetail(sameObject);
 		}
 		return toDetail(hazardRepository.save(hazard));
@@ -142,14 +159,15 @@ public class HazardService {
 
 	private HazardListItem toListItem(Hazard hazard) {
 		return new HazardListItem(hazard.getId(), hazard.getObjectName(), hazard.getRiskLevel().name(),
-				hazard.getDetectedAt(), new LocationSummary(hazard.getLocationLabel(), marker(hazard)));
+				hazard.getDetectedAt(), new LocationSummary(hazard.getLocationLabel(), marker(hazard)),
+				hazard.getAcknowledgedAt());
 	}
 
 	private HazardDetailResult toDetail(Hazard hazard) {
 		return new HazardDetailResult(hazard.getId(), hazard.getDeviceId(), hazard.getStatus().name(),
 				new DetectedObject(hazard.getObjectType(), hazard.getObjectName()), hazard.getRiskLevel().name(),
 				hazard.getRiskReason(), hazard.getDetectedAt(),
-				new LocationDetail(hazard.getLocationLabel(), hazard.getMapImageUrl(), marker(hazard)),
+				new LocationDetail(hazard.getLocationLabel(), hazard.getMapImageUrl(), marker(hazard)), hazard.getAcknowledgedAt(),
 				hazard.getCaptureImageUrl(), hazard.getDeviceOperationState().name());
 	}
 
@@ -221,7 +239,7 @@ public class HazardService {
 	}
 
 	public record ActiveHazardSummary(UUID hazardId, String objectName, String riskLevel,
-			String locationLabel, OffsetDateTime detectedAt) {
+			String locationLabel, OffsetDateTime detectedAt, OffsetDateTime acknowledgedAt) {
 	}
 
 	public record ObjectDetectionCount(String objectType, String label, long count, String riskLevel) {
@@ -231,12 +249,12 @@ public class HazardService {
 	}
 
 	public record HazardListItem(UUID hazardId, String objectName, String riskLevel,
-			OffsetDateTime detectedAt, LocationSummary location) {
+			OffsetDateTime detectedAt, LocationSummary location, OffsetDateTime acknowledgedAt) {
 	}
 
 	public record HazardDetailResult(UUID hazardId, String deviceId, String status,
 			DetectedObject object, String riskLevel, String riskReason, OffsetDateTime detectedAt,
-			LocationDetail location, String captureImageUrl, String deviceOperationState) {
+			LocationDetail location, OffsetDateTime acknowledgedAt, String captureImageUrl, String deviceOperationState) {
 	}
 
 	public record DetectedObject(String type, String name) {

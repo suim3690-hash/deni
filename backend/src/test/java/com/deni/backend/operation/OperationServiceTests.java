@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -58,7 +59,7 @@ class OperationServiceTests {
 		assertEquals("SAFETY_CONFIRMATION_REQUIRED", assertThrows(ApiException.class,
 				() -> service.requestCommand("robot-1", "resume", key)).getCode());
 		when(hazards.findActiveHazardsForChild(child)).thenReturn(List.of(new HazardService.ActiveHazardSummary(
-				UUID.randomUUID(), "레고", "HIGH", null, OffsetDateTime.now())));
+				UUID.randomUUID(), "레고", "HIGH", null, OffsetDateTime.now(), null)));
 		assertEquals("SAFETY_CONFIRMATION_REQUIRED", assertThrows(ApiException.class,
 				() -> service.requestCommand("robot-1", "resume", key)).getCode());
 		verify(repository, never()).saveAndFlush(any());
@@ -115,7 +116,7 @@ class OperationServiceTests {
 
 	@Test
 	void removalReceiptStaysUnknownAndDoesNotResolveHazardOrResumeDevice() {
-		UUID hazard = hazard();
+		UUID hazard = swallowHazard();
 		online("PAUSED");
 		when(devices.getLinkedChildId("robot-1")).thenReturn(child);
 		when(repository.saveAndFlush(any())).thenAnswer(call -> call.getArgument(0));
@@ -135,7 +136,7 @@ class OperationServiceTests {
 
 	@Test
 	void removalRequiresPauseAndValidAssociationAndKeyCannotSwitchTargets() {
-		UUID hazard = hazard();
+		UUID hazard = swallowHazard();
 		online("RUNNING");
 		assertEquals("DEVICE_NOT_PAUSED", assertThrows(ApiException.class,
 				() -> service.requestRemovalCheck(hazard, key)).getCode());
@@ -152,6 +153,57 @@ class OperationServiceTests {
 	}
 
 	@Test
+	void removalRejectsPoweredOffOrUnpausedRobotEvenWhenMotorReportsPaused() {
+		UUID hazard = swallowHazard();
+		var db = delivery();
+		online("PAUSED");
+		when(devices.getLinkedChildId("robot-1")).thenReturn(child);
+		when(db.queryForList(anyString(), eq("robot-1")))
+				.thenReturn(List.of(Map.of("power_enabled", false, "task_state", "OFF")))
+				.thenReturn(List.of(Map.of("power_enabled", true, "task_state", "RUNNING")));
+		assertEquals("DEVICE_POWERED_OFF", assertThrows(ApiException.class,
+				() -> service.requestRemovalCheck(hazard, UUID.randomUUID())).getCode());
+		assertEquals("DEVICE_NOT_PAUSED", assertThrows(ApiException.class,
+				() -> service.requestRemovalCheck(hazard, UUID.randomUUID())).getCode());
+		verify(repository, never()).saveAndFlush(any());
+	}
+
+	@Test
+	void poweredPausedRobotQueuesRemovalButBlocksConcurrentRelocation() {
+		UUID hazard = swallowHazard();
+		var db = delivery();
+		when(devices.getLinkedChildId("robot-1")).thenReturn(child);
+		when(devices.getStatus("robot-1")).thenReturn(new DeviceService.DeviceStatus(
+				"robot-1", "로봇", "ONLINE", "PAUSED", 82, OffsetDateTime.now(), true));
+		when(db.queryForList(anyString(), eq("robot-1"))).thenReturn(
+				List.of(Map.of("power_enabled", true, "task_state", "HAZARD_PAUSED")));
+		when(db.queryForObject(anyString(), eq(Integer.class), eq("robot-1"))).thenReturn(0, 1);
+		when(repository.saveAndFlush(any())).thenAnswer(call -> call.getArgument(0));
+
+		var removal = service.requestRemovalCheck(hazard, UUID.randomUUID());
+		assertEquals("DIRECT_REMOVAL_CHECK", removal.type());
+		assertEquals("UNKNOWN", removal.status());
+		assertEquals("ACTION_IN_PROGRESS", assertThrows(ApiException.class,
+				() -> service.requestRelocation(hazard, UUID.randomUUID())).getCode());
+	}
+
+	@Test
+	void poweredPausedRobotQueuesSwallowRelocation() {
+		UUID hazard = swallowHazard();
+		var db = delivery();
+		when(devices.getLinkedChildId("robot-1")).thenReturn(child);
+		when(devices.getStatus("robot-1")).thenReturn(new DeviceService.DeviceStatus(
+				"robot-1", "로봇", "ONLINE", "PAUSED", 82, OffsetDateTime.now(), true));
+		when(db.queryForList(anyString(), eq("robot-1"))).thenReturn(
+				List.of(Map.of("power_enabled", true, "task_state", "HAZARD_PAUSED")));
+		when(db.queryForObject(anyString(), eq(Integer.class), eq("robot-1"))).thenReturn(0);
+		when(repository.saveAndFlush(any())).thenAnswer(call -> call.getArgument(0));
+		var relocation = service.requestRelocation(hazard, UUID.randomUUID());
+		assertEquals("RELOCATE", relocation.type());
+		assertEquals("UNKNOWN", relocation.status());
+	}
+
+	@Test
 	void relocationAndInvalidInputsNeverCreateRequests() {
 		UUID hazard = hazard();
 		// 이송은 삼킴 위험물만 대상으로 한다. 생활 위험 요소는 직접 제거 안내로 넘긴다.
@@ -163,6 +215,8 @@ class OperationServiceTests {
 		assertThrows(ApiException.class, () -> service.requestCommand("robot-1", "stop", key));
 		assertThrows(ApiException.class, () -> service.requestCommand("robot/a", "pause", key));
 		assertThrows(ApiException.class, () -> service.requestRemovalCheck(null, key));
+		assertEquals("REMOVAL_CHECK_NOT_SUPPORTED", assertThrows(ApiException.class,
+				() -> service.requestRemovalCheck(hazard, UUID.randomUUID())).getCode());
 		verify(repository, never()).saveAndFlush(any());
 	}
 
@@ -177,7 +231,13 @@ class OperationServiceTests {
 	private UUID hazard() {
 		UUID id = UUID.randomUUID();
 		when(hazards.getHazard(id)).thenReturn(new HazardService.HazardDetailResult(id, "robot-1", "ACTIVE",
-				new HazardService.DetectedObject("TOY_PART", "레고"), "HIGH", null, OffsetDateTime.now(), null, null, "PAUSED"));
+				new HazardService.DetectedObject("TOY_PART", "레고"), "HIGH", null, OffsetDateTime.now(), null, null, null, "PAUSED"));
+		return id;
+	}
+	private UUID swallowHazard() {
+		UUID id = UUID.randomUUID();
+		when(hazards.getHazard(id)).thenReturn(new HazardService.HazardDetailResult(id, "robot-1", "ACTIVE",
+				new HazardService.DetectedObject("SWALLOW", "동전"), "HIGH", null, OffsetDateTime.now(), null, null, null, "PAUSED"));
 		return id;
 	}
 }

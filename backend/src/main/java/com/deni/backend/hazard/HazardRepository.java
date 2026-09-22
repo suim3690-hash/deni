@@ -21,6 +21,9 @@ interface HazardRepository extends JpaRepository<Hazard, UUID> {
 
 	List<Hazard> findByChildIdAndStatusOrderByDetectedAtDesc(UUID childId, HazardStatus status);
 
+	boolean existsByDeviceIdAndChildIdAndObjectTypeAndStatus(String deviceId, UUID childId,
+			String objectType, HazardStatus status);
+
 	@Query("""
 			SELECT h.objectType AS objectType, h.objectName AS label, h.riskLevel AS riskLevel, COUNT(h) AS count
 			FROM Hazard h
