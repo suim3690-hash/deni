@@ -13,45 +13,12 @@ import robotDot from '../assets/figma/home/imgVector6.svg'
 import reportIcon from '../assets/figma/home/imgContainer1.svg'
 import type { RegisteredChild } from '../services/children'
 import { ApiRequestError, apiErrorMessage } from '../services/apiError'
-import { activateChildOnDevice, getDashboard, getHazardDetail, getRobotState, sendDeviceCommand, type DashboardHazard, type DashboardSnapshot, type HazardDetail, type RobotState } from '../services/dashboard'
+import { activateChildOnDevice, getDashboard, getHazardDetail, getRobotState, sendDeviceCommand, type DashboardHazard, type DashboardSnapshot, type HazardDetail } from '../services/dashboard'
 import { stageBannerSubtitles, stageTitles } from '../lib/stages'
 import { describeHazard, orderHazardsForAttention, riskLabels } from '../lib/hazardRisk'
 import HazardAlertBox from '../components/HazardAlertBox'
 
 type Modal = 'device' | null
-
-const operationLabels: Record<RobotState['operationState'], string | null> = {
-  RUNNING: '작동 중',
-  PAUSED: '일시 정지',
-  RELOCATING: '이송 중',
-  UNKNOWN: null,
-}
-
-const movementLabels: Record<RobotState['movementState'], string | null> = {
-  FORWARD: '전진',
-  TURNING: '회전',
-  BACKWARD: '후진',
-  STOPPED: '정지',
-  UNKNOWN: null,
-}
-
-// 기기가 보고한 작업 단계. 전원이 켜진 뒤 로봇이 무엇을 하고 있는지 알려준다.
-const taskLabels: Record<string, string> = {
-  OFF: '전원 꺼짐',
-  RUNNING: '자동 주행 중',
-  PAUSED: '일시 정지',
-  HAZARD_PAUSED: '위험물 앞에서 정지',
-  RECHECKING: '제거 여부 재확인 중',
-  PUSHING: '위험물 이송 중',
-  BACKING: '이송 후 후진 중',
-  TURNING_AROUND: '이송 후 회전 중',
-}
-
-function robotStatusText(state: RobotState): string | null {
-  const movement = state.operationState === 'PAUSED' ? null : movementLabels[state.movementState]
-  const parts = [operationLabels[state.operationState], movement].filter(Boolean)
-  return parts.length > 0 ? parts.join(' · ') : null
-}
 
 function newerHazardDetail(current: HazardDetail | null, next: HazardDetail): HazardDetail {
   if (!current || current.hazardId !== next.hazardId) return next
@@ -93,8 +60,10 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   const [refreshKey, setRefreshKey] = useState(0)
   const [modal, setModal] = useState<Modal>(null)
   const [connecting, setConnecting] = useState(false)
+  const [pausing, setPausing] = useState(false)
   const [connectError, setConnectError] = useState('')
   const [mockPowered, setMockPowered] = useState(false)
+  const [mockPaused, setMockPaused] = useState(false)
   const [hazardDetail, setHazardDetail] = useState<HazardDetail | null>(null)
   const [hazardError, setHazardError] = useState('')
   const [hazardErrorStatus, setHazardErrorStatus] = useState<number | null>(null)
@@ -203,8 +172,8 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
 
   const device = dashboard?.device
   const isOnline = !loadError && device?.connectionState === 'ONLINE'
-  // 목업은 전원 버튼을 눌러야 연결된 상태가 되고, 실제 API는 서버가 보고한 연결 상태를 그대로 따른다.
-  const connected = dashboard?.isMock ? mockPowered && isOnline : isOnline
+  // 전원과 통신 연결은 별개다. 전원을 꺼도 기기가 온라인이면 통신과 상태 조회는 유지된다.
+  const connected = isOnline
   const profile = dashboard?.currentProfile ?? child.safetyProfile
   const isSupported = profile.status === 'APPLIED' && profile.stage !== null
   const stage = isSupported ? profile.stage : null
@@ -218,12 +187,12 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   const robotState = loadError ? null : dashboard?.robotState
   // 오래된 보고(stale)는 현재 상태의 근거가 아니므로 전원·작업 표시에 쓰지 않는다.
   const liveRobotState = robotState && !robotState.stale ? robotState : null
-  const robotStatus = connected && liveRobotState ? robotStatusText(liveRobotState) : null
   // 전원은 통신 연결과 별개다. 전원을 끄면 모터와 탐지만 멈추고 통신은 유지된다.
   const powered = dashboard?.isMock ? mockPowered && isOnline : liveRobotState?.powerEnabled === true
-  const powerReported = Boolean(dashboard?.isMock) || liveRobotState?.powerEnabled != null
-  const taskLabel = connected && typeof liveRobotState?.taskState === 'string' ? taskLabels[liveRobotState.taskState] ?? null : null
-  const operationState = dashboard?.isMock ? 'RUNNING' : robotState && !robotState.stale ? robotState.operationState : device?.operationState ?? 'UNKNOWN'
+  const operationState = dashboard?.isMock ? mockPaused ? 'PAUSED' : 'RUNNING' : robotState && !robotState.stale ? robotState.operationState : device?.operationState ?? 'UNKNOWN'
+  const paused = powered && operationState === 'PAUSED'
+  // 실제 API 모드에서도 배터리 보고 연동 전까지는 화면 확인용 고정값을 사용한다.
+  const batteryPercent = 80
   const displayName = dashboard?.child.childId === child.childId && dashboard.child.name.trim() ? dashboard.child.name : child.name
   const lastResponseTime = lastResponseAt?.toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
@@ -279,6 +248,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   async function handleMockPower() {
     if (powered) {
       setMockPowered(false)
+      setMockPaused(false)
       return
     }
     setConnecting(true)
@@ -288,6 +258,33 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
       else setConnectError('ThinQ에 연결하지 못했어요. 로봇청소기 전원과 네트워크를 확인해 주세요.')
     } finally {
       setConnecting(false)
+    }
+  }
+
+  async function handlePause() {
+    if (pausing || !dashboard || !device || !powered) return
+    setConnectError('')
+    setPausing(true)
+    try {
+      if (dashboard.isMock) {
+        await new Promise((resolve) => setTimeout(resolve, 350))
+        setMockPaused((current) => !current)
+        return
+      }
+      const state = await getRobotState(device.deviceId)
+      if (state.stale || state.powerEnabled !== true) {
+        setConnectError('현재 기기 상태를 확인할 수 없어요. 전원과 PC 런타임 연결을 확인해 주세요.')
+        return
+      }
+      const shouldResume = state.operationState === 'PAUSED'
+      await sendDeviceCommand(device.deviceId, shouldResume ? 'resume' : 'pause', false)
+      await refreshDashboard()
+    } catch (error) {
+      setConnectError(apiErrorMessage(error, paused
+        ? '청소를 다시 시작하지 못했어요. 잠시 후 다시 시도해 주세요.'
+        : '청소를 일시 정지하지 못했어요. 잠시 후 다시 시도해 주세요.'))
+    } finally {
+      setPausing(false)
     }
   }
 
@@ -416,19 +413,40 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
             </div>
 
             <div className="mt-3 border-t border-[#e8edf5] pt-3">
-              {connected ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-1 rounded-full bg-[#f5f8ff] px-3 py-1.5 text-[12px] font-medium text-[#334155]"><BatteryFull size={15} className="text-[#10b981]" aria-hidden="true" />배터리 {device?.batteryPercent != null ? `${device.batteryPercent}%` : '확인 전'}</span>
-                  <span className="rounded-full bg-[#e1fff2] px-3 py-1.5 text-[12px] font-medium text-[#167359]">⊙ 드니 모드 ON</span>
-                  <span role="status" className={`rounded-full px-3 py-1.5 text-[12px] font-medium ${powered ? 'bg-[#e1fff2] text-[#167359]' : 'bg-[#fef2f2] text-[#a50034]'}`}>
-                    {powered ? '전원 ON' : powerReported ? '전원 OFF · 통신 유지' : '전원 상태 확인 전'}
-                  </span>
-                  {taskLabel && <span role="status" className="rounded-full bg-[#f5f8ff] px-3 py-1.5 text-[12px] font-medium text-[#334155]">{taskLabel}</span>}
-                  {robotStatus && <span role="status" className="inline-flex items-center gap-1 rounded-full bg-[#f5f8ff] px-3 py-1.5 text-[12px] font-medium text-[#334155]"><Activity size={15} className="text-[#2958c7]" aria-hidden="true" />{robotStatus}</span>}
-                </div>
-              ) : (
-                <p className="text-[12px] leading-[1.5] text-[#64748b]">{connecting ? 'ThinQ에 연결하고 있어요…' : '전원 버튼을 누르면 ThinQ에 연결하고 로봇청소기를 가동해요.'}</p>
-              )}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1 rounded-full bg-[#f5f8ff] px-3 py-1.5 text-[12px] font-medium text-[#334155]"><BatteryFull size={15} className="text-[#10b981]" aria-hidden="true" />배터리 {batteryPercent != null ? `${batteryPercent}%` : '확인 전'}</span>
+                <span className={`rounded-full px-3 py-1.5 text-[12px] font-medium ${isOnline ? 'bg-[#e1fff2] text-[#167359]' : 'bg-[#f5f8ff] text-[#64748b]'}`}>⊙ 드니 모드 {isOnline ? 'ON' : 'OFF'}</span>
+              </div>
+
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handlePower()}
+                  disabled={connecting}
+                  className={`inline-flex min-h-[34px] items-center justify-center rounded-full px-2 text-[11px] font-medium transition-colors focus-visible:outline-[#a50034] disabled:cursor-wait ${powered ? 'bg-[#e1fff2] text-[#167359]' : 'bg-[#fef2f2] text-[#a50034]'}`}
+                >
+                  {connecting ? <Loader2 size={13} className="mr-1 animate-spin" aria-hidden="true" /> : null}
+                  {connecting ? '처리 중' : powered ? '전원 ON' : '전원 OFF'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setModal('device')}
+                  className={`inline-flex min-h-[34px] items-center justify-center rounded-full px-2 text-[11px] font-medium transition-colors focus-visible:outline-[#a50034] ${isOnline ? 'bg-[#e1fff2] text-[#167359]' : 'bg-[#f5f8ff] text-[#64748b]'}`}
+                >
+                  {isOnline ? '통신 유지' : '통신 끊김'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handlePause()}
+                  disabled={!powered || connecting || pausing}
+                  className={`inline-flex min-h-[34px] items-center justify-center gap-1 rounded-full px-2 text-[11px] font-medium transition-colors focus-visible:outline-[#a50034] disabled:cursor-not-allowed disabled:opacity-45 ${paused ? 'bg-[#e8efff] text-[#2958c7]' : 'bg-[#f5f8ff] text-[#334155]'}`}
+                >
+                  {pausing ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <Activity size={13} className="text-[#2958c7]" aria-hidden="true" />}
+                  {pausing ? '처리 중' : paused ? '청소 재개' : '일시 정지'}
+                </button>
+              </div>
+
+              {!connected && <p className="mt-2 text-[12px] leading-[1.5] text-[#64748b]">기기 통신 상태를 확인해 주세요.</p>}
               {connectError && <p role="alert" className="mt-2 text-[12px] text-[#a50034]">{connectError}</p>}
               <div className="mt-3 flex justify-center">
                 <button
