@@ -95,6 +95,7 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
   const [acknowledgingLiving, setAcknowledgingLiving] = useState(false)
   const [locallyResolvedLiving, setLocallyResolvedLiving] = useState(false)
   const autoResumeStarted = useRef(false)
+  const removalBaseline = useRef<{ hazardId: string; detectedAt: string; captureImageUrl: string | null } | null>(null)
   // ?mockRedetect=1 : 목업에서 첫 번째 제거 확인 때 위험 물체가 다시 감지되는 상황을 보여준다.
   const redetectOnce = useRef(new URLSearchParams(window.location.search).get('mockRedetect') === '1')
   const restricted = errorStatus === 403 || errorStatus === 404
@@ -153,6 +154,17 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
     const timer = setTimeout(() => setFlow(step[0]), step[1])
     return () => clearTimeout(timer)
   }, [flow, isMock])
+
+  // 직접 제거 확인을 요청한 뒤 같은 위험 건에 더 최신 탐지 사진이 저장되면
+  // 물체가 아직 남아 있는 재감지로 보고 기존 사진 대신 새 사진을 보여준다.
+  useEffect(() => {
+    if (isMock || removalState !== 'pending' || !hazard || !currentDetail) return
+    const baseline = removalBaseline.current
+    if (!baseline || baseline.hazardId !== hazard.hazardId || currentDetail.hazardId !== hazard.hazardId) return
+    const newerDetection = Date.parse(currentDetail.detectedAt) > Date.parse(baseline.detectedAt)
+    const newCapture = Boolean(currentDetail.captureImageUrl) && currentDetail.captureImageUrl !== baseline.captureImageUrl
+    if (newerDetection && newCapture) setRedetected(true)
+  }, [currentDetail, hazard, isMock, removalState])
 
   useEffect(() => {
     // 실제 기기는 재확인/이송 완료 결과에 따라 스스로 재개하거나 다른 위험 앞에 멈춘다.
@@ -266,6 +278,14 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
       return
     }
     if (removalState !== 'idle') return
+    if (hazard) {
+      removalBaseline.current = {
+        hazardId: hazard.hazardId,
+        detectedAt: currentDetail?.detectedAt ?? hazard.detectedAt,
+        captureImageUrl: currentDetail?.captureImageUrl ?? null,
+      }
+    }
+    setRedetected(false)
     setRemovalState('submitting')
     try {
       const receipt = await requestRemovalCheck(hazard?.hazardId ?? '')
@@ -389,10 +409,10 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
                   {captureLoading
                     ? <div className="grid aspect-[35/24] place-items-center text-[13px] text-[#64748b]">감지 사진을 불러오고 있어요</div>
                     : captureSrc
-                      ? <img src={captureSrc} onError={() => setFailedCaptureUrl(captureSrc)} alt={`${name} 감지 사진`} className="aspect-[35/24] w-full object-cover" />
+                      ? <img src={captureSrc} onError={() => setFailedCaptureUrl(captureSrc)} alt={`${name} ${redetected ? '재감지' : '감지'} 사진`} className="aspect-[35/24] w-full object-cover" />
                       : <div role="status" className="grid aspect-[35/24] place-items-center px-3 text-center text-[13px] text-[#64748b]">감지 사진을 불러오지 못했어요</div>}
                   <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-[#141414]/90 px-2 py-1.5 text-white">
-                    <strong className="min-w-0 text-[11px] leading-4">{name}</strong>
+                    <strong className="min-w-0 text-[11px] leading-4">{redetected ? `재감지 · ${name}` : name}</strong>
                     <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${alertStyle.chip}`}>위험도 {riskLabel}</span>
                   </div>
                 </div>

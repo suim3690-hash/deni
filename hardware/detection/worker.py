@@ -103,7 +103,8 @@ def run(mailbox, output, stop, mode_code, processing=None):
                         cv2.putText(picture,text,(max(0,x1),max(16,y1-5)),cv2.FONT_HERSHEY_SIMPLEX,0.45,(0,180,255),1)
                     ok, encoded = cv2.imencode('.jpg',picture,[cv2.IMWRITE_JPEG_QUALITY,90])
                     if not ok: raise OSError('JPEG encode failed')
-                    # One photo/event for this frame, even when several objects alert.
+                    # Local history keeps the annotated frame. The backend uploader
+                    # creates one padded bounding-box crop per alerted object.
                     if mode_code.value != active_code or (processing is not None and not processing.is_set()):
                         continue
                     store.save(encoded.tobytes(),dict(mode=C.MODES[active_code % len(C.MODES)], sequence=last,level=max(d['level'] for d in events),

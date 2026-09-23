@@ -1,6 +1,7 @@
 """Detection outbox adapter. HTTP runs separately from inference and motor loops."""
 import asyncio
 import logging
+import math
 import os
 import threading
 from pathlib import Path
@@ -10,6 +11,8 @@ from bridge import Bridge
 STORE = Path(__file__).parent / '.runtime' / 'transport.sqlite3'
 LABELS = {'coin': '동전', 'marble': '구슬', 'battery': '배터리',
           'socket': '콘센트', 'wire': '전선', 'knife': '칼', 'scissors': '가위', 'dice': '주사위', 'die': '주사위'}
+CROP_PADDING_RATIO = .2
+MIN_CROP_PADDING_PX = 12
 
 
 def configured():
@@ -22,16 +25,52 @@ def connection(state_provider=None, command_handler=None):
                   state_provider, command_handler)
 
 
+def crop_detection_images(jpeg, detections):
+    """Return one padded bounding-box JPEG per detection; keep the frame on decode failure."""
+    try:
+        import cv2
+        import numpy as np
+        frame = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+    except (ImportError, ValueError):
+        frame = None
+    if frame is None:
+        return [jpeg for _ in detections]
+    height, width = frame.shape[:2]
+    cropped = []
+    for detection in detections:
+        try:
+            x1, y1, x2, y2 = (float(value) for value in detection['bbox'])
+            left, right = sorted((x1, x2)); top, bottom = sorted((y1, y2))
+            if not all(math.isfinite(value) for value in (left, top, right, bottom)) or right <= left or bottom <= top:
+                raise ValueError('invalid bbox')
+            pad_x = max(MIN_CROP_PADDING_PX, math.ceil((right-left) * CROP_PADDING_RATIO))
+            pad_y = max(MIN_CROP_PADDING_PX, math.ceil((bottom-top) * CROP_PADDING_RATIO))
+            crop_left = max(0, math.floor(left-pad_x)); crop_right = min(width, math.ceil(right+pad_x))
+            crop_top = max(0, math.floor(top-pad_y)); crop_bottom = min(height, math.ceil(bottom+pad_y))
+            if crop_right <= crop_left or crop_bottom <= crop_top:
+                raise ValueError('empty crop')
+            ok, encoded = cv2.imencode('.jpg', frame[crop_top:crop_bottom, crop_left:crop_right],
+                                       [cv2.IMWRITE_JPEG_QUALITY, 90])
+            if not ok:
+                raise ValueError('JPEG encode failed')
+            cropped.append(encoded.tobytes())
+        except (KeyError, TypeError, ValueError):
+            # A malformed optional crop must not discard the detection event.
+            cropped.append(jpeg)
+    return cropped
+
+
 def enqueue_frame(bridge, event_id, jpeg, detections, mode):
     """One backend event per object; stable UUID across retry of this local event."""
     namespace = UUID(event_id)
+    images = crop_detection_images(jpeg, detections)
     ids = []
     for index, detection in enumerate(detections):
         model = detection.get('model', mode).upper()
         if model not in {'OBJECT', 'HAZARD'}:
             raise ValueError('No backend mapping for model: ' + model)
         label = detection['label']
-        ids.append(bridge.enqueue_detection(jpeg, LABELS.get(label, label), model,
+        ids.append(bridge.enqueue_detection(images[index], LABELS.get(label, label), model,
                    str(uuid5(namespace, str(index)))))
     return ids
 

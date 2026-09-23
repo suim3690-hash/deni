@@ -8,6 +8,8 @@ import unittest
 import urllib.request
 import urllib.error
 from unittest.mock import patch
+import cv2
+import numpy as np
 from pc_dashboard import CameraFeed, Controls, Dashboard, INPUT_TTL, VIDEO_TTL
 from detection import config as C
 from detection.service import LatestFrame, DetectionService
@@ -30,6 +32,22 @@ def delayed_worker(mailbox, output, stop):
 
 
 class Tests(unittest.TestCase):
+    def test_backend_images_are_cropped_per_detection(self):
+        from uploader import crop_detection_images
+        frame = np.zeros((120, 200, 3), dtype=np.uint8)
+        frame[20:60, 10:50] = (0, 0, 255)
+        frame[30:100, 130:190] = (0, 255, 0)
+        ok, encoded = cv2.imencode('.jpg', frame)
+        self.assertTrue(ok)
+        crops = crop_detection_images(encoded.tobytes(), [
+            dict(bbox=[10, 20, 50, 60]), dict(bbox=[130, 30, 190, 100]),
+        ])
+        decoded = [cv2.imdecode(np.frombuffer(image, dtype=np.uint8), cv2.IMREAD_COLOR) for image in crops]
+        self.assertEqual(len(decoded), 2)
+        self.assertTrue(all(image is not None and image.shape[0] < 120 and image.shape[1] < 200 for image in decoded))
+        self.assertGreater(decoded[0][:, :, 2].mean(), decoded[0][:, :, 1].mean())
+        self.assertGreater(decoded[1][:, :, 1].mean(), decoded[1][:, :, 2].mean())
+
     def test_vote_cooldown_and_escalation(self):
         e=RiskEngine();d=obj()
         for n in range(9):self.assertEqual(e.evaluate([d],n*.1)[1],[])
