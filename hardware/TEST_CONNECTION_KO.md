@@ -1,7 +1,7 @@
 # 카메라 객체 인식 → 백엔드 수신 확인
 
-영상 방향: PC 수신 시 기본 180도 회전한다. 같은 회전 프레임을 화면·추론·탐지 이미지 업로드에 사용한다.
-Pi 원본 스트림 자체는 변경하지 않았다. Pi에서 이미 회전한 영상을 보내게 되면 `--rotation 0`으로 중복 회전을 끈다.
+영상 방향: Pi 통합 서버가 카메라 프레임을 송출 전에 항상 180도 회전한다. PC는 받은 JPEG를 다시 회전하지 않고 화면·물체/ArUco 추론·탐지 이미지 업로드에 함께 사용한다. Pi와 PC 어느 쪽에도 회전 선택 옵션이 없어 미회전 화면이나 이중 회전이 생기지 않는다.
+Pi 통합 서버는 Browser password를 사용하지 않는다. 마커를 실제 로봇 좌우에 놓고 정규화된 영상의 좌우·bearing·실제 조향을 확인한다. IT-05/12 실물 검증은 별도로 필요하다.
 
 이번 확인의 끝은 HTTP 탐지 수신 및 WebSocket 상태 수신이다. 프론트 알림 표시·DB 직접 저장은 범위에 없다.
 실제 백엔드가 없는 지금은 로컬 모의 수신기로 확인한다. 모의 서버 통과가 실제 Spring 서버 통과를 뜻하지는 않는다.
@@ -34,9 +34,9 @@ setup은 로컬 두 모델의 클래스와 CPU 추론을 검사한다. 실제 �
 
 ## 2. Pi 카메라 유지
 
-Pi에서 기존 `pi_video_server.py`를 실행한 상태를 유지한다. IP는 `192.168.219.145`이다.
+Pi에서 무인증 통합 `pi_robot_server.py`를 실행한 상태를 유지한다. IP는 `192.168.219.145`이다.
 PC 브라우저에서 `http://192.168.219.145:8000/`을 열어 영상 확인:
-사용자 `robot`, 암호는 Pi 터미널의 Browser password.
+통합 Pi 서버는 카메라와 모터 모두 인증 없이 개발망에서만 사용한다.
 Arduino 및 주행 수신기, 모터 TOKEN은 필요 없다.
 
 ## 3. 터미널 A — 로컬 수신 서버
@@ -61,7 +61,7 @@ python mock_backend.py
 $env:ROBOT_DEVICE_ID = 'robot-test'
 $env:ROBOT_DEVICE_TOKEN = 'local-test-token-0123456789abcdef'
 $env:ROBOT_HTTP_URL = 'http://127.0.0.1:18080'
-python pc_dashboard.py --host 192.168.219.145 --camera-password "Pi의_Browser_password" --port 8081 --detection-mode object
+python pc_dashboard.py --host 192.168.219.145 --port 8081 --detection-mode object
 ```
 
 `http://127.0.0.1:8081/`에서 모델 로딩 및 영상을 확인하고 동전·구슬·배터리 등 해당 모델 대상을
@@ -81,7 +81,7 @@ python pc_dashboard.py --host 192.168.219.145 --camera-password "Pi의_Browser_p
 전송되지 않으면 모델 오류, 흐린 영상, 이벤트 생성 여부, HTTP 환경변수, storage_error를 확인한다.
 송신 기록은 `python bridge.py status`로 확인한다.
 
-기본은 카메라 전용이다. 내일 실제 모터를 연결할 때만 `--motor --token "Pi_주행_TOKEN"`을 추가한다.
+기본은 카메라 전용이다. 실제 모터를 연결할 때만 `--motor`를 추가한다.
 백엔드 PAUSE와 기존 모터 제어는 아직 서로 연결하지 않았으며 성공으로 보고하지 않는다.
 
 ## 5. WebSocket 상태 송신과 명령 수신

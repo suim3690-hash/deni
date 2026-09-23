@@ -75,7 +75,12 @@ public class DeviceMessageService {
         jdbc.update("UPDATE device_command_delivery SET status=?,completed_at=?,error_code=?,result_operation_state=?,hazard_present=?,result_payload=? WHERE command_id=?",status,completed,error,operation,present,payload.toString(),command);
         if(status.equals("SUCCEEDED") && rows.getFirst().get("hazard_id")!=null) {
             if(!payload.path("hazardId").asText().equals(rows.getFirst().get("hazard_id").toString())) throw new IllegalArgumentException();
-            jdbc.update("UPDATE hazards SET status='RESOLVED',device_operation_state=?,updated_at=clock_timestamp(),version=version+1 WHERE id=? AND device_id=? AND status='ACTIVE'",operation,rows.getFirst().get("hazard_id"),id);
+            // 이송 성공은 임시 완료다. 물체는 안전 구역으로 옮겨졌을 뿐 치워지지 않았으므로 위험은 ACTIVE로 두고
+            // 다음 백엔드 시작의 시연 정책이 마무리한다. 직접 제거만 그 자리에서 해결로 본다.
+            String hazardSql=kind.equals("RELOCATE")
+                ? "UPDATE hazards SET device_operation_state=?,updated_at=clock_timestamp(),version=version+1 WHERE id=? AND device_id=? AND status='ACTIVE'"
+                : "UPDATE hazards SET status='RESOLVED',device_operation_state=?,updated_at=clock_timestamp(),version=version+1 WHERE id=? AND device_id=? AND status='ACTIVE'";
+            jdbc.update(hazardSql,operation,rows.getFirst().get("hazard_id"),id);
         }
     }
 }

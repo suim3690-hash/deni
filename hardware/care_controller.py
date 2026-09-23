@@ -14,8 +14,9 @@ class Settings:
     observation_ttl: float = 3.0
     max_observation_gap: float = 1.0
     marker_id: int = 0
-    marker_stop_fill: float = .13126
+    marker_stop_fill: float = .05595
     bearing_deadband: float = .12
+    coarse_bearing: float = .35
     turn_pulse_seconds: float = .12
     settle_seconds: float = .35
     capture_seconds: float = .8
@@ -23,7 +24,7 @@ class Settings:
     reverse_seconds: float = 1.0
     drop_verify_seconds: float = 1.0
     drop_verify_timeout_seconds: float = 10.0
-    drop_verify_radius_ratio: float = .3
+    drop_verify_radius_ratio: float = .45
     turnaround_seconds: float = 1.0
     action_timeout_seconds: float = 120.0
 
@@ -34,7 +35,8 @@ class Settings:
             elif not math.isfinite(value) or value <= 0:
                 raise ValueError(name + ' must be positive and finite')
         if (self.removal_absence_seconds < 2 or self.marker_stop_fill >= 1 or self.bearing_deadband >= 1
-                or self.drop_verify_radius_ratio >= 1):
+                or self.drop_verify_radius_ratio >= 1
+                or not self.bearing_deadband < self.coarse_bearing < 1):
             raise ValueError('Invalid absence/fill/bearing settings')
 
 
@@ -86,17 +88,24 @@ class CareController:
         self.phase, self.phase_started, self.timed_remaining = phase, now, duration
         self.pulse_until = self.settle_until = 0
 
-    def _steer(self, bearing, now, forward):
+    def _steer(self, bearing, now, forward, search=False):
+        # Far from the target only the sign of the error matters, so the turn runs without stopping.
+        # Close to it the short pulse and settle stay: they trade smoothness for a clean frame and
+        # keep the robot from overshooting the centre. A blind search must stop to look, so it pulses.
         cfg = self.settings
         if now < self.settle_until:
             return 'S'
         if abs(bearing) <= cfg.bearing_deadband:
             self.pulse_until = 0
             return 'F' if forward else 'S'
+        turn = 'R' if bearing > 0 else 'L'
+        if not search and abs(bearing) >= cfg.coarse_bearing:
+            self.pulse_until = 0
+            return turn
         if not self.pulse_until:
             self.pulse_until = now + cfg.turn_pulse_seconds
         if now < self.pulse_until:
-            return 'R' if bearing > 0 else 'L'
+            return turn
         self.pulse_until = 0
         self.settle_until = now + cfg.settle_seconds
         return 'S'
@@ -293,7 +302,7 @@ class CareController:
                 else:
                     # The demo drop zone is searched clockwise. Rotation is pulsed;
                     # the robot never drives forward without a visible marker.
-                    command = self._steer(1.0, now, False)
+                    command = self._steer(1.0, now, False, search=True)
             elif marker.get('skew', 1) > .5:
                 self.reason = 'MARKER TOO SKEWED'
             elif marker['fill'] >= cfg.marker_stop_fill:

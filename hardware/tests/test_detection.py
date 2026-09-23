@@ -15,11 +15,18 @@ from detection import config as C
 from detection.service import LatestFrame, DetectionService
 from detection.risk_engine import RiskEngine
 from detection.event_store import EventStore, history
+from detection.worker import unsuppressed_events
 
 
 def obj(label='coin', confidence=.9, track=1, model='object'):
     return dict(model=model,label=label,class_id={'coin':0,'battery':1,'person':2}.get(label,3),
                 confidence=confidence,track_id=track,bbox=[10,10,40,40])
+
+
+def frame():
+    ok, encoded = cv2.imencode('.jpg', np.zeros((8, 8, 3), dtype=np.uint8))
+    assert ok
+    return encoded.tobytes()
 
 
 def delayed_worker(mailbox, output, stop):
@@ -32,6 +39,19 @@ def delayed_worker(mailbox, output, stop):
 
 
 class Tests(unittest.TestCase):
+    def test_relocation_target_alert_is_filtered_without_hiding_other_hazards(self):
+        events = [obj('battery'), obj('coin'), obj('die')]
+        filtered = unsuppressed_events(events, C.alert_label_mask({'battery'}))
+        self.assertEqual([event['label'] for event in filtered], ['coin', 'die'])
+        self.assertEqual(unsuppressed_events([obj('die')], C.alert_label_mask({'dice'})), [])
+
+    def test_detection_service_exposes_current_alert_suppression(self):
+        service = DetectionService(CameraFeed(), enabled=False)
+        service.set_suppressed_alert_labels({'battery'})
+        self.assertEqual(service.state()['suppressed_alert_labels'], ['battery'])
+        with self.assertRaises(ValueError):
+            service.set_suppressed_alert_labels({'unknown'})
+
     def test_backend_images_are_cropped_per_detection(self):
         from uploader import crop_detection_images
         frame = np.zeros((120, 200, 3), dtype=np.uint8)
@@ -93,12 +113,12 @@ class Tests(unittest.TestCase):
             for seq in range(2,31):m.publish(b'new',seq,time.monotonic(),time.time())
             f=CameraFeed();c=Controls(f)
             with patch('pc_dashboard.time.monotonic',return_value=100):
-                f.publish(b'\xff\xd8\xff\xd9');c.ready=True;c.claim('owner',1);c.update('owner',1,'F',1)
+                f.publish(frame());c.ready=True;c.claim('owner',1);c.update('owner',1,'F',1)
                 self.assertEqual(c.command(),'F')
             with patch('pc_dashboard.time.monotonic',return_value=100+INPUT_TTL+.01):
                 self.assertEqual(c.command(),'S');self.assertIsNone(c.owner)
             with patch('pc_dashboard.time.monotonic',return_value=200):
-                f.publish(b'\xff\xd8\xff\xd9');c.claim('owner',2)
+                f.publish(frame());c.claim('owner',2)
             with patch('pc_dashboard.time.monotonic',return_value=200+VIDEO_TTL+.01):
                 c.updated=200+VIDEO_TTL
                 self.assertEqual(c.command(),'S')
@@ -106,7 +126,7 @@ class Tests(unittest.TestCase):
         finally:stop.set();p.join(3);q.close()
 
     def test_stale_or_blurred_is_not_current(self):
-        f=CameraFeed();f.publish(b'\xff\xd8\xff\xd9');s=DetectionService(f)
+        f=CameraFeed();f.publish(frame());s=DetectionService(f)
         s.latest=dict(status='ok',level=3,frame_stamp=time.monotonic()-C.RESULT_TTL-1)
         self.assertIsNone(s.state()['current_level'])
         s.latest=dict(status='blur',level=0,frame_stamp=time.monotonic())
@@ -144,7 +164,7 @@ class ModeAndMotorTests(unittest.TestCase):
                 def drive(self,cmd):sent.append(cmd);stop.set()
                 def close(self):pass
             with patch('pc_dashboard.RobotClient',return_value=Robot()):
-                motor_worker(SimpleNamespace(host='fake',token='fake',control_port=0),control,stop)
+                motor_worker(SimpleNamespace(host='fake',control_port=0),control,stop)
             self.assertEqual(sent,[expected]);self.assertEqual(control.ack,command)
 
     def test_mode_generation_and_late_result_rejection(self):
@@ -197,19 +217,19 @@ class SessionDiagnosticsTests(unittest.TestCase):
             def close(self):pass
         c=Controls(CameraFeed());c.command=lambda:'S'
         with patch('pc_dashboard.RobotClient',return_value=Robot()),patch('pc_dashboard.time.monotonic',side_effect=lambda:clock[0]):
-            motor_worker(SimpleNamespace(host='fake',token='fake',control_port=0),c,Stop())
+            motor_worker(SimpleNamespace(host='fake',control_port=0),c,Stop())
         self.assertEqual(waits,[0]);self.assertEqual(c.ack_ms,300)
 
     def test_reason_survives_stop_and_rearm(self):
         f=CameraFeed();c=Controls(f);c.ready=True
         with patch('pc_dashboard.time.monotonic',return_value=100):
-            f.publish(b'\xff\xd8\xff\xd9');c.claim('owner',1)
+            f.publish(frame());c.claim('owner',1)
         with patch('pc_dashboard.time.monotonic',return_value=100.5):
             self.assertEqual(c.command(),'S')
             reason=c.state()['last_stop'];self.assertIn('heartbeat',reason)
             c.stop_owner('owner','generic stop')
             self.assertEqual(c.state()['last_stop'],reason)
-            f.publish(b'\xff\xd8\xff\xd9');c.claim('next',2)
+            f.publish(frame());c.claim('next',2)
             self.assertEqual(c.state()['last_stop'],reason)
 
     def test_setup_uses_only_local_custom_models(self):

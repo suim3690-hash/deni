@@ -39,7 +39,7 @@ setup_detection.py는 로컬 object.pt와 hazard.pt만 검사하고 빈 이미�
 PC 실행(자리표시자를 기존 실제 값으로 변경):
 
 ```powershell
-.\.venv\Scripts\python.exe pc_dashboard.py --host 172.30.1.10 --token "기존_TOKEN" --camera-password "기존_카메라_비밀번호"
+.\.venv\Scripts\python.exe pc_dashboard.py --host 172.30.1.10
 ```
 
 Pi 실행:

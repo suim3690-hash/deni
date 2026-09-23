@@ -28,6 +28,21 @@ MAX_EVENTS = 500
 # Detection priorities, not medical risk estimates. battery is not a subtype classifier.
 RISK_LEVELS = {'coin': 1, 'marble': 1, 'battery': 2, 'dice': 1, 'die': 1,
                'knife': 2, 'scissors': 2, 'socket': 1, 'wire': 1}
+ALERT_LABEL_BITS = {label: 1 << index for index, label in enumerate(RISK_LEVELS)}
+# The model has used both spellings for the same Korean "주사위" contract.
+ALERT_LABEL_BITS['die'] = ALERT_LABEL_BITS['dice']
+
+
+def alert_label_mask(labels):
+    unknown = set(labels) - ALERT_LABEL_BITS.keys()
+    if unknown:
+        raise ValueError('Unknown alert labels: ' + ', '.join(sorted(unknown)))
+    mask = 0
+    for label in labels:
+        mask |= ALERT_LABEL_BITS[label]
+    return mask
+
+
 # Remove socket/wire from this set to keep electrical objects at their base level.
 PERSON_ESCALATION_CLASSES = set(RISK_LEVELS)
 MODEL_SPECS = [('object', WEIGHTS / 'object.pt', None),

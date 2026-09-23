@@ -2,8 +2,9 @@ import unittest
 from care_controller import CareController, Settings
 
 
-def obj(label):
-    return dict(label=label, bbox=[45,30,55,60])
+def obj(label, bearing=0.0):
+    centre = (bearing + 1) * 50
+    return dict(label=label, bbox=[centre-5, 30, centre+5, 60])
 
 
 def drop_marker(fill=.01, bearing=0, skew=0, centre=(50,45)):
@@ -17,11 +18,11 @@ class CareTests(unittest.TestCase):
         self.seq = 0
         self.ack = 'S'
 
-    def tick(self, labels=(), *, gap=.1, valid=True, marker=None, connected=True, generation=1):
+    def tick(self, labels=(), *, gap=.1, valid=True, marker=None, connected=True, generation=1, bearing=0.0):
         self.now += gap
         self.seq += 1
         obs = dict(status='ok' if valid else 'blur', frame_stamp=self.now, sequence=self.seq,
-                   hazards=[obj(label) for label in labels], frame_width=100, frame_height=100,
+                   hazards=[obj(label, bearing) for label in labels], frame_width=100, frame_height=100,
                    markers=[] if marker is None else [marker])
         result = self.c.step(obs, dict(ready=connected, ack=self.ack, generation=generation, acknowledged_at=self.now), self.now)
         self.ack = result
@@ -136,6 +137,33 @@ class CareTests(unittest.TestCase):
         self.assertFalse(self.c.powered)
         self.assertEqual(self.tick(generation=2),'S')
 
+    def test_large_bearing_turns_without_stopping_between_frames(self):
+        self.start(); self.tick(['dice'])
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='주사위'),self.now)
+        # 오차가 coarse_bearing 이상이면 멈춤 없이 계속 돈다.
+        commands = [self.tick(['dice'], bearing=-.8) for _ in range(6)]
+        self.assertEqual(commands, ['L'] * 6)
+        self.assertEqual(self.c.phase,'ALIGNING_TARGET')
+
+    def test_small_bearing_still_pulses_so_it_does_not_overshoot(self):
+        self.start(); self.tick(['dice'])
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='주사위'),self.now)
+        # 데드밴드와 coarse_bearing 사이에서는 짧게 돌고 새 프레임을 기다린다.
+        commands = [self.tick(['dice'], bearing=.2) for _ in range(6)]
+        self.assertIn('R', commands)
+        self.assertIn('S', commands)
+
+    def test_blind_marker_search_keeps_stopping_to_look(self):
+        self.start(); self.tick(['dice'])
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='주사위'),self.now)
+        self.tick(['dice'])
+        while self.c.phase == 'CAPTURING': self.tick([])
+        self.assertEqual(self.c.phase,'SEEKING_MARKER')
+        # 마커가 보이지 않는 탐색은 흔들린 프레임으로 지나칠 수 있어 펄스를 유지한다.
+        commands = [self.tick([]) for _ in range(6)]
+        self.assertIn('S', commands)
+        self.assertIn('R', commands)
+
     def test_relocation_captures_then_uses_marker_and_verifies_drop(self):
         self.start(); self.tick(['dice'])
         self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='주사위'),self.now)
@@ -224,6 +252,15 @@ class CareTests(unittest.TestCase):
     def test_configuration_validation(self):
         with self.assertRaises(ValueError): Settings(removal_absence_seconds=1)
         with self.assertRaises(ValueError): Settings(turnaround_seconds=float('nan'))
+
+    def test_measured_drop_layout_passes_updated_radius(self):
+        target = obj('battery')
+        target['bbox'] = [459.46, 341.55, 570.26, 705.18]
+        marker = drop_marker(centre=(639.2, 230.5))
+        observation = dict(frame_width=1280, frame_height=720)
+        self.assertFalse(CareController(Settings(drop_verify_radius_ratio=.3))
+                         ._drop_is_verified([target], marker, observation))
+        self.assertTrue(self.c._drop_is_verified([target], marker, observation))
 
 
 if __name__=='__main__': unittest.main()

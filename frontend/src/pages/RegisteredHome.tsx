@@ -463,8 +463,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
                 <button
                   type="button"
                   onClick={openMap}
-                  disabled={!connected}
-                  title={!connected ? '로봇청소기를 연결하면 사용할 수 있어요' : undefined}
+                  title={!connected ? '기기 연결 없이도 감지된 위험과 사진을 볼 수 있어요. 처리 요청은 연결된 뒤에 가능합니다.' : undefined}
                   className={`flex min-h-[38px] min-w-[205px] items-center justify-center rounded-full px-5 py-1.5 text-[14px] font-semibold text-white transition-colors focus-visible:outline-[#a50034] disabled:cursor-not-allowed disabled:opacity-45 ${activeHazard ? 'bg-[#b9003d]' : 'bg-[#167359]'}`}
                 >
                   스마트 안심 케어 맵 <ArrowRight size={15} className="ml-1" />
