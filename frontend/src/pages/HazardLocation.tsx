@@ -113,10 +113,8 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
 
   // 목업에서는 조치가 끝나면(running) 위험 물체가 해결된 것으로 본다.
   const category = classifyHazard(name)
-  const firstSwallow = hazards.find((item) => classifyHazard(item.objectName) === 'SWALLOW')
-  const deferredLiving = category === 'LIVING' && Boolean(firstSwallow)
   const selectedResolved = locallyResolvedLiving || (!isMock && (detail?.status === 'RESOLVED' || removalState === 'done' || relocationState === 'done'))
-  const selectedHandled = selectedResolved || deferredLiving
+  const selectedHandled = selectedResolved
   const activeHazard = flow === 'running' || selectedHandled ? null : hazard
   const remainingHazards = selectedHandled ? hazards.filter((item) => item.hazardId !== hazard?.hazardId) : []
   const detectedHazards = hazards.length > 0 ? hazards : hazard ? [hazard] : []
@@ -308,7 +306,7 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
   }
 
   async function confirmLivingHazard() {
-    if (!hazard || acknowledgingLiving || firstSwallow) return
+    if (!hazard || acknowledgingLiving) return
     if (isMock) {
       setLocallyResolvedLiving(true)
       return
@@ -461,7 +459,7 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
                 )}
               </>
             ) : (
-              <div className="mt-3 rounded-[12px] border border-[#e2e8f0] bg-[#f8fafc] px-3 py-5 text-center text-[13px] text-[#64748b]">{deferredLiving ? '삼킴 위험물을 먼저 처리해 주세요. 생활공간 위험요소는 지도에 표시됩니다.' : selectedResolved ? remainingHazards.length > 0 ? `선택한 위험요소는 처리됐어요. 남은 위험물 ${remainingHazards.length}건을 확인해 주세요.` : '선택한 위험요소는 처리됐으며 지도에서 제거됐어요.' : '감지된 위험 물체가 없습니다.'}</div>
+              <div className="mt-3 rounded-[12px] border border-[#e2e8f0] bg-[#f8fafc] px-3 py-5 text-center text-[13px] text-[#64748b]">{selectedResolved ? remainingHazards.length > 0 ? `선택한 위험요소는 처리됐어요. 남은 위험물 ${remainingHazards.length}건을 확인해 주세요.` : '선택한 위험요소는 처리됐어요.' : '감지된 위험 물체가 없습니다.'}</div>
             )}
           </section>
           {isMock && <p className="text-center text-[11px] text-[#94a3b8]">지도·사진·위험 정보는 화면 확인용 예시입니다.</p>}

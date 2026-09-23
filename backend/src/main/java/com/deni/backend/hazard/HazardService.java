@@ -67,10 +67,6 @@ public class HazardService {
 		if (hazard.getStatus() != HazardStatus.ACTIVE) {
 			throw ApiException.conflict("LIVING_ACK_NOT_AVAILABLE", "활성 생활공간 위험요소만 확인 완료할 수 있습니다.");
 		}
-		if (hazardRepository.existsByDeviceIdAndChildIdAndObjectTypeAndStatus(
-				hazard.getDeviceId(), hazard.getChildId(), "SWALLOW", HazardStatus.ACTIVE)) {
-			throw ApiException.conflict("SWALLOW_HAZARD_FIRST", "삼킴 위험물을 먼저 처리해 주세요.");
-		}
 		hazard.acknowledgeLiving(OffsetDateTime.now(SERVICE_ZONE));
 		return toDetail(hazard);
 	}
