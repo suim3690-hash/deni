@@ -253,5 +253,14 @@ class CareTests(unittest.TestCase):
         with self.assertRaises(ValueError): Settings(removal_absence_seconds=1)
         with self.assertRaises(ValueError): Settings(turnaround_seconds=float('nan'))
 
+    def test_measured_drop_layout_passes_updated_radius(self):
+        target = obj('battery')
+        target['bbox'] = [459.46, 341.55, 570.26, 705.18]
+        marker = drop_marker(centre=(639.2, 230.5))
+        observation = dict(frame_width=1280, frame_height=720)
+        self.assertFalse(CareController(Settings(drop_verify_radius_ratio=.3))
+                         ._drop_is_verified([target], marker, observation))
+        self.assertTrue(self.c._drop_is_verified([target], marker, observation))
+
 
 if __name__=='__main__': unittest.main()

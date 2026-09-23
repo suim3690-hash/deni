@@ -78,7 +78,7 @@ PC–Pi 연결이 끊기면 정지한 뒤 자동으로 다시 접속하고, 새 
 | `reverse_seconds` | 1.0 | 이송 후 후진 시간. |
 | `drop_verify_seconds` | 1.0 | 후진 후 물체와 마커 근접을 연속 확인하는 시간. |
 | `drop_verify_timeout_seconds` | 10.0 | 안전 구역 배치 확인 제한 시간. |
-| `drop_verify_radius_ratio` | 0.3 | 화면 너비·높이로 정규화한 물체–마커 중심 거리 허용값. |
+| `drop_verify_radius_ratio` | 0.45 | 화면 너비·높이로 정규화한 물체–마커 중심 거리 허용값. 2026-09-23 실물 배치에서 측정한 중심 거리 약 0.42를 포함한다. |
 | `turnaround_seconds` | 1.0 | 이송 후 회전 시간. |
 | `action_timeout_seconds` | 120.0 | 처리 요청 제한 시간. 넘기면 실패로 보고한다. |
 

@@ -56,10 +56,15 @@ class ScriptedCamera:
     def __init__(self):
         self.lock = threading.Lock()
         self.labels, self.fill, self.sequence, self.processing = [], 0.05, 0, False
+        self.suppressed = set()
 
     def set_processing(self, enabled):
         with self.lock:
             self.processing = enabled
+
+    def set_suppressed_alert_labels(self, labels):
+        with self.lock:
+            self.suppressed = set(labels)
 
     def show(self, labels, fill=0.05):
         with self.lock:
@@ -151,6 +156,7 @@ def main():
         wait_for(lambda: runtime.state()['taskState'] == 'HAZARD_PAUSED', 'hazard stop before relocation')
         relocate = issue('RELOCATE', {'hazardId': HAZARD, 'objectLabel': '동전'})
         wait_for(lambda: runtime.state()['taskState'] == 'CAPTURING', 'target capture start')
+        check('relocation suppresses only the target from backend alert uploads', camera.suppressed == {'coin'})
         camera.show([])
         wait_for(lambda: runtime.state()['taskState'] == 'PUSHING_TO_MARKER', 'marker-guided relocation start')
         check('relocation keeps moving after the captured object leaves view', wait_for(lambda: 'F' in motor.sent[-30:], 'push'))
@@ -162,6 +168,7 @@ def main():
         wait_for(lambda: runtime.state()['taskState'] == 'TURNING_AROUND', 'turnaround')
         camera.show([])
         wait_for(lambda: finished(relocate['commandId']), 'relocation result')
+        check('relocation clears target alert suppression after turning', camera.suppressed == set())
         check('relocation reverses then turns on the configured timers',
               'B' in motor.sent and 'R' in motor.sent)
         check('relocation reports completion after the timed moves', finished(relocate['commandId']))

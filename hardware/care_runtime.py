@@ -29,6 +29,11 @@ class Runtime:
         self.lock = threading.RLock()
         self.snapshot_path = snapshot_path
 
+    def _sync_alert_suppression(self):
+        action = self.controller.action
+        labels = {action[2]['label']} if action and action[0] == 'RELOCATE' else set()
+        self.detector.set_suppressed_alert_labels(labels)
+
     def state(self):
         motor = self.motor.observation()
         with self.lock:
@@ -40,6 +45,7 @@ class Runtime:
         with self.lock:
             before = self.controller.powered
             self.controller.request(command, identity, parameters or {}, time.monotonic())
+            self._sync_alert_suppression()
             if before != self.controller.powered:
                 self.detector.set_processing(self.controller.powered)
         while not self.stop.wait(.05):
@@ -59,6 +65,7 @@ class Runtime:
             motor = self.motor.observation()
             with self.lock:
                 command = self.controller.step(observation, motor, time.monotonic())
+                self._sync_alert_suppression()
                 self.motor.submit(command, time.monotonic()+.15, motor['generation'])
                 state = (self.controller.phase, self.controller.reason, motor['ready'])
                 diagnostic = dict(task=self.controller.phase, reason=self.controller.reason,
@@ -66,6 +73,7 @@ class Runtime:
                     command=command, motor=motor, detectionStatus=observation.get('status'),
                     resultAge=observation.get('result_age'), blurScore=observation.get('blur_score'),
                     inferenceMs=observation.get('inference_ms'), sequence=observation.get('sequence'),
+                    suppressedAlerts=observation.get('suppressed_alert_labels',[]),
                     modelErrors=observation.get('model_errors'), cameraUnavailable=observation.get('camera_unavailable',False),
                     objects=[dict(label=d.get('label'),confidence=d.get('confidence'),stable=d.get('stable')) for d in observation.get('hazards',[])],
                     markers=observation.get('markers',[]), recordedAt=time.time())

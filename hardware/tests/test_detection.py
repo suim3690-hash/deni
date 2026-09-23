@@ -15,6 +15,7 @@ from detection import config as C
 from detection.service import LatestFrame, DetectionService
 from detection.risk_engine import RiskEngine
 from detection.event_store import EventStore, history
+from detection.worker import unsuppressed_events
 
 
 def obj(label='coin', confidence=.9, track=1, model='object'):
@@ -38,6 +39,19 @@ def delayed_worker(mailbox, output, stop):
 
 
 class Tests(unittest.TestCase):
+    def test_relocation_target_alert_is_filtered_without_hiding_other_hazards(self):
+        events = [obj('battery'), obj('coin'), obj('die')]
+        filtered = unsuppressed_events(events, C.alert_label_mask({'battery'}))
+        self.assertEqual([event['label'] for event in filtered], ['coin', 'die'])
+        self.assertEqual(unsuppressed_events([obj('die')], C.alert_label_mask({'dice'})), [])
+
+    def test_detection_service_exposes_current_alert_suppression(self):
+        service = DetectionService(CameraFeed(), enabled=False)
+        service.set_suppressed_alert_labels({'battery'})
+        self.assertEqual(service.state()['suppressed_alert_labels'], ['battery'])
+        with self.assertRaises(ValueError):
+            service.set_suppressed_alert_labels({'unknown'})
+
     def test_backend_images_are_cropped_per_detection(self):
         from uploader import crop_detection_images
         frame = np.zeros((120, 200, 3), dtype=np.uint8)

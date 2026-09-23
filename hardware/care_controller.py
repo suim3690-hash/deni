@@ -14,7 +14,7 @@ class Settings:
     observation_ttl: float = 3.0
     max_observation_gap: float = 1.0
     marker_id: int = 0
-    marker_stop_fill: float = .13126
+    marker_stop_fill: float = .05595
     bearing_deadband: float = .12
     coarse_bearing: float = .35
     turn_pulse_seconds: float = .12
@@ -24,7 +24,7 @@ class Settings:
     reverse_seconds: float = 1.0
     drop_verify_seconds: float = 1.0
     drop_verify_timeout_seconds: float = 10.0
-    drop_verify_radius_ratio: float = .3
+    drop_verify_radius_ratio: float = .45
     turnaround_seconds: float = 1.0
     action_timeout_seconds: float = 120.0
 
