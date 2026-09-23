@@ -4,7 +4,6 @@
 Core transport uses the standard library; optional AI runs in a child process.
 """
 import argparse
-import base64
 import json
 import secrets
 import threading
@@ -31,8 +30,7 @@ PAUSE_CONFIRM_SEC = 3.0
 
 
 class CameraFeed:
-    def __init__(self, rotation=0):
-        self.rotation = rotation
+    def __init__(self):
         self.lock = threading.Lock()
         self.jpeg = None
         self.sequence = 0
@@ -43,17 +41,6 @@ class CameraFeed:
         received_at = time.monotonic()
         if not jpeg.startswith(b'\xff\xd8') or not jpeg.endswith(b'\xff\xd9'):
             raise ValueError('Invalid JPEG')
-        if self.rotation == 180:
-            import cv2
-            import numpy as np
-            frame = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
-            if frame is None:
-                raise ValueError('JPEG decode failed')
-            ok, encoded = cv2.imencode('.jpg', cv2.rotate(frame, cv2.ROTATE_180),
-                                       [cv2.IMWRITE_JPEG_QUALITY, 90])
-            if not ok:
-                raise ValueError('Rotated JPEG encode failed')
-            jpeg = encoded.tobytes()
         with self.lock:
             self.jpeg = jpeg
             self.sequence += 1
@@ -105,12 +92,11 @@ def read_mjpeg(response, feed, stop):
 
 def camera_worker(args, feed, stop):
     url = f'http://{args.host}:{args.camera_port}/stream.mjpg'
-    auth = base64.b64encode(('robot:' + args.camera_password).encode()).decode()
     # Direct LAN connection, independent of system HTTP proxy settings.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     while not stop.is_set():
         try:
-            request = urllib.request.Request(url, headers={'Authorization': 'Basic ' + auth})
+            request = urllib.request.Request(url)
             with opener.open(request, timeout=1.0) as response:
                 read_mjpeg(response, feed, stop)
         except Exception as exc:
@@ -247,7 +233,7 @@ def backend_commands(controls, stop):
 def motor_worker(args, controls, stop):
     robot = None
     try:
-        robot = RobotClient(args.host, args.token, args.control_port)
+        robot = RobotClient(args.host, None, args.control_port)
         with controls.lock:
             controls.ready, controls.error = True, None
         while not stop.is_set():
@@ -363,21 +349,17 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--host', required=True)
-    parser.add_argument('--token', help='TOKEN from pi_receiver.py; required with --motor')
     parser.add_argument('--motor', action='store_true', help='Enable Arduino control; default is camera only')
-    parser.add_argument('--camera-password', required=True, help='Browser password from pi_video_server.py')
     parser.add_argument('--control-port', type=int, default=8765)
     parser.add_argument('--camera-port', type=int, default=8000)
-    parser.add_argument('--rotation', type=int, choices=(0, 180), default=180,
-                        help='Rotate received image before display, inference and upload (default: 180)')
     parser.add_argument('--port', type=int, default=8080, help='PC local dashboard port')
     parser.add_argument('--no-browser', action='store_true')
     parser.add_argument('--no-detection', action='store_true', help='Run video and controls only')
     parser.add_argument('--detection-mode', choices=('object', 'hazard'), default='object')
     args = parser.parse_args()
-    if args.motor and not args.token:
-        parser.error('--motor requires --token')
-    feed, stop = CameraFeed(rotation=args.rotation), threading.Event()
+    # Pi rotates the camera globally before streaming. Keep those exact bytes so
+    # dashboard, object/ArUco detection and uploads cannot apply a second flip.
+    feed, stop = CameraFeed(), threading.Event()
     controls = Controls(feed)
     detection = DetectionService(feed, enabled=not args.no_detection, mode=args.detection_mode)
     server = Dashboard(args.port, feed, controls, detection)
