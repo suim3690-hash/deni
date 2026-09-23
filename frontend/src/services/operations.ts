@@ -1,5 +1,6 @@
 import { generateId } from '../lib/id'
 import { apiErrorFromResponse } from './apiError'
+import { apiBaseUrl } from '../lib/runtime'
 
 export interface ActionReceipt {
   actionId: string
@@ -18,14 +19,15 @@ export interface ActionResult extends ActionReceipt {
 }
 
 function apiBase() {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL
+  const baseUrl = apiBaseUrl
   if (!baseUrl) throw new Error('API URL is missing')
-  return baseUrl.replace(/\/$/, '')
+  return baseUrl
 }
 
 // FR-025: request the device to reconfirm the hazard is gone before the guardian's
-// "direct removal" can be marked complete. The backend only ever records this intent
-// today (no device ingestion exists yet), so the result is always PENDING/UNKNOWN.
+// "direct removal" can be marked complete. The backend queues this for the device and
+// only reports COMPLETED after the device confirms a continuous absence window, so the
+// caller has to poll getSafetyAction instead of assuming the receipt means success.
 export async function requestRemovalCheck(hazardId: string): Promise<ActionReceipt> {
   const response = await fetch(`${apiBase()}/api/v1/hazards/${encodeURIComponent(hazardId)}/removal-checks`, {
     method: 'POST',
@@ -42,15 +44,18 @@ export async function getSafetyAction(actionId: string): Promise<ActionResult> {
   return response.json() as Promise<ActionResult>
 }
 
-// FR-026/028: the relocation contract (allowed objects, destination, device delivery)
-// isn't finalized server-side, so this call is expected to always come back blocked
-// with RELOCATION_NOT_CONFIGURED today. The caller surfaces that as the FR-028
+// FR-026/028: relocation pushes a swallow hazard to the ArUco marker position, so the
+// body stays empty and a safeZoneId is rejected. The backend refuses the request when
+// relocation cannot start (RELOCATION_NOT_SUPPORTED, DEVICE_NOT_PAUSED,
+// DEVICE_NOT_CONTROLLABLE, ACTION_IN_PROGRESS); the caller surfaces that as the FR-028
 // "이동 불가 시 직접 제거 안내" alternate flow rather than treating it as a bug.
-export async function requestRelocation(hazardId: string): Promise<void> {
+// Completion is only TEMPORARY_COMPLETED after the device reports it, via getSafetyAction.
+export async function requestRelocation(hazardId: string): Promise<ActionReceipt> {
   const response = await fetch(`${apiBase()}/api/v1/hazards/${encodeURIComponent(hazardId)}/relocations`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Idempotency-Key': generateId() },
     body: '{}',
   })
   if (!response.ok) throw await apiErrorFromResponse(response, '안전 위치 이동 요청을 접수하지 못했어요.')
+  return response.json() as Promise<ActionReceipt>
 }

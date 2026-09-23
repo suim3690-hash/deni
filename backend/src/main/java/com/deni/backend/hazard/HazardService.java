@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.time.Duration;
 import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -17,6 +18,7 @@ import java.util.UUID;
 public class HazardService {
 
 	private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
+	private static final Duration LIVING_REDETECTION_GAP = Duration.ofSeconds(30);
 
 	private final HazardRepository hazardRepository;
 	private final IdempotencyGuard idempotencyGuard;
@@ -45,8 +47,28 @@ public class HazardService {
 		}
 		return hazardRepository.findByChildIdAndStatusOrderByDetectedAtDesc(childId, HazardStatus.ACTIVE).stream()
 				.map(hazard -> new ActiveHazardSummary(hazard.getId(), hazard.getObjectName(),
-						hazard.getRiskLevel().name(), hazard.getLocationLabel(), hazard.getDetectedAt()))
+						hazard.getRiskLevel().name(), hazard.getLocationLabel(), hazard.getDetectedAt(),
+						hazard.getAcknowledgedAt()))
 				.toList();
+	}
+
+	@Transactional
+	public HazardDetailResult acknowledgeLiving(UUID hazardId) {
+		Hazard hazard = hazardRepository.findById(hazardId)
+				.orElseThrow(() -> ApiException.notFound("HAZARD_NOT_FOUND", "위험 감지 정보를 찾을 수 없습니다."));
+		idempotencyGuard.lock("device", hazard.getDeviceId());
+		if (!"LIVING".equals(hazard.getObjectType())) {
+			throw ApiException.conflict("LIVING_ACK_NOT_AVAILABLE", "생활공간 위험요소만 확인 완료할 수 있습니다.");
+		}
+		// 응답을 받지 못한 클라이언트가 같은 요청을 다시 보내도 이미 완료된 결과를 반환한다.
+		if (hazard.getStatus() == HazardStatus.RESOLVED && hazard.getAcknowledgedAt() != null) {
+			return toDetail(hazard);
+		}
+		if (hazard.getStatus() != HazardStatus.ACTIVE) {
+			throw ApiException.conflict("LIVING_ACK_NOT_AVAILABLE", "활성 생활공간 위험요소만 확인 완료할 수 있습니다.");
+		}
+		hazard.acknowledgeLiving(OffsetDateTime.now(SERVICE_ZONE));
+		return toDetail(hazard);
 	}
 
 	@Transactional(readOnly = true)
@@ -110,6 +132,8 @@ public class HazardService {
 		validateMarker(input.markerX(), input.markerY());
 		Double markerX = normalizeZero(input.markerX());
 		Double markerY = normalizeZero(input.markerY());
+		// Serialize detection merging with treatment results after validation.
+		idempotencyGuard.lock("device", deviceId);
 
 		OffsetDateTime now = OffsetDateTime.now(SERVICE_ZONE);
 		Hazard hazard = new Hazard(UUID.randomUUID(), input.childId(), deviceId, HazardStatus.ACTIVE,
@@ -124,19 +148,42 @@ public class HazardService {
 			}
 			return toDetail(existing);
 		}
+		// 같은 물체가 아직 미해결이면 새 건을 만들지 않고 최신 탐지로 갱신한다.
+		// 탐지 1프레임마다 알림이 쌓여 실제 물체 수와 어긋나는 문제를 막는다.
+		Hazard sameObject = hazardRepository
+				.findFirstByDeviceIdAndChildIdAndObjectTypeAndObjectNameAndStatusOrderByDetectedAtDesc(
+						deviceId, input.childId(), objectType, objectName, HazardStatus.ACTIVE)
+				.orElse(null);
+		if (sameObject != null) {
+			sameObject.refreshFromDetection(input.detectedAt(), normalizeOptional(input.captureImageUrl()),
+					riskLevel, operationState, now);
+			return toDetail(sameObject);
+		}
+		if ("LIVING".equals(objectType)) {
+			Hazard recentlyAcknowledged = hazardRepository
+					.findFirstByDeviceIdAndChildIdAndObjectTypeAndObjectNameAndStatusAndAcknowledgedAtIsNotNullAndUpdatedAtGreaterThanEqualOrderByUpdatedAtDesc(
+							deviceId, input.childId(), objectType, objectName, HazardStatus.RESOLVED,
+							now.minus(LIVING_REDETECTION_GAP))
+					.orElse(null);
+			if (recentlyAcknowledged != null) {
+				recentlyAcknowledged.touchAcknowledgedLiving(now);
+				return toDetail(recentlyAcknowledged);
+			}
+		}
 		return toDetail(hazardRepository.save(hazard));
 	}
 
 	private HazardListItem toListItem(Hazard hazard) {
 		return new HazardListItem(hazard.getId(), hazard.getObjectName(), hazard.getRiskLevel().name(),
-				hazard.getDetectedAt(), new LocationSummary(hazard.getLocationLabel(), marker(hazard)));
+				hazard.getDetectedAt(), new LocationSummary(hazard.getLocationLabel(), marker(hazard)),
+				hazard.getAcknowledgedAt());
 	}
 
 	private HazardDetailResult toDetail(Hazard hazard) {
 		return new HazardDetailResult(hazard.getId(), hazard.getDeviceId(), hazard.getStatus().name(),
 				new DetectedObject(hazard.getObjectType(), hazard.getObjectName()), hazard.getRiskLevel().name(),
 				hazard.getRiskReason(), hazard.getDetectedAt(),
-				new LocationDetail(hazard.getLocationLabel(), hazard.getMapImageUrl(), marker(hazard)),
+				new LocationDetail(hazard.getLocationLabel(), hazard.getMapImageUrl(), marker(hazard)), hazard.getAcknowledgedAt(),
 				hazard.getCaptureImageUrl(), hazard.getDeviceOperationState().name());
 	}
 
@@ -208,7 +255,7 @@ public class HazardService {
 	}
 
 	public record ActiveHazardSummary(UUID hazardId, String objectName, String riskLevel,
-			String locationLabel, OffsetDateTime detectedAt) {
+			String locationLabel, OffsetDateTime detectedAt, OffsetDateTime acknowledgedAt) {
 	}
 
 	public record ObjectDetectionCount(String objectType, String label, long count, String riskLevel) {
@@ -218,12 +265,12 @@ public class HazardService {
 	}
 
 	public record HazardListItem(UUID hazardId, String objectName, String riskLevel,
-			OffsetDateTime detectedAt, LocationSummary location) {
+			OffsetDateTime detectedAt, LocationSummary location, OffsetDateTime acknowledgedAt) {
 	}
 
 	public record HazardDetailResult(UUID hazardId, String deviceId, String status,
 			DetectedObject object, String riskLevel, String riskReason, OffsetDateTime detectedAt,
-			LocationDetail location, String captureImageUrl, String deviceOperationState) {
+			LocationDetail location, OffsetDateTime acknowledgedAt, String captureImageUrl, String deviceOperationState) {
 	}
 
 	public record DetectedObject(String type, String name) {

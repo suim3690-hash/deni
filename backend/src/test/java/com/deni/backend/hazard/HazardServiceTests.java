@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -81,6 +82,61 @@ class HazardServiceTests {
 		assertEquals("VERY_HIGH", results.getFirst().riskLevel());
 		assertEquals("거실 러그 위", results.getFirst().locationLabel());
 		assertEquals(DETECTED_AT, results.getFirst().detectedAt());
+	}
+
+	@Test
+	void livingAcknowledgementResolvesAlongsideSwallowAndIsRetrySafe() {
+		UUID id = UUID.randomUUID();
+		UUID child = UUID.randomUUID();
+		Hazard living = new Hazard(id, child, "robot-1", HazardStatus.ACTIVE, "LIVING", "전선",
+				RiskLevel.HIGH, null, DETECTED_AT, null, null, null, null, null,
+				DeviceOperationState.RUNNING, "event-living", DETECTED_AT);
+		HazardRepository repository = mock(HazardRepository.class);
+		when(repository.findById(id)).thenReturn(Optional.of(living));
+		when(repository.existsByDeviceIdAndChildIdAndObjectTypeAndStatus(
+				"robot-1", child, "SWALLOW", HazardStatus.ACTIVE)).thenReturn(true);
+		HazardService service = new HazardService(repository, guard);
+
+		var acknowledged = service.acknowledgeLiving(id);
+		assertEquals("RESOLVED", acknowledged.status());
+		assertEquals(living.getAcknowledgedAt(), acknowledged.acknowledgedAt());
+		var retried = service.acknowledgeLiving(id);
+		assertEquals("RESOLVED", retried.status());
+		assertEquals(acknowledged.acknowledgedAt(), retried.acknowledgedAt());
+	}
+
+	@Test
+	void swallowHazardCannotBeAcknowledgedAsLiving() {
+		UUID id = UUID.randomUUID();
+		HazardRepository repository = mock(HazardRepository.class);
+		when(repository.findById(id)).thenReturn(Optional.of(new Hazard(id, UUID.randomUUID(), "robot-1",
+				HazardStatus.ACTIVE, "SWALLOW", "동전", RiskLevel.HIGH, null, DETECTED_AT,
+				null, null, null, null, null, DeviceOperationState.PAUSED, "event-swallow", DETECTED_AT)));
+		assertEquals("LIVING_ACK_NOT_AVAILABLE", assertThrows(ApiException.class,
+				() -> new HazardService(repository, guard).acknowledgeLiving(id)).getCode());
+	}
+
+	@Test
+	void continuousLivingRedetectionKeepsAcknowledgedHazardResolved() {
+		UUID child = UUID.randomUUID();
+		Hazard acknowledged = new Hazard(UUID.randomUUID(), child, "robot-1", HazardStatus.ACTIVE,
+				"LIVING", "전선", RiskLevel.HIGH, null, DETECTED_AT, null, null, null, null, null,
+				DeviceOperationState.RUNNING, "event-living-1", DETECTED_AT);
+		acknowledged.acknowledgeLiving(OffsetDateTime.now());
+		HazardRepository repository = mock(HazardRepository.class);
+		when(repository
+				.findFirstByDeviceIdAndChildIdAndObjectTypeAndObjectNameAndStatusAndAcknowledgedAtIsNotNullAndUpdatedAtGreaterThanEqualOrderByUpdatedAtDesc(
+						eq("robot-1"), eq(child), eq("LIVING"), eq("전선"), eq(HazardStatus.RESOLVED),
+						any(OffsetDateTime.class)))
+				.thenReturn(Optional.of(acknowledged));
+
+		var result = new HazardService(repository, guard).recordDetection(new HazardService.DetectionInput(
+				child, "robot-1", "LIVING", "전선", "HIGH", null, OffsetDateTime.now(),
+				null, null, null, null, "/image/new", "RUNNING", "event-living-2"));
+
+		assertEquals(acknowledged.getId(), result.hazardId());
+		assertEquals("RESOLVED", result.status());
+		verify(repository, never()).save(any());
 	}
 
 	@Test
@@ -192,6 +248,37 @@ class HazardServiceTests {
 	}
 
 	@Test
+	void mergedDetectionKeepsImageAndTimeFromTheSameNewestEvent() {
+		HazardRepository repository = mock(HazardRepository.class);
+		UUID childId = UUID.randomUUID();
+		Hazard stored = new Hazard(UUID.randomUUID(), childId, "robot-1", HazardStatus.ACTIVE,
+				"SWALLOW", "배터리", RiskLevel.HIGH, null, DETECTED_AT, null, null,
+				null, null, "/image/old", DeviceOperationState.PAUSED, "event-1", DETECTED_AT);
+		when(repository.findFirstByDeviceIdAndChildIdAndObjectTypeAndObjectNameAndStatusOrderByDetectedAtDesc(
+				"robot-1", childId, "SWALLOW", "배터리", HazardStatus.ACTIVE)).thenReturn(Optional.of(stored));
+		HazardService service = new HazardService(repository, guard);
+
+		var newer = service.recordDetection(new HazardService.DetectionInput(childId, "robot-1", "SWALLOW",
+				"배터리", "HIGH", null, DETECTED_AT.plusSeconds(10), null, null, null, null,
+				"/image/new", "PAUSED", "event-2"));
+		assertEquals("/image/new", newer.captureImageUrl());
+		assertEquals(DETECTED_AT.plusSeconds(10), newer.detectedAt());
+
+		var withoutPhoto = service.recordDetection(new HazardService.DetectionInput(childId, "robot-1", "SWALLOW",
+				"배터리", "HIGH", null, DETECTED_AT.plusSeconds(20), null, null, null, null,
+				null, "PAUSED", "event-3"));
+		assertNull(withoutPhoto.captureImageUrl());
+		assertEquals(DETECTED_AT.plusSeconds(20), withoutPhoto.detectedAt());
+
+		var delayed = service.recordDetection(new HazardService.DetectionInput(childId, "robot-1", "SWALLOW",
+				"배터리", "HIGH", null, DETECTED_AT.plusSeconds(15), null, null, null, null,
+				"/image/delayed", "PAUSED", "event-4"));
+		assertNull(delayed.captureImageUrl());
+		assertEquals(DETECTED_AT.plusSeconds(20), delayed.detectedAt());
+		verify(repository, never()).save(any());
+	}
+
+	@Test
 	void changedContentOnSameEventIsRejectedAndDifferentEventsAreStoredSeparately() {
 		HazardRepository repository = mock(HazardRepository.class);
 		UUID childId = UUID.randomUUID();
@@ -240,6 +327,23 @@ class HazardServiceTests {
 		when(hazard.getStatus()).thenReturn(HazardStatus.RESOLVED);
 		assertEquals("HAZARD_ALREADY_RESOLVED", assertThrows(ApiException.class,
 				() -> service.requireActiveAssociation(id, child, "robot-1")).getCode());
+	}
+
+	@Test
+	void newerDetectionUpdatesRiskButDelayedDetectionDoesNot() {
+		Hazard hazard = new Hazard(UUID.randomUUID(), UUID.randomUUID(), "robot-1", HazardStatus.ACTIVE,
+				"SWALLOW", "battery", RiskLevel.HIGH, null, DETECTED_AT, null, null, null, null,
+				"/image/old", DeviceOperationState.PAUSED, "event-1", DETECTED_AT);
+
+		hazard.refreshFromDetection(DETECTED_AT.plusSeconds(10), "/image/new", RiskLevel.VERY_HIGH,
+				DeviceOperationState.PAUSED, DETECTED_AT.plusSeconds(10));
+		assertEquals(RiskLevel.VERY_HIGH, hazard.getRiskLevel());
+		assertEquals("/image/new", hazard.getCaptureImageUrl());
+
+		hazard.refreshFromDetection(DETECTED_AT.plusSeconds(5), "/image/delayed", RiskLevel.MEDIUM,
+				DeviceOperationState.PAUSED, DETECTED_AT.plusSeconds(11));
+		assertEquals(RiskLevel.VERY_HIGH, hazard.getRiskLevel());
+		assertEquals("/image/new", hazard.getCaptureImageUrl());
 	}
 
 	private HazardService.DetectionInput input(UUID childId, String device, String event, String name,

@@ -2,7 +2,6 @@ package com.deni.backend.operation;
 
 import com.deni.backend.common.ApiException;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -17,12 +16,11 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1")
-@CrossOrigin(origins = {"http://localhost:5173", "http://127.0.0.1:5173"})
 public class OperationController {
 	private final OperationService service;
 	public OperationController(OperationService service) { this.service = service; }
 
-	@PostMapping("/devices/{deviceId}/commands/{command:pause|resume}")
+	@PostMapping("/devices/{deviceId}/commands/{command:pause|resume|power-on|power-off}")
 	ResponseEntity<OperationService.CommandReceipt> command(@PathVariable String deviceId, @PathVariable String command,
 			@RequestHeader("Idempotency-Key") UUID key, @RequestBody Map<String, Object> body) {
 		requireEmpty(body);
@@ -47,12 +45,14 @@ public class OperationController {
 	OperationService.ActionResult action(@PathVariable UUID actionId) { return service.getAction(actionId); }
 
 	@PostMapping("/hazards/{hazardId}/relocations")
-	void relocation(@PathVariable UUID hazardId, @RequestHeader("Idempotency-Key") UUID key,
+	ResponseEntity<OperationService.ActionReceipt> relocation(@PathVariable UUID hazardId, @RequestHeader("Idempotency-Key") UUID key,
 			@RequestBody Map<String, Object> body) {
 		if (body.keySet().stream().anyMatch(field -> !field.equals("safeZoneId"))) {
 			throw ApiException.validation("지원하지 않는 필드입니다.", Map.of("body", "safeZoneId만 허용합니다."));
 		}
-		service.rejectRelocation(hazardId, key);
+		if(body.get("safeZoneId")!=null) throw ApiException.validation("현재 목적지는 ArUco ID 0입니다.",Map.of("safeZoneId","본문은 {}를 사용해 주세요."));
+		var result=service.requestRelocation(hazardId,key);
+		return ResponseEntity.accepted().location(URI.create("/api/v1/safety-actions/"+result.actionId())).body(result);
 	}
 
 	private void requireEmpty(Map<String, Object> body) {

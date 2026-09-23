@@ -68,10 +68,10 @@ class OperationControllerTests {
 		UUID key = UUID.randomUUID();
 		UUID hazard = UUID.randomUUID();
 		when(service.requestCommand("robot-1", "resume", key)).thenThrow(ApiException.conflict("SAFETY_CONFIRMATION_REQUIRED", "안전 확인 없음"));
-		doThrow(ApiException.conflict("RELOCATION_NOT_CONFIGURED", "안전 위치 없음")).when(service).rejectRelocation(hazard, key);
+		when(service.requestRelocation(hazard, key)).thenThrow(ApiException.conflict("RELOCATION_NOT_SUPPORTED", "안전 위치 없음"));
 		mvc.perform(post("/api/v1/devices/robot-1/commands/resume").header("Idempotency-Key", key).contentType(MediaType.APPLICATION_JSON).content("{}"))
 				.andExpect(status().isConflict()).andExpect(jsonPath("$.error.code").value("SAFETY_CONFIRMATION_REQUIRED"));
 		mvc.perform(post("/api/v1/hazards/" + hazard + "/relocations").header("Idempotency-Key", key).contentType(MediaType.APPLICATION_JSON).content("{}"))
-				.andExpect(status().isConflict()).andExpect(jsonPath("$.error.code").value("RELOCATION_NOT_CONFIGURED"));
+				.andExpect(status().isConflict()).andExpect(jsonPath("$.error.code").value("RELOCATION_NOT_SUPPORTED"));
 	}
 }

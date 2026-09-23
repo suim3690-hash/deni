@@ -4,4 +4,16 @@ body {
   margin: 0;
   background: #f0f5fd;
   font-family: 'Inter', system-ui, 'Segoe UI', Roboto, sans-serif;
+  /* 한글은 단어 단위로 줄바꿈하고, 너무 긴 단어만 칸 안에서 끊어 텍스트가 잘리거나 넘치지 않게 한다. */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+@theme {
+  --animate-blink: blink 1s ease-in-out infinite;
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.15; }
+  }
 }

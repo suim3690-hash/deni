@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { AlertTriangle, ArrowRight, Play, Power, Smile, Square, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Activity, ArrowRight, BatteryFull, Loader2, Power, Smile, X } from 'lucide-react'
 import Header from '../components/Header'
 import HazardLocation from './HazardLocation'
 import SafetyProfileDetail from './SafetyProfileDetail'
@@ -13,30 +13,35 @@ import robotDot from '../assets/figma/home/imgVector6.svg'
 import reportIcon from '../assets/figma/home/imgContainer1.svg'
 import type { RegisteredChild } from '../services/children'
 import { ApiRequestError, apiErrorMessage } from '../services/apiError'
-import { getDashboard, getHazardDetail, sendDeviceCommand, type DashboardHazard, type DashboardSnapshot, type HazardDetail } from '../services/dashboard'
+import { activateChildOnDevice, getDashboard, getHazardDetail, getRobotState, sendDeviceCommand, type DashboardHazard, type DashboardSnapshot, type HazardDetail } from '../services/dashboard'
 import { stageBannerSubtitles, stageTitles } from '../lib/stages'
+import { describeHazard, orderHazardsForAttention, riskLabels } from '../lib/hazardRisk'
+import HazardAlertBox from '../components/HazardAlertBox'
+import { apiBaseUrl, isMockMode } from '../lib/runtime'
 
-type Modal = 'device' | 'hazards' | 'avoidance' | null
+type Modal = 'device' | null
 
-const demoHazard: DashboardHazard = {
-  hazardId: 'demo-hazard',
-  objectName: '레고 브릭',
-  riskLevel: 'VERY_HIGH',
-  detectedAt: new Date().toISOString(),
+function newerHazardDetail(current: HazardDetail | null, next: HazardDetail): HazardDetail {
+  if (!current || current.hazardId !== next.hazardId) return next
+  return new Date(next.detectedAt).getTime() >= new Date(current.detectedAt).getTime() ? next : current
 }
 
-function ControlButton({ onClick, disabled, label, children }: { onClick: () => void, disabled?: boolean, label: string, children: ReactNode }) {
+function PowerButton({ onClick, state, label }: { onClick: () => void, state: 'off' | 'connecting' | 'on', label: string }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      disabled={disabled}
+      disabled={state === 'connecting'}
       aria-label={label}
-      className="relative grid size-[46px] shrink-0 place-items-center rounded-full bg-gradient-to-b from-white to-[#d6d6da] p-[3px] shadow-[0_3px_6px_rgba(15,23,42,0.22)] transition-transform active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none disabled:active:scale-100"
+      title={label}
+      className="relative grid size-[46px] shrink-0 place-items-center rounded-full bg-gradient-to-b from-white to-[#d6d6da] p-[3px] shadow-[0_3px_6px_rgba(15,23,42,0.22)] transition-transform active:scale-95 disabled:cursor-default disabled:active:scale-100"
     >
       <span className="grid size-full place-items-center rounded-full bg-[radial-gradient(circle_at_35%_28%,#ffffff_0%,#f4f4f5_45%,#dcdce0_100%)] shadow-[inset_0_1px_1px_rgba(255,255,255,0.95),inset_0_-2px_3px_rgba(15,23,42,0.12)]">
-        {children}
+        {state === 'connecting'
+          ? <Loader2 size={19} className="animate-spin text-[#64748b]" aria-hidden="true" />
+          : <Power size={19} className={state === 'on' ? 'text-[#10b981]' : 'text-[#e11d48]'} strokeWidth={2.4} aria-hidden="true" />}
       </span>
+      {state === 'on' && <span className="absolute -right-0.5 -top-0.5 size-3 rounded-full border-2 border-white bg-[#10b981]" />}
     </button>
   )
 }
@@ -55,15 +60,21 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [modal, setModal] = useState<Modal>(null)
-  const [commandPending, setCommandPending] = useState(false)
-  const [commandError, setCommandError] = useState('')
+  const [connecting, setConnecting] = useState(false)
+  const [pausing, setPausing] = useState(false)
+  const [connectError, setConnectError] = useState('')
+  const [mockPowered, setMockPowered] = useState(false)
+  const [mockPaused, setMockPaused] = useState(false)
   const [hazardDetail, setHazardDetail] = useState<HazardDetail | null>(null)
   const [hazardError, setHazardError] = useState('')
   const [hazardErrorStatus, setHazardErrorStatus] = useState<number | null>(null)
   const [selectedHazard, setSelectedHazard] = useState<DashboardHazard | null>(null)
+  const [showMap, setShowMap] = useState(false)
   const [showSafetyProfile, setShowSafetyProfile] = useState(false)
   const [showReport, setShowReport] = useState(false)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
+  const activatedFor = useRef<string | null>(null)
+  const hazardRequest = useRef(0)
 
   useEffect(() => {
     let current = true
@@ -99,7 +110,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     void refresh()
     // The backend updates activeHazards after a device detection. Refresh the
     // dashboard while this screen is open so a newly active hazard appears.
-    const pollTimer = import.meta.env.VITE_API_BASE_URL ? window.setInterval(() => void refresh(), 5000) : null
+    const pollTimer = apiBaseUrl ? window.setInterval(() => void refresh(), 5000) : null
     const refreshWhenVisible = () => { if (document.visibilityState === 'visible') void refresh() }
     document.addEventListener('visibilitychange', refreshWhenVisible)
     window.addEventListener('focus', refreshWhenVisible)
@@ -111,6 +122,47 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     }
   }, [child, onChildUnavailable, onUpdateChild, refreshKey])
 
+  // 로봇 한 대를 데모 프로필 세 개가 함께 쓴다. 지금 열어 둔 프로필을 기기의 활성 프로필로 만들어,
+  // 이후 탐지가 이 아이의 위험물로 기록되게 한다. 프로필·기기 조합마다 한 번만 보낸다.
+  useEffect(() => {
+    const deviceId = dashboard?.device?.deviceId
+    if (dashboard?.isMock !== false || !deviceId) return
+    const token = `${deviceId}|${child.childId}`
+    if (activatedFor.current === token) return
+    activatedFor.current = token
+    let active = true
+    void activateChildOnDevice(deviceId, child.childId).catch((error) => {
+      if (!active) return
+      // 다음 조회에서 다시 시도할 수 있도록 표시를 지운다.
+      activatedFor.current = null
+      setConnectError(apiErrorMessage(error, '이 프로필을 로봇에 연결하지 못했어요. 다시 조회해 주세요.'))
+    })
+    return () => { active = false }
+  }, [dashboard?.device?.deviceId, dashboard?.isMock, child.childId])
+
+  const currentSelectedHazard = dashboard?.activeHazards.find((item) => item.hazardId === selectedHazard?.hazardId)
+  const selectedDetectedAt = currentSelectedHazard?.detectedAt
+
+  // 같은 위험 건에서 새 사진이 들어오거나 처리 완료되면 상세를 즉시 다시 읽는다.
+  useEffect(() => {
+    if (!showMap || !selectedHazard || dashboard?.isMock !== false) return
+    const hazard = selectedHazard
+    let active = true
+    const refreshDetail = () => {
+      getHazardDetail(hazard, false)
+        .then((next) => { if (active) setHazardDetail((current) => newerHazardDetail(current, next)) })
+        .catch(() => {
+          // 조회에 실패하면 마지막으로 받은 상세를 그대로 유지한다.
+        })
+    }
+    refreshDetail()
+    const timer = window.setInterval(refreshDetail, 5000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [showMap, selectedHazard, selectedDetectedAt, dashboard?.isMock])
+
   useEffect(() => {
     if (!modal) return
     closeButtonRef.current?.focus()
@@ -120,62 +172,179 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   }, [modal])
 
   const device = dashboard?.device
-  const robotState = loadError ? null : dashboard?.robotState
-  const connection = loadError ? 'UNKNOWN' : device?.connectionState ?? 'UNKNOWN'
-  const isOnline = connection === 'ONLINE'
-  const canControl = isOnline && Boolean(dashboard?.isMock || device?.commandsAvailable)
-  const isOffline = connection === 'OFFLINE'
+  const isOnline = !loadError && device?.connectionState === 'ONLINE'
+  const isMock = dashboard?.isMock === true
+  // 실제 모드는 서버의 연결 상태를 사용한다. 목업 모드는 화면 안에서 만든 가상 연결만 사용해
+  // 실제 WebSocket 연결과 목업 전원 상태가 서로 섞이지 않게 한다.
+  const connected = isMock ? mockPowered && isOnline : isOnline
   const profile = dashboard?.currentProfile ?? child.safetyProfile
   const isSupported = profile.status === 'APPLIED' && profile.stage !== null
+  const stage = isSupported ? profile.stage : null
   const report = dashboard?.reportSummary
   const reportAvailable = Boolean(report?.available)
   const exampleReportAvailable = Boolean(dashboard?.isMock && report?.available)
-  const isPaused = !loadError && device?.operationState === 'PAUSED'
-  const isStopped = !loadError && device?.operationState === 'STOPPING'
-  const activeHazard = dashboard?.activeHazards[0]
+  const prioritizedHazards = orderHazardsForAttention(dashboard?.activeHazards ?? [])
+  const activeHazard = prioritizedHazards[0]
+  const activeHazardCount = prioritizedHazards.length
+  const alert = activeHazard ? describeHazard(activeHazard, stage, !dashboard?.isMock) : null
+  const robotState = loadError ? null : dashboard?.robotState
+  // 오래된 보고(stale)는 현재 상태의 근거가 아니므로 전원·작업 표시에 쓰지 않는다.
+  const liveRobotState = robotState && !robotState.stale ? robotState : null
+  // 전원은 통신 연결과 별개다. 전원을 끄면 모터와 탐지만 멈추고 통신은 유지된다.
+  const powered = isMock ? mockPowered && isOnline : liveRobotState?.powerEnabled === true
+  const operationState = isMock
+    ? powered ? mockPaused ? 'PAUSED' : 'RUNNING' : 'UNKNOWN'
+    : robotState && !robotState.stale ? robotState.operationState : device?.operationState ?? 'UNKNOWN'
+  const paused = powered && operationState === 'PAUSED'
+  // 실제 모드에서는 서버가 주지 않은 배터리 값을 목업 숫자로 채우지 않는다.
+  const batteryPercent = connected ? device?.batteryPercent ?? null : null
+  const safetyModeEnabled = connected && device?.safetyModeEnabled === true
+  const safetyModeLabel = !connected || device?.safetyModeEnabled === false
+    ? 'OFF'
+    : device?.safetyModeEnabled === true ? 'ON' : '확인 전'
   const displayName = dashboard?.child.childId === child.childId && dashboard.child.name.trim() ? dashboard.child.name : child.name
   const lastResponseTime = lastResponseAt?.toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
   async function openHazardDetail(hazard: DashboardHazard) {
     if (!dashboard) return
+    const request = ++hazardRequest.current
     setSelectedHazard(hazard)
+    setShowMap(true)
     setHazardDetail(null)
     setHazardError('')
     setHazardErrorStatus(null)
     setModal(null)
     try {
-      setHazardDetail(await getHazardDetail(hazard, dashboard.isMock))
+      const detail = await getHazardDetail(hazard, dashboard.isMock)
+      if (request !== hazardRequest.current) return
+      setHazardDetail((current) => newerHazardDetail(current, detail))
     } catch (error) {
+      if (request !== hazardRequest.current) return
       const status = error instanceof ApiRequestError ? error.status : null
       setHazardErrorStatus(status)
       setHazardError(apiErrorMessage(error, '위험 상세 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'))
     }
   }
 
-  async function handleControl(action: 'pause' | 'stop' | 'resume') {
-    if (!device || !dashboard || !canControl || commandPending) return
-    if (action === 'stop' && !dashboard.isMock) {
-      setCommandError('청소 정지 명령은 아직 기기와 연결되지 않았어요.')
+  function openMap() {
+    if (activeHazard) {
+      void openHazardDetail(activeHazard)
       return
     }
-    if (action === 'resume' && dashboard.activeHazards.length > 0) {
-      setCommandError('위험물 처리가 확인될 때까지 청소를 다시 시작할 수 없어요.')
+    setSelectedHazard(null)
+    setHazardDetail(null)
+    setHazardError('')
+    setHazardErrorStatus(null)
+    setShowMap(true)
+  }
+
+  function closeMap() {
+    hazardRequest.current++
+    setShowMap(false)
+    setSelectedHazard(null)
+  }
+
+  async function refreshDashboard() {
+    const result = await getDashboard(child)
+    setDashboard(result)
+    setLastResponseAt(new Date())
+    setLoadError(false)
+    setLoadErrorMessage('')
+    return result
+  }
+
+  // 목업은 화면 내부의 가상 연결만 바꾸며 실제 기기 API를 호출하지 않는다.
+  async function handleMockPower() {
+    if (powered) {
+      setMockPowered(false)
+      setMockPaused(false)
       return
     }
-    setCommandError('')
-    setCommandPending(true)
+    setConnecting(true)
     try {
-      // Full stop is a mock preview only, never a confirmed real-device state.
-      const operationState = action === 'stop'
-        ? await new Promise<typeof device.operationState>((resolve) => setTimeout(() => resolve('STOPPING'), 400))
-        : await sendDeviceCommand(device.deviceId, action, dashboard.isMock)
-      setDashboard((current) => current?.device?.deviceId === device.deviceId
-        ? { ...current, device: { ...current.device, operationState } }
-        : current)
-    } catch (error) {
-      setCommandError(apiErrorMessage(error, action === 'resume' ? '기기를 다시 시작하지 못했어요. 위험물 처리 상태와 연결을 확인해 주세요.' : action === 'stop' ? '기기를 정지하지 못했어요. 연결 상태를 확인해 주세요.' : '기기를 일시정지하지 못했어요. 연결 상태를 확인해 주세요.'))
+      await new Promise((resolve) => setTimeout(resolve, 1200))
+      if (dashboard?.device?.connectionState === 'ONLINE') setMockPowered(true)
+      else setConnectError('화면 예시 기기에 연결하지 못했어요.')
     } finally {
-      setCommandPending(false)
+      setConnecting(false)
+    }
+  }
+
+  async function handlePause() {
+    if (pausing || !dashboard || !device || !powered) return
+    setConnectError('')
+    setPausing(true)
+    try {
+      if (dashboard.isMock) {
+        await new Promise((resolve) => setTimeout(resolve, 350))
+        setMockPaused((current) => !current)
+        return
+      }
+      const state = await getRobotState(device.deviceId)
+      if (state.stale || state.powerEnabled !== true) {
+        setConnectError('현재 기기 상태를 확인할 수 없어요. 전원과 PC 런타임 연결을 확인해 주세요.')
+        return
+      }
+      const shouldResume = state.operationState === 'PAUSED'
+      await sendDeviceCommand(device.deviceId, shouldResume ? 'resume' : 'pause', false)
+      await refreshDashboard()
+    } catch (error) {
+      setConnectError(apiErrorMessage(error, paused
+        ? '청소를 다시 시작하지 못했어요. 잠시 후 다시 시도해 주세요.'
+        : '청소를 일시 정지하지 못했어요. 잠시 후 다시 시도해 주세요.'))
+    } finally {
+      setPausing(false)
+    }
+  }
+
+  async function handlePower() {
+    if (connecting || !dashboard) return
+    setConnectError('')
+    if (dashboard.isMock) {
+      await handleMockPower()
+      return
+    }
+    setConnecting(true)
+    try {
+      // 연결이 확인되지 않은 상태에서는 전원 명령 대신 최신 연결 상태부터 다시 조회한다.
+      let commandDevice = device
+      if (!isOnline) {
+        const result = await refreshDashboard()
+        if (!result.device) setConnectError('등록된 로봇청소기를 찾을 수 없어요.')
+        else if (result.device.connectionState !== 'ONLINE') setConnectError('기기와 통신할 수 없어요. PC 런타임과 네트워크를 확인해 주세요.')
+        else commandDevice = result.device
+        if (!result.device || result.device.connectionState !== 'ONLINE') return
+      }
+      if (!commandDevice) {
+        setConnectError('등록된 로봇청소기를 찾을 수 없어요.')
+        return
+      }
+      // 화면의 5초 주기 스냅샷이 아닌 최신 기기 보고로 명령 방향을 결정한다.
+      const state = await getRobotState(commandDevice.deviceId)
+      if (state.stale || state.powerEnabled == null) {
+        setConnectError('기기가 보고한 전원 상태를 아직 받지 못했어요. PC 런타임이 실행 중인지 확인해 주세요.')
+        return
+      }
+      const targetPower = !state.powerEnabled
+      await sendDeviceCommand(commandDevice.deviceId, targetPower ? 'power-on' : 'power-off', false)
+      // 명령 성공은 전원 상태 보고와 별개이므로 목표 상태가 보고될 때까지 버튼을 잠근다.
+      let confirmed = false
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        const latest = await getRobotState(commandDevice.deviceId)
+        if (!latest.stale && latest.powerEnabled === targetPower) {
+          confirmed = true
+          break
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
+      await refreshDashboard()
+      if (!confirmed) throw new Error('명령은 전달됐지만 전원 상태 확인이 늦어지고 있어요. 현재 표시를 확인한 뒤 다시 시도해 주세요.')
+    } catch (error) {
+      setConnectError(apiErrorMessage(error, powered
+        ? '전원을 끄지 못했어요. 잠시 후 다시 시도해 주세요.'
+        : '전원을 켜지 못했어요. 잠시 후 다시 시도해 주세요.'))
+    } finally {
+      setConnecting(false)
     }
   }
 
@@ -194,8 +363,8 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     onUpdateChild(updated)
   }
 
-  if (selectedHazard) return <HazardLocation hazard={selectedHazard} detail={hazardDetail} error={hazardError} errorStatus={hazardErrorStatus} isMock={dashboard?.isMock ?? false} onBack={() => setSelectedHazard(null)} onRetry={() => void openHazardDetail(selectedHazard)} />
-  if (showSafetyProfile) return <SafetyProfileDetail child={child} onBack={() => setShowSafetyProfile(false)} onUpdateChild={handleProfileChildUpdate} isMock={dashboard?.isMock ?? !import.meta.env.VITE_API_BASE_URL} activeHazards={dashboard?.activeHazards ?? null} hazardsError={loadError} hazardsErrorMessage={loadErrorMessage} />
+  if (showMap) return <HazardLocation key={selectedHazard?.hazardId ?? "none"} onSelect={(hazard) => void openHazardDetail(hazard)} onLivingResolved={(next) => { setHazardDetail(next); void refreshDashboard().catch(() => setLoadError(true)) }} hazard={currentSelectedHazard ?? selectedHazard} hazards={prioritizedHazards} deviceId={device?.deviceId ?? ''} stage={stage} operationState={operationState} detail={hazardDetail} error={hazardError} errorStatus={hazardErrorStatus} isMock={dashboard?.isMock ?? false} onBack={closeMap} onRetry={() => { if (selectedHazard) void openHazardDetail(selectedHazard) }} />
+  if (showSafetyProfile) return <SafetyProfileDetail child={child} onBack={() => setShowSafetyProfile(false)} onUpdateChild={handleProfileChildUpdate} onReregister={() => onChildUnavailable('다른 데모 프로필의 이름과 생년월일을 입력해 주세요.')} isMock={dashboard?.isMock ?? isMockMode} />
   if (showReport && report && reportAvailable) return <GrowthReport child={child} month={report.month} onBack={() => setShowReport(false)} />
 
   return (
@@ -203,119 +372,109 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
       <div className="mx-auto min-h-screen max-w-[402px] pb-[85px]">
         <Header title={`${displayName} 홈`} hasNotification />
         <main className="px-6 pt-[10px]">
+          {activeHazard && alert && (
+            <div className="mb-3">
+              <HazardAlertBox
+                onClick={() => void openHazardDetail(activeHazard)}
+                ariaLabel={`${alert.urgencyLabel} ${activeHazardCount > 1 ? `위험 물체 ${activeHazardCount}건이 감지되었어요` : alert.title}. 스마트 안심 케어 맵으로 이동`}
+                badge={alert.urgencyLabel}
+                urgent={alert.urgent}
+                riskLabel={alert.risk ? riskLabels[alert.risk] : null}
+                title={activeHazardCount > 1 ? `위험 물체 ${activeHazardCount}건이 감지되었어요` : alert.title}
+                subtitle={loadError
+                  ? '최신 조회 실패 · 마지막으로 확인된 알림이에요'
+                  : activeHazardCount > 1
+                    ? `대표 감지: ${activeHazard.objectName} · 눌러서 위치 확인`
+                    : '눌러서 스마트 안심 케어 맵 확인'}
+              />
+            </div>
+          )}
           <div className="mb-3 rounded-xl border border-[#e2e8f0] bg-white px-3 py-2 text-[11px] text-[#475569]">
             <div className="flex items-center justify-between gap-2">
               <span className={loadError ? 'text-[#a50034]' : ''}>
                 {dashboard?.isMock ? '화면 예시 · 서버 데이터 아님' : loadError ? '최신 조회 실패' : isRefreshing ? '홈 데이터 확인 중' : lastResponseAt ? '서버 조회 완료' : '홈 데이터 불러오는 중'}
                 {lastResponseAt && !dashboard?.isMock && <time dateTime={lastResponseAt.toISOString()} className="ml-1">· 마지막 응답 {lastResponseTime}</time>}
               </span>
-              {import.meta.env.VITE_API_BASE_URL && <button type="button" onClick={() => setRefreshKey((value) => value + 1)} disabled={isRefreshing} className="shrink-0 font-semibold text-[#a50034] disabled:opacity-50">다시 조회</button>}
+              {apiBaseUrl && <button type="button" onClick={() => setRefreshKey((value) => value + 1)} disabled={isRefreshing} className="shrink-0 font-semibold text-[#a50034] disabled:opacity-50">다시 조회</button>}
             </div>
             {loadError && <p role="alert" className="mt-1 text-[#a50034]">{loadErrorMessage}</p>}
           </div>
-          {activeHazard && (
-            <section aria-label="위험 물체 감지 알림" role="status" className="mb-3 rounded-[16px] border border-[#ffc5c5] bg-[#fff9f9] px-4 pb-4 pt-[17px] text-[#25252b]">
-              <div className="flex items-start gap-3">
-                <span className="grid size-10 shrink-0 place-items-center rounded-[12px] bg-[#ffe5e7] text-[#ba1729]"><AlertTriangle size={22} fill="currentColor" stroke="white" strokeWidth={1.8} aria-hidden="true" /></span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-start justify-between gap-1">
-                    <h2 className="min-w-0 truncate text-[16px] font-bold text-[#b42330]">{loadError ? '마지막 확인된 위험 알림' : '위험 물체 감지 알림'}</h2>
-                    <span className="shrink-0 rounded-full bg-[#ffe8e9] px-2 py-[3px] text-[10px] font-semibold text-[#b42330]">{loadError ? '최신 조회 실패' : dashboard?.isMock ? '화면 예시' : !device ? '기기 상태 미확인' : isPaused ? '일시정지 중' : '상태 확인 중'}</span>
-                  </div>
-                  <p className="mt-1 text-[12px] leading-[1.4]">
-                    <strong className="text-[#b42330]">위험 물체({activeHazard.objectName}) 1개</strong>가 감지되었습니다. {loadError ? '현재 위험물과 기기 상태는 확인할 수 없어요.' : device ? isPaused ? '로봇청소기 운행이 일시정지 중입니다.' : '로봇청소기 운행 상태를 확인 중입니다.' : '기기 운행 상태는 아직 확인할 수 없어요.'}
-                  </p>
-                </div>
-              </div>
-              <div className="mt-8 flex justify-end gap-2 border-t border-[#f9e7e7] pt-3">
-                <button type="button" onClick={() => setModal('avoidance')} className="h-[32px] rounded-full border border-[#e9c6ca] bg-white px-[14px] text-[12px] font-semibold focus-visible:outline-[#a50034]">우회 청소</button>
-                <button type="button" onClick={() => void openHazardDetail(activeHazard)} className="inline-flex h-[32px] items-center rounded-full bg-[#b9003d] px-[14px] text-[12px] font-semibold text-white focus-visible:outline-[#a50034]">위치 확인하기 <ArrowRight size={14} className="ml-1" /></button>
-              </div>
-            </section>
-          )}
           <div className="mb-2 flex items-center justify-between gap-2">
-            <h1 className="min-w-0 truncate text-[18px] font-semibold">즐겨 찾는 제품</h1>
+            <h1 className="min-w-0 text-[18px] font-semibold">즐겨 찾는 제품</h1>
             <button type="button" onClick={() => setModal('device')} className="shrink-0 text-[12px] text-[#475569] hover:underline focus-visible:outline-[#a50034]">전체보기</button>
           </div>
 
-          <section aria-label="로봇청소기 상태" className="min-h-[246px] rounded-[20px] border border-[#e8edf5] bg-white p-4 shadow-sm">
-            <div className="flex items-start justify-between gap-2">
+          <section aria-label="LG RONi 로봇청소기" className="rounded-[20px] border border-[#e8edf5] bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-2.5">
                 <div className="relative flex size-[42px] shrink-0 items-center justify-center rounded-[14px] bg-[#f0f5fd]">
                   <img src={robotIcon} alt="" className="h-[20px] w-[26px]" />
                   <img src={robotDot} alt="" className="absolute right-[5px] top-[4px] size-2" />
                 </div>
                 <div className="min-w-0">
-                  <h2 className="truncate text-[16px] font-bold text-black">{device ? device.name ?? '등록된 로봇청소기' : loadError ? '기기 상태 조회 실패' : dashboard ? 'LG 로니 AI 베이비 케어' : '기기 상태 확인 중'}</h2>
-                  <span className="mt-1 inline-flex rounded-full bg-[#d1feee] px-[7px] py-[1px] text-[10px] text-[#166b58]">{device ? '로봇' : '연결 전'}</span>
+                  <h2 className="text-[16px] font-bold text-black">LG RONi</h2>
+                  <span className="mt-1 inline-flex rounded-full bg-[#d1feee] px-[7px] py-[1px] text-[10px] text-[#166b58]">로봇청소기</span>
                 </div>
               </div>
-              <div className="flex shrink-0 flex-col items-end gap-[6px]">
-                <span className="rounded-full bg-[#e1fff2] px-2 py-1 text-[11px] text-[#167359]">⊙ {device?.safetyModeEnabled === true ? '안심모드 ON' : '안심모드 확인 전'}</span>
-                <span className={`rounded-full px-2 py-[2px] text-[11px] font-medium ${isOnline ? 'bg-[#dcfcef] text-[#15805f]' : 'bg-[#fff0f1] text-[#b4233b]'}`}>
-                  {isOnline ? '온라인' : isOffline ? '오프라인' : '상태 확인 전'}
-                </span>
-                {isPaused && <span className="rounded-full bg-[#fff0f1] px-2 py-[2px] text-[11px] text-[#b4233b]">일시 정지</span>}
-                {isStopped && <span className="rounded-full bg-[#fff0f1] px-2 py-[2px] text-[11px] text-[#b4233b]">정지 중</span>}
-                {!loadError && device?.batteryPercent != null && <span className="text-[11px] text-[#475569]">배터리 {device.batteryPercent}%</span>}
-              </div>
+              <PowerButton
+                onClick={() => void handlePower()}
+                state={connecting ? 'connecting' : powered ? 'on' : 'off'}
+                label={connecting ? '전원 명령을 보내는 중' : powered ? '전원 켜짐 · 눌러서 전원 끄기' : connected ? '전원 켜기 · 자동 주행과 위험물 탐지 시작' : isMock ? '화면 예시 기기 연결' : '기기 통신 상태 다시 확인'}
+              />
             </div>
 
-            {!dashboard?.isMock && device && <div className="mt-3 rounded-xl bg-[#f5f8ff] p-3 text-[12px] text-[#475569]" aria-label="로봇 동작 및 이동 정보">
-              <p className="font-semibold">로봇 동작·이동 정보</p>
-              {!robotState || robotState.stale ? <p className="mt-1">최근 동작 정보가 없어 상태를 확인할 수 없어요.</p> : <>
-                <p className="mt-1">동작: {{ RUNNING: '진행 중', PAUSED: '일시정지', RELOCATING: '장애물 이송 중', UNKNOWN: '확인 전' }[robotState.operationState]}</p>
-                <p>이동: {{ FORWARD: '직진', TURNING: '회전', BACKWARD: '후진', STOPPED: '정지', UNKNOWN: '확인 전' }[robotState.movementState]}</p>
-                {robotState.movementDurationMs !== null && <p>현재 이동 구간 시간: {(robotState.movementDurationMs / 1000).toFixed(1)}초</p>}
-                {robotState.movementDistanceM !== null && <p>현재 이동 구간 거리: {robotState.movementDistanceM}m</p>}
-              </>}
-              {robotState?.receivedAt && <p className="mt-1 text-[10px]">마지막 보고 수신: {new Date(robotState.receivedAt).toLocaleTimeString('ko-KR')}</p>}
-            </div>}
-
             <div className="mt-3 border-t border-[#e8edf5] pt-3">
-              <div className="mx-auto grid max-w-[258px] grid-cols-2 gap-4">
-                <div className="flex h-[85px] flex-col items-center justify-center rounded-[18px] bg-[#f5f8ff] text-center">
-                  <span className="text-[11px] text-[#475569]">장애물 정밀 감지</span>
-                  <div className="mt-1 flex items-baseline gap-1">
-                    <span className={`font-semibold ${!isOnline || dashboard?.obstacleCount == null ? 'text-[17px] text-[#64748b]' : 'text-[22px]'}`}>{!isOnline || dashboard?.obstacleCount == null ? '확인 전' : `${dashboard.obstacleCount}개`}</span>
-                    {isOnline && dashboard?.obstacleLabel && <span className="text-[10px] font-medium text-[#bd003f]">{dashboard.obstacleLabel}</span>}
-                  </div>
-                </div>
-                <div className="flex h-[85px] flex-col items-center justify-center rounded-[18px] bg-[#f5f8ff] text-center">
-                  <span className="text-[11px] text-[#475569]">공기 청정 연동</span>
-                  <div className="mt-1 flex items-baseline gap-1">
-                    <span className="text-[21px] font-semibold text-[#275b52]">{isOnline ? device?.airQualityLabel ?? '확인 전' : '확인 전'}</span>
-                    {isOnline && device?.purifierStateLabel && <span className="text-[10px] text-[#275b52]">퓨리케어 {device.purifierStateLabel}</span>}
-                  </div>
-                </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1 rounded-full bg-[#f5f8ff] px-3 py-1.5 text-[12px] font-medium text-[#334155]"><BatteryFull size={15} className="text-[#10b981]" aria-hidden="true" />배터리 {batteryPercent != null ? `${batteryPercent}%` : '확인 전'}</span>
+                <span className={`rounded-full px-3 py-1.5 text-[12px] font-medium ${safetyModeEnabled ? 'bg-[#e1fff2] text-[#167359]' : 'bg-[#f5f8ff] text-[#64748b]'}`}>⊙ 드니 모드 {safetyModeLabel}</span>
               </div>
-              <div className="relative mt-2 flex items-center justify-center">
-                <button type="button" onClick={() => (activeHazard ? void openHazardDetail(activeHazard) : dashboard?.isMock ? void openHazardDetail(demoHazard) : setModal('hazards'))} disabled={!activeHazard && !device && !dashboard?.isMock} title={!activeHazard && !device && !dashboard?.isMock ? '기기 연결 후 사용할 수 있어요' : undefined} className="flex h-[38px] w-[205px] items-center justify-center rounded-full bg-[#b9003d] text-[14px] font-semibold text-white focus-visible:outline-[#a50034] disabled:cursor-not-allowed">
-                  실시간 위험 감지 맵 <ArrowRight size={15} className="ml-1" />
+
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handlePower()}
+                  disabled={connecting}
+                  className={`inline-flex min-h-[34px] items-center justify-center rounded-full px-2 text-[11px] font-medium transition-colors focus-visible:outline-[#a50034] disabled:cursor-wait ${powered ? 'bg-[#e1fff2] text-[#167359]' : 'bg-[#fef2f2] text-[#a50034]'}`}
+                >
+                  {connecting ? <Loader2 size={13} className="mr-1 animate-spin" aria-hidden="true" /> : null}
+                  {connecting ? '처리 중' : powered ? '전원 ON' : '전원 OFF'}
                 </button>
-                <div className="absolute right-0">
-                  {isPaused ? (
-                    <ControlButton onClick={() => void handleControl('stop')} disabled={commandPending || !canControl} label="청소 정지">
-                      <Square size={15} className="text-[#e11d48]" fill="currentColor" />
-                    </ControlButton>
-                  ) : isStopped ? (
-                    <ControlButton onClick={() => void handleControl('resume')} disabled={commandPending || !canControl} label="청소 재개">
-                      <Play size={19} className="text-[#2958c7]" fill="currentColor" />
-                    </ControlButton>
-                  ) : (
-                    <ControlButton onClick={() => void handleControl('pause')} disabled={commandPending || !canControl} label={canControl ? '청소 일시정지' : '기기 연결 후 사용 가능'}>
-                      <Power size={19} className="text-[#e11d48]" strokeWidth={2.4} />
-                    </ControlButton>
-                  )}
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setModal('device')}
+                  className={`inline-flex min-h-[34px] items-center justify-center rounded-full px-2 text-[11px] font-medium transition-colors focus-visible:outline-[#a50034] ${connected ? 'bg-[#e1fff2] text-[#167359]' : 'bg-[#f5f8ff] text-[#64748b]'}`}
+                >
+                  {connected ? '통신 연결' : '통신 끊김'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handlePause()}
+                  disabled={!powered || connecting || pausing}
+                  className={`inline-flex min-h-[34px] items-center justify-center gap-1 rounded-full px-2 text-[11px] font-medium transition-colors focus-visible:outline-[#a50034] disabled:cursor-not-allowed disabled:opacity-45 ${paused ? 'bg-[#e8efff] text-[#2958c7]' : 'bg-[#f5f8ff] text-[#334155]'}`}
+                >
+                  {pausing ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <Activity size={13} className="text-[#2958c7]" aria-hidden="true" />}
+                  {pausing ? '처리 중' : paused ? '청소 재개' : '일시 정지'}
+                </button>
+              </div>
+
+              {!connected && <p className="mt-2 text-[12px] leading-[1.5] text-[#64748b]">기기 통신 상태를 확인해 주세요.</p>}
+              {connectError && <p role="alert" className="mt-2 text-[12px] text-[#a50034]">{connectError}</p>}
+              <div className="mt-3 flex justify-center">
+                <button
+                  type="button"
+                  onClick={openMap}
+                  title={!connected ? '기기 연결 없이도 감지된 위험과 사진을 볼 수 있어요. 처리 요청은 연결된 뒤에 가능합니다.' : undefined}
+                  className={`flex min-h-[38px] min-w-[205px] items-center justify-center rounded-full px-5 py-1.5 text-[14px] font-semibold text-white transition-colors focus-visible:outline-[#a50034] disabled:cursor-not-allowed disabled:opacity-45 ${activeHazard ? 'bg-[#b9003d]' : 'bg-[#167359]'}`}
+                >
+                  스마트 안심 케어 맵 <ArrowRight size={15} className="ml-1" />
+                </button>
               </div>
             </div>
           </section>
-          {commandError && <p role="alert" className="mt-2 text-center text-[12px] text-[#a50034]">{commandError}</p>}
 
           <section aria-label="아이 안전 프로필" className="mt-[18px] min-h-[185px] rounded-[24px] bg-gradient-to-r from-[#d9064d] via-[#ee4f7e] to-[#fa80a5] p-5 text-white shadow-[0_6px_15px_rgba(174,0,57,0.14)]">
             <div className="flex items-start justify-between gap-2">
-              <span className="min-w-0 truncate rounded-full bg-white/20 px-[10px] py-[5px] text-[11px] font-medium">✦ {dashboard?.isMock && isSupported ? '현재 Safety Profile 자동 적용 중' : isSupported ? 'Safety Profile 등록 완료' : '지원 범위 밖'}</span>
+              <span className="min-w-0 rounded-full bg-white/20 px-[10px] py-[5px] text-[11px] font-medium">✦ {dashboard?.isMock && isSupported ? '현재 Safety Profile 자동 적용 중' : isSupported ? 'Safety Profile 등록 완료' : '지원 범위 밖'}</span>
               <span className="grid size-[44px] shrink-0 place-items-center rounded-[14px] bg-white/20"><Smile size={22} aria-hidden="true" /></span>
             </div>
             <h2 className="-mt-1 text-[21px] font-bold leading-[1.2]">
@@ -329,20 +488,20 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
             </div>
           </section>
 
-          <section aria-label="월간 성장 리포트" className="mt-[24px] min-h-[190px] rounded-[24px] border border-[#e8edf5] bg-white p-5 shadow-sm">
+          <section aria-label="월간 안전 리포트" className="mt-[24px] min-h-[190px] rounded-[24px] border border-[#e8edf5] bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between gap-2">
               <span className="rounded-full border border-[#fee2e2] bg-[#fef2f2] px-[10px] py-[3px] text-[11px] text-[#a50034]">{reportAvailable && report ? `${exampleReportAvailable ? '화면 예시 · ' : ''}${Number(report.month.slice(5))}월 리포트 조회 가능` : '리포트 준비 중'}</span>
               <span className="text-[10px] text-[#94a3b8]">{exampleReportAvailable ? '화면 확인용 예시' : reportAvailable ? 'DB 기록 집계' : '데이터 연동 준비 중'}</span>
             </div>
             <div className="mt-3 flex items-center gap-2">
               <img src={reportIcon} alt="" className="size-[15px]" />
-              <h2 className="text-[18px] font-semibold">우리 아이 맞춤 성장 리포트</h2>
+              <h2 className="text-[18px] font-semibold">우리 아이 맞춤 안전 리포트</h2>
             </div>
             <p className="mt-1 text-[12px] leading-[1.6] text-[#475569]">
               {reportAvailable ? exampleReportAvailable && report ? `${displayName} 아동의 ${Number(report.month.slice(5))}월 화면 확인용 예시 리포트를 확인해 보세요.` : '저장된 위험 탐지 기록을 월별로 확인해 보세요. 기록이 없는 월도 조회할 수 있어요.' : '리포트 조회 기능을 준비하고 있어요.'}
             </p>
             <div className="mt-3 border-t border-[#f1f5f9] pt-2 text-center">
-              <button type="button" onClick={() => setShowReport(true)} disabled={!reportAvailable} className="inline-flex h-[43px] w-[205px] items-center justify-center rounded-full bg-[#b9003d] text-[15px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45">
+              <button type="button" onClick={() => setShowReport(true)} disabled={!reportAvailable} className="inline-flex min-h-[43px] min-w-[205px] items-center justify-center px-5 py-1.5 rounded-full bg-[#b9003d] text-[15px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45">
                 리포트 보러가기 <ArrowRight size={16} className="ml-1" />
               </button>
             </div>
@@ -362,20 +521,18 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
         <div className="fixed inset-0 z-20 flex items-end justify-center bg-[#0f172a]/40 p-4 sm:items-center" onMouseDown={(event) => { if (event.target === event.currentTarget) setModal(null) }}>
           <section role="dialog" aria-modal="true" aria-labelledby="home-dialog-title" className="w-full max-w-[370px] rounded-[20px] bg-white p-5 shadow-xl">
             <div className="flex items-start justify-between">
-              <h2 id="home-dialog-title" className="text-[18px] font-semibold">{modal === 'hazards' ? '실시간 위험 감지' : modal === 'avoidance' ? '우회 청소' : '기기 연결 상태'}</h2>
+              <h2 id="home-dialog-title" className="text-[18px] font-semibold">기기 연결 상태</h2>
               <button ref={closeButtonRef} type="button" onClick={() => setModal(null)} aria-label="닫기" className="rounded-full p-1 text-[#475569] focus-visible:outline-[#a50034]"><X size={20} /></button>
             </div>
-            {modal === 'avoidance' ? (
-              <p className="mt-4 text-[14px] leading-6 text-[#475569]">{dashboard?.isMock ? '우회 청소는 기기가 위험물을 피해 안전하게 이동하는 방식이 확정된 뒤 사용할 수 있어요. 현재 로봇청소기는 정지 상태를 유지합니다. 위치를 확인하고 위험물을 직접 치워 주세요.' : '우회 청소 기능은 아직 연결되지 않았어요. 기기 운행 상태는 확인할 수 없으므로 위험물 위치를 확인하고 직접 치워 주세요.'}</p>
-            ) : modal === 'hazards' ? (
-              <div className="mt-4 text-[14px] text-[#475569]">
-                {dashboard?.activeHazards.length ? dashboard.activeHazards.map((hazard) => <button key={hazard.hazardId} type="button" onClick={() => void openHazardDetail(hazard)} className="block w-full border-b border-[#e2e8f0] py-2 text-left focus-visible:outline-[#a50034]">{hazard.objectName} <ArrowRight size={14} className="inline" /></button>) : <p>현재 표시할 위험 감지 내역이 없어요.</p>}
-              </div>
-            ) : (
-              <p className="mt-4 text-[14px] leading-6 text-[#475569]">
-                {!device ? '등록된 기기가 없어요. 기기 등록 후 상태를 확인할 수 있습니다.' : isOnline ? '최근 보고에서 기기가 온라인 상태예요. 실제 제어 기능은 기기 연동 후 사용할 수 있습니다.' : isOffline ? '최근 보고에서 기기가 오프라인이에요. 로봇청소기의 전원과 네트워크 연결을 확인해 주세요.' : '기기는 등록되어 있지만 최근 상태 보고가 없어 연결·운행 상태를 확인할 수 없어요.'}
-              </p>
-            )}
+            <p className="mt-4 text-[14px] leading-6 text-[#475569]">
+              {!connected
+                ? isMock
+                  ? '전원 버튼을 누르면 화면 예시 기기를 연결해요.'
+                  : 'PC 런타임과 로봇 기기의 통신이 끊겨 있어요.'
+                : powered
+                  ? 'LG RONi가 연결되어 있고, 자동 주행과 위험물 탐지가 켜져 있어요.'
+                  : '연결은 유지되고 있지만 전원이 꺼져 있어요. 전원을 켜면 자동 주행과 위험물 탐지를 시작해요.'}
+            </p>
           </section>
         </div>
       )}

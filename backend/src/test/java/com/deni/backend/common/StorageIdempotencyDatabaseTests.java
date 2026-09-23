@@ -91,9 +91,11 @@ class StorageIdempotencyDatabaseTests {
 					    detected_at, device_operation_state, created_at, updated_at, source_event_id, detection_input_hash
 					FROM hazards WHERE id = ?
 					""", UUID.randomUUID(), hazardId));
+			// 같은 기기에서 같은 물체를 다시 보면 미해결 건 하나로 합쳐진다. 월간 집계는 프레임 수가 아니라
+			// 실제 위험물 건수를 센다. 다른 기기에서 본 같은 물체는 별개 건이다.
 			hazards.recordDetection(input(childId, device, "different-event", "레고", detectedAt));
 			hazards.recordDetection(input(childId, device + "-other", event, "레고", detectedAt));
-			assertEquals(3L, reports.getMonthlyReport(childId, YearMonth.from(detectedAt).toString()).summary().detectionCount());
+			assertEquals(2L, reports.getMonthlyReport(childId, YearMonth.from(detectedAt).toString()).summary().detectionCount());
 		}
 		finally {
 			cleanupTestRegistration(key);
@@ -149,7 +151,14 @@ class StorageIdempotencyDatabaseTests {
 			String device = "operation-storage-" + UUID.randomUUID();
 			devices.register(child, device, "재확인 동시 요청 테스트");
 			devices.recordStatus(new DeviceService.StatusInput(device, "ONLINE", "PAUSED", 82, OffsetDateTime.now(SERVICE_ZONE).minusSeconds(1)));
-			UUID hazard = hazards.recordDetection(input(child, device, UUID.randomUUID().toString(), "레고", OffsetDateTime.now(SERVICE_ZONE))).hazardId();
+			jdbc.update("""
+					INSERT INTO robot_live_state(device_id, operation_state, movement_state, sampled_at, power_enabled, task_state)
+					VALUES (?, 'PAUSED', 'STOPPED', clock_timestamp(), TRUE, 'HAZARD_PAUSED')
+					""", device);
+			// 직접 제거 재확인은 삼킴 위험물에만 접수된다.
+			UUID hazard = hazards.recordDetection(new HazardService.DetectionInput(child, device, "SWALLOW", "동전",
+					"HIGH", null, OffsetDateTime.now(SERVICE_ZONE), null, null, 0.3, 0.4, null, "UNKNOWN",
+					UUID.randomUUID().toString())).hazardId();
 			UUID requestKey = UUID.randomUUID();
 			var result = runConcurrent(() -> operations.requestRemovalCheck(hazard, requestKey));
 			assertEquals(result.getFirst().actionId(), result.getLast().actionId());
@@ -208,7 +217,9 @@ class StorageIdempotencyDatabaseTests {
 		new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
 			var ids = jdbc.queryForList("SELECT id FROM children WHERE registration_idempotency_key = ?", UUID.class, key);
 			for (UUID id : ids) {
+				jdbc.update("DELETE FROM device_command_delivery USING devices WHERE device_command_delivery.device_id = devices.id AND devices.child_id = ?", id);
 				jdbc.update("DELETE FROM operation_requests USING devices WHERE operation_requests.device_id = devices.id AND devices.child_id = ?", id);
+				jdbc.update("DELETE FROM robot_live_state USING devices WHERE robot_live_state.device_id = devices.id AND devices.child_id = ?", id);
 				jdbc.update("DELETE FROM hazards WHERE child_id = ?", id);
 				jdbc.update("DELETE FROM profile_history WHERE child_id = ?", id);
 				jdbc.update("DELETE FROM devices WHERE child_id = ?", id);

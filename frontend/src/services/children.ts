@@ -1,5 +1,5 @@
-import { generateId } from '../lib/id'
 import { apiErrorFromResponse } from './apiError'
+import { apiBaseUrl } from '../lib/runtime'
 
 export interface ChildRegistrationInput {
   name: string
@@ -72,8 +72,16 @@ function ageInCompletedMonths(birthDate: string, today: Date) {
   return months
 }
 
-export function computeSafetyProfile(birthDate: string): RegisteredChild['safetyProfile'] {
-  const ageMonths = ageInCompletedMonths(birthDate, new Date())
+// 생년월일 기준으로 만 개월수가 처음 `months` 이상이 되는 날짜. 월말 생일도 같은 월령 계산식을 그대로 따른다.
+export function dateReachingAgeMonths(birthDate: string, months: number): Date {
+  const [year, month] = birthDate.split('-').map(Number)
+  const date = new Date(year, month - 1 + months, 1)
+  while (ageInCompletedMonths(birthDate, date) < months) date.setDate(date.getDate() + 1)
+  return date
+}
+
+export function computeSafetyProfile(birthDate: string, referenceDate: Date = new Date()): RegisteredChild['safetyProfile'] {
+  const ageMonths = ageInCompletedMonths(birthDate, referenceDate)
   const stage = ageMonths < 12 ? 'INFANT' : ageMonths < 36 ? 'TODDLER' : ageMonths < 96 ? 'ACTIVE_CHILD' : null
   return {
     status: stage ? 'APPLIED' : 'UNSUPPORTED',
@@ -95,7 +103,7 @@ async function mockRegisterChild(input: ChildRegistrationInput, idempotencyKey: 
   if (previous) return previous
 
   const child: RegisteredChild = {
-    childId: generateId(),
+    childId: idempotencyKey,
     ...input,
     safetyProfile: computeSafetyProfile(input.birthDate),
   }
@@ -125,7 +133,7 @@ async function mockGetSafetyProfile(childId: string, birthDate: string): Promise
 }
 
 export async function registerChild(input: ChildRegistrationInput, idempotencyKey: string): Promise<RegisteredChild> {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL
+  const baseUrl = apiBaseUrl
   if (!baseUrl) return mockRegisterChild(input, idempotencyKey)
 
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/children`, {
@@ -142,7 +150,7 @@ export async function registerChild(input: ChildRegistrationInput, idempotencyKe
 }
 
 export async function updateChild(childId: string, input: ChildRegistrationInput): Promise<RegisteredChild> {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL
+  const baseUrl = apiBaseUrl
   if (!baseUrl) return mockUpdateChild(childId, input)
 
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/children/${childId}`, {
@@ -156,7 +164,7 @@ export async function updateChild(childId: string, input: ChildRegistrationInput
 }
 
 export async function getSafetyProfile(childId: string, birthDate: string): Promise<SafetyProfileData> {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL
+  const baseUrl = apiBaseUrl
   if (!baseUrl) return mockGetSafetyProfile(childId, birthDate)
 
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/children/${encodeURIComponent(childId)}/safety-profile`)

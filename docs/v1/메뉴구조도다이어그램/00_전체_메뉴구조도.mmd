@@ -17,7 +17,7 @@ flowchart TB
     M8["1Depth<br/>안전 케어"]:::menu
     M9["2Depth<br/>위험 확인"]:::menu
     M10["3Depth<br/>감지 위치"]:::menu
-    SCR_004["<span style='display:inline-block;min-width:190px;white-space:nowrap'>실시간 위험 감지<br/>&amp; 맵<br/>SCR-004<br/><small>FR-020~021<br/>FR-023</small></span>"]:::core
+    SCR_004["<span style='display:inline-block;min-width:190px;white-space:nowrap'>스마트 안심<br/>케어 맵<br/>SCR-004<br/><small>FR-020~021<br/>FR-023</small></span>"]:::core
     M11["3Depth<br/>위험 정보"]:::menu
     SCR_005["<span style='display:inline-block;min-width:190px;white-space:nowrap'>위험 상세<br/>SCR-005<br/><small>FR-021~023</small></span>"]:::core
     M12["2Depth<br/>안전 조치"]:::menu
@@ -29,6 +29,18 @@ flowchart TB
     M16["2Depth<br/>월간 리포트"]:::menu
     M17["3Depth<br/>성장·안전 기록"]:::menu
     SCR_008["<span style='display:inline-block;min-width:190px;white-space:nowrap'>월간 성장 리포트<br/>SCR-008<br/><small>FR-038~040</small></span>"]:::core
+    M18["1Depth<br/>확장 서비스"]:::menu
+    M19["2Depth<br/>청소 자동화"]:::menu
+    M20["3Depth<br/>수면 맞춤"]:::menu
+    SCR_009["<span style='display:inline-block;min-width:190px;white-space:nowrap'>수면 기반 청소 일정<br/>SCR-009<br/><small>FR 미정</small></span>"]:::later
+    M21["3Depth<br/>활동 반경 맞춤"]:::menu
+    SCR_010["<span style='display:inline-block;min-width:190px;white-space:nowrap'>패트롤 존 관리<br/>SCR-010<br/><small>FR 미정</small></span>"]:::later
+    M22["2Depth<br/>가족 공유"]:::menu
+    M23["3Depth<br/>공동 확인"]:::menu
+    SCR_011["<span style='display:inline-block;min-width:190px;white-space:nowrap'>가족 안전 현황<br/>SCR-011<br/><small>FR 미정</small></span>"]:::later
+    M24["2Depth<br/>가전 연동"]:::menu
+    M25["3Depth<br/>통합 안전"]:::menu
+    SCR_012["<span style='display:inline-block;min-width:190px;white-space:nowrap'>통합 안전 현황<br/>SCR-012<br/><small>FR 미정</small></span>"]:::later
     ROOT --> M1
     M1 --> M2
     M2 --> M3
@@ -54,6 +66,18 @@ flowchart TB
     M15 --> M16
     M16 --> M17
     M17 --> SCR_008
+    ROOT --> M18
+    M18 --> M19
+    M19 --> M20
+    M20 --> SCR_009
+    M19 --> M21
+    M21 --> SCR_010
+    M18 --> M22
+    M22 --> M23
+    M23 --> SCR_011
+    M18 --> M24
+    M24 --> M25
+    M25 --> SCR_012
     classDef root fill:#172033,stroke:#172033,color:#ffffff,stroke-width:2px;
     classDef menu fill:#ffffff,stroke:#cbd5e1,color:#334155;
     classDef core fill:#ede4ff,stroke:#8854d0,color:#492477,stroke-width:2px;

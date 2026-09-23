@@ -76,6 +76,9 @@ class Hazard {
 	@Column(name = "updated_at", nullable = false)
 	private OffsetDateTime updatedAt;
 
+	@Column(name = "acknowledged_at")
+	private OffsetDateTime acknowledgedAt;
+
 	@Version
 	@Column(nullable = false)
 	private long version;
@@ -112,6 +115,38 @@ class Hazard {
 		this.updatedAt = now;
 	}
 
+	/** 같은 물체가 계속 보일 때 ACTIVE 건을 갱신한다. 새 행은 만들지 않는다. */
+	void refreshFromDetection(OffsetDateTime detectedAt, String captureImageUrl, RiskLevel riskLevel,
+			DeviceOperationState deviceOperationState, OffsetDateTime now) {
+		if (detectedAt != null && detectedAt.isAfter(this.detectedAt)) {
+			this.detectedAt = detectedAt;
+			// 사진과 감지 시각은 한 이벤트의 값이어야 한다. 새 이벤트에 사진이
+			// 없으면 이전 사진을 보여주지 않고 null로 둔다.
+			this.captureImageUrl = captureImageUrl;
+			this.riskLevel = riskLevel;
+			if (deviceOperationState != null) {
+				this.deviceOperationState = deviceOperationState;
+			}
+			this.updatedAt = now;
+		}
+	}
+
+	void acknowledgeLiving(OffsetDateTime now) {
+		if (acknowledgedAt == null) {
+			acknowledgedAt = now;
+		}
+		status = HazardStatus.RESOLVED;
+		updatedAt = now;
+	}
+
+	/** 확인 완료한 생활공간 위험이 계속 보일 때 새 알림을 만들지 않도록 최근 관측 시각만 갱신한다. */
+	void touchAcknowledgedLiving(OffsetDateTime now) {
+		if (status != HazardStatus.RESOLVED || acknowledgedAt == null || !"LIVING".equals(objectType)) {
+			throw new IllegalStateException("Only acknowledged living hazards can be touched");
+		}
+		updatedAt = now;
+	}
+
 	UUID getId() {
 		return id;
 	}
@@ -130,6 +165,10 @@ class Hazard {
 
 	HazardStatus getStatus() {
 		return status;
+	}
+
+	OffsetDateTime getAcknowledgedAt() {
+		return acknowledgedAt;
 	}
 
 	String getObjectType() {

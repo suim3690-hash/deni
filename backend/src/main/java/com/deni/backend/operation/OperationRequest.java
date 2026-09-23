@@ -36,7 +36,7 @@ class OperationRequest {
 		this.hazardId = hazardId;
 		this.idempotencyKey = idempotencyKey;
 		this.kind = kind;
-		this.status = kind.equals("PAUSE") ? "REQUESTED" : "UNKNOWN";
+		this.status = hazardId == null ? "REQUESTED" : "UNKNOWN";
 		this.createdAt = now;
 	}
 

@@ -1,6 +1,8 @@
 import type { RegisteredChild } from './children'
 import { generateId } from '../lib/id'
+import { classifyHazard, riskByStage } from '../lib/hazardRisk'
 import { apiErrorFromResponse } from './apiError'
+import { apiBaseUrl } from '../lib/runtime'
 
 export type ConnectionState = 'ONLINE' | 'OFFLINE' | 'UNKNOWN'
 export type OperationState = 'RUNNING' | 'PAUSED' | 'STOPPING' | 'RESUMING' | 'READY_TO_RESUME' | 'UNKNOWN'
@@ -14,8 +16,6 @@ export interface DashboardDevice {
   batteryPercent: number | null
   lastSeenAt: string | null
   safetyModeEnabled?: boolean | null
-  airQualityLabel?: string | null
-  purifierStateLabel?: string | null
 }
 
 export interface DashboardHazard {
@@ -23,6 +23,7 @@ export interface DashboardHazard {
   objectName: string
   riskLevel: string
   detectedAt: string
+  acknowledgedAt: string | null
 }
 
 export interface DashboardProfile {
@@ -31,28 +32,51 @@ export interface DashboardProfile {
   ageMonths: number
 }
 
+export interface HazardMarker {
+  x: number
+  y: number
+}
+
 export interface HazardDetail extends DashboardHazard {
+  status: 'ACTIVE' | 'RESOLVED'
   riskReason: string | null
   captureImageUrl: string | null
+  marker: HazardMarker | null
+}
+
+// 서버 좌표는 지도 이미지 기준 0~1 비율이다. 범위를 벗어나거나 한쪽만 있으면 위치 없음으로 본다.
+function parseMarker(marker: { x?: unknown; y?: unknown } | null | undefined): HazardMarker | null {
+  const { x, y } = marker ?? {}
+  if (typeof x !== 'number' || typeof y !== 'number') return null
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || x > 1 || y < 0 || y > 1) return null
+  return { x, y }
+}
+
+// 기기가 보고한 전원·작업 상태다. powerEnabled=false는 모터와 탐지가 멈춘 상태이며 통신은 유지된다.
+// 서버가 오래된 보고를 stale로 표시하면 값이 null이 되므로 전원 상태를 단정하지 않는다.
+export type TaskState = 'OFF' | 'RUNNING' | 'PAUSED' | 'HAZARD_PAUSED' | 'RECHECKING' |
+  'PUSHING' | 'ALIGNING_TARGET' | 'CAPTURING' | 'SEEKING_MARKER' | 'PUSHING_TO_MARKER' |
+  'BACKING' | 'VERIFYING_DROP' | 'TURNING_AROUND'
+
+export interface RobotState {
+  operationState: 'RUNNING' | 'PAUSED' | 'RELOCATING' | 'UNKNOWN'
+  movementState: 'FORWARD' | 'TURNING' | 'BACKWARD' | 'STOPPED' | 'UNKNOWN'
+  movementDurationMs: number | null
+  movementDistanceM: number | null
+  sampledAt: string | null
+  receivedAt: string | null
+  stale: boolean
+  powerEnabled: boolean | null
+  taskState: TaskState | string | null
 }
 
 export interface DashboardData {
   child: { childId: string; name: string }
   device: DashboardDevice | null
-  robotState?: {
-    operationState: 'RUNNING' | 'PAUSED' | 'RELOCATING' | 'UNKNOWN'
-    movementState: 'FORWARD' | 'TURNING' | 'BACKWARD' | 'STOPPED' | 'UNKNOWN'
-    movementDurationMs: number | null
-    movementDistanceM: number | null
-    sampledAt: string | null
-    receivedAt: string | null
-    stale: boolean
-  } | null
+  robotState?: RobotState | null
   currentProfile: DashboardProfile
   activeHazards: DashboardHazard[]
   reportSummary: { reportId: string | null; month: string; available: boolean } | null
-  obstacleCount?: number | null
-  obstacleLabel?: string | null
 }
 
 export interface DashboardSnapshot extends DashboardData {
@@ -61,8 +85,18 @@ export interface DashboardSnapshot extends DashboardData {
 
 function mockDashboard(child: RegisteredChild): DashboardSnapshot {
   const previewState = new URLSearchParams(window.location.search).get('mockDevice')
-  // Explicit preview only. The normal mock home starts with no active hazard.
-  const showHazard = new URLSearchParams(window.location.search).get('mockHazard') === 'lego'
+  // 목업(5174)은 기본으로 위험물이 감지된 상태다.
+  // mockHazard=구슬|동전|배터리(삼킴 위험물) · 전선|콘센트(생활공간 위험요소) · none(위험물 없음), 기본값은 동전
+  const searchParams = new URLSearchParams(window.location.search)
+  const hazardPreview = searchParams.get('mockHazard')
+  const requestedHazardCount = Number(searchParams.get('mockHazardCount') ?? 1)
+  const hazardCount = Number.isInteger(requestedHazardCount) ? Math.min(Math.max(requestedHazardCount, 1), 10) : 1
+  const previewName = hazardPreview === 'living' ? '전선' : !hazardPreview || hazardPreview === 'swallow' ? '동전' : hazardPreview
+  const previewHazard = hazardPreview === 'none'
+    ? null
+    : { hazardId: `preview-${previewName}`, objectName: previewName }
+  const showHazard = previewHazard !== null
+  const paused = (showHazard && hazardPreview !== 'living') || previewState === 'paused'
   const connectionState: ConnectionState = previewState === 'offline' ? 'OFFLINE' : previewState === 'unknown' ? 'UNKNOWN' : 'ONLINE'
   const today = new Date()
   const month = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
@@ -76,58 +110,96 @@ function mockDashboard(child: RegisteredChild): DashboardSnapshot {
       name: 'LG 로니 AI 베이비 케어',
       commandsAvailable: true,
       connectionState,
-      operationState: connectionState === 'ONLINE' ? showHazard || previewState === 'paused' ? 'PAUSED' : 'RUNNING' : 'UNKNOWN',
+      operationState: connectionState === 'ONLINE' ? paused ? 'PAUSED' : 'RUNNING' : 'UNKNOWN',
       batteryPercent: connectionState === 'ONLINE' ? 82 : null,
       lastSeenAt: null,
       safetyModeEnabled: connectionState === 'ONLINE',
-      airQualityLabel: connectionState === 'ONLINE' ? '좋음' : null,
-      purifierStateLabel: connectionState === 'ONLINE' ? '가동중' : null,
     },
-    activeHazards: showHazard && connectionState === 'ONLINE' ? [{
-      hazardId: 'preview-lego',
-      objectName: '레고 브릭',
-      riskLevel: 'VERY_HIGH',
-      detectedAt: new Date().toISOString(),
-    }] : [],
-    obstacleCount: 4,
-    obstacleLabel: '소형 완구',
+    robotState: connectionState === 'ONLINE' ? {
+      operationState: paused ? 'PAUSED' : 'RUNNING',
+      movementState: paused ? 'STOPPED' : 'FORWARD',
+      movementDurationMs: null,
+      movementDistanceM: null,
+      sampledAt: today.toISOString(),
+      receivedAt: today.toISOString(),
+      stale: false,
+      powerEnabled: true,
+      taskState: paused ? 'HAZARD_PAUSED' : 'RUNNING',
+    } : null,
+    activeHazards: previewHazard && connectionState === 'ONLINE' ? Array.from({ length: hazardCount }, (_, index) => {
+      const mockNames = hazardPreview === 'living'
+        ? ['전선', '콘센트']
+        : hazardPreview === 'mixed'
+          ? ['동전', '전선', '배터리', '콘센트', '구슬']
+          : hazardPreview === 'swallow' || !hazardPreview
+            ? ['동전', '구슬', '배터리']
+            : [previewName]
+      const objectName = mockNames[index % mockNames.length]
+      const category = classifyHazard(objectName)
+      return {
+        hazardId: `preview-${objectName}-${index + 1}`,
+        objectName,
+        riskLevel: category && child.safetyProfile.stage ? riskByStage[child.safetyProfile.stage][category] : 'HIGH',
+        detectedAt: new Date(today.getTime() - index * 30_000).toISOString(),
+        acknowledgedAt: null,
+      }
+    }) : [],
     reportSummary: { reportId: `preview-${month}`, month, available: true },
   }
+}
+
+// 서버가 `/api/v1/...` 같은 상대 경로를 주면 API 서버 주소를 붙여 브라우저가 바로 읽을 수 있게 한다.
+function resolveImageUrl(url: string | null | undefined, baseUrl: string): string | null {
+  const value = url?.trim()
+  if (!value) return null
+  return value.startsWith('/') ? `${baseUrl}${value}` : value
 }
 
 export async function getHazardDetail(hazard: DashboardHazard, isMock: boolean): Promise<HazardDetail> {
   if (isMock) return {
     ...hazard,
-    riskReason: '아이의 성장단계에서 삼킬 위험이 있는 작은 완구입니다.',
+    status: 'ACTIVE',
+    riskReason: classifyHazard(hazard.objectName) === 'LIVING'
+      ? '아이가 만지거나 걸릴 수 있는 생활공간 위험 요소입니다. 아이가 접근하기 전에 확인해 주세요.'
+      : '아이가 삼킬 수 있는 작은 물체입니다. 아이가 접근하기 전에 바닥에서 치워 주세요.',
     captureImageUrl: null,
+    marker: { x: 0.296, y: 0.429 },
   }
 
-  const baseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
+  const baseUrl = apiBaseUrl
   if (!baseUrl) throw new Error('API URL is missing')
-  const response = await fetch(`${baseUrl}/api/v1/hazards/${encodeURIComponent(hazard.hazardId)}`)
+  const response = await fetch(`${baseUrl}/api/v1/hazards/${encodeURIComponent(hazard.hazardId)}`, { cache: 'no-store' })
   if (!response.ok) throw await apiErrorFromResponse(response, '위험 상세 정보를 불러오지 못했어요.')
   const data = await response.json() as {
-    hazardId: string; object?: { name?: string }; riskLevel: string; riskReason?: string | null
+    hazardId: string; status: 'ACTIVE' | 'RESOLVED'; acknowledgedAt?: string | null; object?: { name?: string }; riskLevel: string; riskReason?: string | null
     detectedAt: string
     captureImageUrl?: string | null
+    location?: { marker?: { x?: unknown; y?: unknown } | null } | null
   }
   return {
     hazardId: data.hazardId,
+    acknowledgedAt: data.acknowledgedAt ?? null,
+    status: data.status,
     objectName: data.object?.name ?? hazard.objectName,
     riskLevel: data.riskLevel,
     detectedAt: data.detectedAt,
     riskReason: data.riskReason ?? null,
-    captureImageUrl: data.captureImageUrl ?? null,
+    captureImageUrl: resolveImageUrl(data.captureImageUrl, baseUrl),
+    marker: parseMarker(data.location?.marker),
   }
 }
 
-export async function sendDeviceCommand(deviceId: string, action: 'pause' | 'resume', isMock: boolean): Promise<OperationState> {
+// power-on은 자동 전진과 탐지를 시작하고, power-off는 둘을 멈추되 통신은 유지한다.
+// pause/resume은 청소 흐름만 멈추거나 재개한다.
+export type DeviceCommand = 'pause' | 'resume' | 'power-on' | 'power-off'
+
+export async function sendDeviceCommand(deviceId: string, action: DeviceCommand, isMock: boolean): Promise<OperationState> {
   if (isMock) {
     await new Promise((resolve) => setTimeout(resolve, 600))
-    return action === 'pause' ? 'PAUSED' : 'RUNNING'
+    return action === 'pause' || action === 'power-off' ? 'PAUSED' : 'RUNNING'
   }
 
-  const baseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
+  const baseUrl = apiBaseUrl
   if (!baseUrl) throw new Error('API URL is missing')
   const path = `${baseUrl}/api/v1/devices/${encodeURIComponent(deviceId)}/commands`
   const response = await fetch(`${path}/${action}`, {
@@ -150,19 +222,46 @@ export async function sendDeviceCommand(deviceId: string, action: 'pause' | 'res
   throw new Error('기기 명령 결과를 확인하는 데 시간이 오래 걸리고 있어요.')
 }
 
+// 로봇 한 대를 여러 데모 프로필이 함께 쓴다. 지금 열어 둔 프로필을 기기의 활성 프로필로 만들어,
+// 이후 탐지가 이 아이의 위험물로 기록되게 한다. 이미 활성이면 서버에서 아무것도 바뀌지 않는다.
+export async function activateChildOnDevice(deviceId: string, childId: string): Promise<void> {
+  const baseUrl = apiBaseUrl
+  if (!baseUrl) throw new Error('API URL is missing')
+  const response = await fetch(`${baseUrl}/api/v1/devices/${encodeURIComponent(deviceId)}/active-child`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ childId }),
+  })
+  if (!response.ok) throw await apiErrorFromResponse(response, '이 프로필을 로봇에 연결하지 못했어요.')
+}
+
+export async function resolveLivingHazard(hazard: DashboardHazard): Promise<HazardDetail> {
+  const baseUrl = apiBaseUrl
+  if (!baseUrl) throw new Error('API URL is missing')
+  const response = await fetch(`${baseUrl}/api/v1/hazards/${encodeURIComponent(hazard.hazardId)}/acknowledgements`, { method: 'POST' })
+  if (!response.ok) throw await apiErrorFromResponse(response, '생활공간 위험요소를 처리하지 못했어요.')
+  return getHazardDetail(hazard, false)
+}
+
+export async function getRobotState(deviceId: string): Promise<RobotState> {
+  const baseUrl = apiBaseUrl
+  if (!baseUrl) throw new Error('API URL is missing')
+  const response = await fetch(`${baseUrl}/api/v1/devices/${encodeURIComponent(deviceId)}/robot-state`)
+  if (!response.ok) throw await apiErrorFromResponse(response, '로봇 동작 정보를 불러오지 못했어요.')
+  return response.json() as Promise<RobotState>
+}
+
 export async function getDashboard(child: RegisteredChild): Promise<DashboardSnapshot> {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL
+  const baseUrl = apiBaseUrl
   if (!baseUrl) return mockDashboard(child)
 
   const query = new URLSearchParams({ childId: child.childId })
-  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/dashboard?${query}`)
+  const response = await fetch(`${baseUrl}/api/v1/dashboard?${query}`, { cache: 'no-store' })
   if (!response.ok) throw await apiErrorFromResponse(response, '홈 정보를 불러오지 못했어요.')
   const data = await response.json() as DashboardData
   let robotState: DashboardData['robotState'] = null
   if (data.device) {
-    const stateResponse = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/devices/${encodeURIComponent(data.device.deviceId)}/robot-state`)
-    if (!stateResponse.ok) throw await apiErrorFromResponse(stateResponse, '로봇 동작 정보를 불러오지 못했어요.')
-    robotState = await stateResponse.json() as NonNullable<DashboardData['robotState']>
+    robotState = await getRobotState(data.device.deviceId)
   }
   return { ...data, robotState, isMock: false }
 }
