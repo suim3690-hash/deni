@@ -13,7 +13,7 @@
   "reverse_seconds": 1.0,
   "drop_verify_seconds": 1.0,
   "drop_verify_timeout_seconds": 10.0,
-  "drop_verify_radius_ratio": 0.3,
+  "drop_verify_radius_ratio": 0.45,
   "turnaround_seconds": 1.0,
   "action_timeout_seconds": 120.0
 }

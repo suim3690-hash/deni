@@ -62,6 +62,7 @@ class DetectionService:
         self.feed = feed
         self.enabled = enabled
         self.processing = processing
+        self.suppressed_alert_labels = frozenset()
         self.state_lock = threading.Lock()
         self.latest = dict(status='loading' if enabled else 'disabled', level=0, mode=mode, generation=self.generation)
         self.local_stop = threading.Event()
@@ -78,8 +79,10 @@ class DetectionService:
         self.stop_event = self.ctx.Event()
         self.mode_code = self.ctx.Value('q', self.generation)
         self.processing_event = self.ctx.Event()
+        self.suppressed_alert_mask = self.ctx.Value('Q', 0)
         if self.processing: self.processing_event.set()
-        self.process = self.ctx.Process(target=run, args=(self.mailbox,self.results,self.stop_event,self.mode_code,self.processing_event), daemon=True)
+        self.process = self.ctx.Process(target=run, args=(self.mailbox,self.results,self.stop_event,
+            self.mode_code,self.processing_event,self.suppressed_alert_mask), daemon=True)
         try:
             self.process.start()
         except Exception as exc:
@@ -134,10 +137,20 @@ class DetectionService:
                 if enabled: self.processing_event.set()
                 else: self.processing_event.clear()
 
+    def set_suppressed_alert_labels(self, labels):
+        normalized = frozenset(labels)
+        mask = C.alert_label_mask(normalized)
+        with self.state_lock:
+            self.suppressed_alert_labels = normalized
+            if hasattr(self, 'suppressed_alert_mask'):
+                with self.suppressed_alert_mask.get_lock():
+                    self.suppressed_alert_mask.value = mask
+
     def state(self):
         with self.state_lock:
             state = dict(self.latest)
             state['mode'] = self.mode
+            state['suppressed_alert_labels'] = sorted(self.suppressed_alert_labels)
         now = time.monotonic()
         stamp = state.get('frame_stamp')
         state['result_age'] = round(now-stamp,2) if stamp else None
