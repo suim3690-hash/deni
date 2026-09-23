@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { classifyHazard, orderHazardsForAttention, riskByStage } from '../src/lib/hazardRisk.ts'
+import { classifyHazard, findRedetectedHazard, orderHazardsForAttention, riskByStage } from '../src/lib/hazardRisk.ts'
 
 test('삼킴 위험도는 영아기 높음, 걸음마 매우 높음, 유아 활동기 보통이다', () => {
   assert.deepEqual(['INFANT', 'TODDLER', 'ACTIVE_CHILD'].map((stage) => riskByStage[stage].SWALLOW),
@@ -23,4 +23,21 @@ test('동시 감지 시 삼킴 위험을 먼저, 이후 생활 위험을 최신�
   assert.deepEqual(orderHazardsForAttention(items).map((item) => item.objectName),
     ['배터리', '동전', '콘센트', '전선'])
   assert.equal(items[0].objectName, '전선')
+})
+
+test('직접 제거 완료 뒤 같은 라벨의 새 위험만 재감지로 고른다', () => {
+  const removal = {
+    hazardId: 'old-coin', objectName: '동전',
+    lastDetectedAt: '2026-09-23T01:00:10Z', completedAt: '2026-09-23T01:00:15Z',
+  }
+  const items = [
+    { hazardId: 'wire', objectName: '전선', detectedAt: '2026-09-23T01:00:30Z' },
+    { hazardId: 'old-coin', objectName: '동전', detectedAt: '2026-09-23T01:00:30Z' },
+    { hazardId: 'early-coin', objectName: '동전', detectedAt: '2026-09-23T01:00:09Z' },
+    { hazardId: 'new-coin-1', objectName: '동전', detectedAt: '2026-09-23T01:00:20Z' },
+    { hazardId: 'new-coin-2', objectName: '동전', detectedAt: '2026-09-23T01:00:25Z' },
+  ]
+
+  assert.equal(findRedetectedHazard(items, removal)?.hazardId, 'new-coin-2')
+  assert.equal(findRedetectedHazard(items, null), null)
 })

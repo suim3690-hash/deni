@@ -56,6 +56,42 @@ export function orderHazardsForAttention<T extends { objectName: string; detecte
     || Date.parse(b.detectedAt) - Date.parse(a.detectedAt))
 }
 
+export interface CompletedDirectRemoval {
+  hazardId: string
+  objectName: string
+  completedAt: string
+  lastDetectedAt: string
+}
+
+// 직접 제거가 완료된 뒤 같은 라벨이 새 위험 건으로 들어오면 재감지로 본다.
+// 완료 이전 탐지와 기존 위험 ID는 제외해 과거 알림을 재감지로 잘못 표시하지 않는다.
+export function findRedetectedHazard<T extends { hazardId: string; objectName: string; detectedAt: string }>(
+  items: T[],
+  removal: CompletedDirectRemoval | null,
+): T | null {
+  if (!removal) return null
+  const lastDetectedAt = Date.parse(removal.lastDetectedAt)
+  if (!Number.isFinite(lastDetectedAt)) return null
+  return items
+    .filter((item) => item.hazardId !== removal.hazardId
+      && item.objectName === removal.objectName
+      && Date.parse(item.detectedAt) > lastDetectedAt)
+    .sort((a, b) => Date.parse(b.detectedAt) - Date.parse(a.detectedAt))[0] ?? null
+}
+
+export function powerOnSafetyNotice(
+  taskState: string | null,
+  hazards: { objectName: string }[],
+): string {
+  if (taskState !== 'HAZARD_PAUSED') return ''
+  const names = [...new Set(hazards
+    .filter((hazard) => classifyHazard(hazard.objectName) === 'SWALLOW')
+    .map((hazard) => hazard.objectName))]
+  return names.length > 0
+    ? `전원은 켜졌지만 미처리 삼킴 위험물(${names.join('·')}) 때문에 안전 정지 중이에요. 스마트 안심 케어 맵에서 남은 위험물을 처리해 주세요.`
+    : '전원은 켜졌지만 이전 삼킴 위험 차단이 남아 안전 정지 중이에요. 위험을 감지했던 아이 프로필의 스마트 안심 케어 맵에서 처리해 주세요.'
+}
+
 function serverRisk(riskLevel: string): RiskLevel | null {
   if (riskLevel === 'VERY_HIGH' || riskLevel === 'HIGH' || riskLevel === 'MEDIUM') return riskLevel
   if (riskLevel === 'LOW') return 'MEDIUM'

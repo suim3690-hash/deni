@@ -43,6 +43,10 @@ def alert_label_mask(labels):
     return mask
 
 
+def alert_labels_from_mask(mask):
+    return {label for label, bit in ALERT_LABEL_BITS.items() if mask & bit}
+
+
 # Remove socket/wire from this set to keep electrical objects at their base level.
 PERSON_ESCALATION_CLASSES = set(RISK_LEVELS)
 MODEL_SPECS = [('object', WEIGHTS / 'object.pt', None),

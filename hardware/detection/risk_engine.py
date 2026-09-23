@@ -9,8 +9,16 @@ class RiskEngine:
         self.stabilizer = ClassStabilizer(C.STABLE_WINDOW, C.STABLE_VOTES)
         self.seen = {}
         self.alerted = {}
+        self.labels = {}
         self.unknown = []
         self.next_unknown = 0
+
+    def reset_alert_labels(self, labels):
+        """Allow the next stable sighting after a confirmed direct removal to alert immediately."""
+        targets = set(labels)
+        for key, label in list(self.labels.items()):
+            if label in targets:
+                self.alerted.pop(key, None)
 
     def evaluate(self, detections, now):
         # Real-time TTL, in addition to ByteTrack's processed-frame buffer.
@@ -20,6 +28,8 @@ class RiskEngine:
                 self.stabilizer.history.pop(key, None)
                 self.stabilizer.confirmed.pop(key, None)
         self.alerted = {k:v for k,v in self.alerted.items() if now-v[0] <= C.TRACK_FORGET_SEC}
+        active_keys = self.seen.keys() | self.alerted.keys()
+        self.labels = {key: label for key, label in self.labels.items() if key in active_keys}
         self.unknown = [u for u in self.unknown if now-u['time'] <= C.TRACK_FORGET_SEC]
         used_unknown = set()
         people = any(d['label']=='person' and d['confidence'] >= C.EMERGENCY_CONF for d in detections)
@@ -51,6 +61,7 @@ class RiskEngine:
                             self.alerted[key] = self.alerted[u['key']]
                         break
             self.seen[key] = now
+            self.labels[key] = label
             self.stabilizer.update(key, d['class_id'], confidence)
             confirmed = self.stabilizer.confirmed.get(key)
             stable = bool(confirmed and confirmed[0] == d['class_id'])

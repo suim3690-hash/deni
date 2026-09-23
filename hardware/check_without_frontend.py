@@ -57,6 +57,7 @@ class ScriptedCamera:
         self.lock = threading.Lock()
         self.labels, self.fill, self.sequence, self.processing = [], 0.05, 0, False
         self.suppressed = set()
+        self.reset_alerts = set()
 
     def set_processing(self, enabled):
         with self.lock:
@@ -65,6 +66,10 @@ class ScriptedCamera:
     def set_suppressed_alert_labels(self, labels):
         with self.lock:
             self.suppressed = set(labels)
+
+    def reset_alert_labels(self, labels):
+        with self.lock:
+            self.reset_alerts.update(labels)
 
     def show(self, labels, fill=0.05):
         with self.lock:

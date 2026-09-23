@@ -7,9 +7,13 @@ from care_runtime import Runtime
 class Detector:
     def __init__(self):
         self.suppressed = set()
+        self.reset = set()
 
     def set_suppressed_alert_labels(self, labels):
         self.suppressed = set(labels)
+
+    def reset_alert_labels(self, labels):
+        self.reset.update(labels)
 
 
 class RuntimeAlertTests(unittest.TestCase):
@@ -34,3 +38,11 @@ class RuntimeAlertTests(unittest.TestCase):
                                         {'hazardId': 'h1', 'objectLabel': '배터리'}, 10.0)
         self.runtime._sync_alert_suppression()
         self.assertEqual(self.detector.suppressed, set())
+
+    def test_successful_direct_removal_resets_target_alert_cooldown(self):
+        self.runtime.controller.results['remove'] = dict(
+            status='SUCCEEDED', operationState='RUNNING', hazardId='h1', hazardPresent=False)
+        result = self.runtime.command('RECHECK_HAZARD', 'remove',
+                                      {'hazardId':'h1','objectLabel':'배터리'})
+        self.assertEqual(result['status'], 'SUCCEEDED')
+        self.assertEqual(self.detector.reset, {'battery'})

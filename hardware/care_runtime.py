@@ -12,7 +12,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from care_controller import CareController, Settings
+from care_controller import CareController, Settings, LABELS
 from detection.service import DetectionService
 from motor_output import MotorOutput, DRIVE_REVERSED
 from pc_dashboard import CameraFeed, read_mjpeg
@@ -42,9 +42,11 @@ class Runtime:
                         movementState=MOVEMENT.get(motor['ack'], 'UNKNOWN') if motor['ready'] else 'UNKNOWN')
 
     def command(self, command, identity, parameters=None):
+        parameters = parameters or {}
+        reset_label = LABELS.get(parameters.get('objectLabel')) if command == 'RECHECK_HAZARD' else None
         with self.lock:
             before = self.controller.powered
-            self.controller.request(command, identity, parameters or {}, time.monotonic())
+            self.controller.request(command, identity, parameters, time.monotonic())
             self._sync_alert_suppression()
             if before != self.controller.powered:
                 self.detector.set_processing(self.controller.powered)
@@ -52,6 +54,8 @@ class Runtime:
             with self.lock:
                 result = self.controller.results.pop(identity, None)
                 if result is not None:
+                    if result.get('status') == 'SUCCEEDED' and reset_label:
+                        self.detector.reset_alert_labels({reset_label})
                     LOG.info('Command %s %s: %s', command, identity, result['status'])
                     return result
         return dict(status='FAILED', operationState='UNKNOWN', errorCode='PROCESS_STOPPING')

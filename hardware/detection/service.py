@@ -80,9 +80,10 @@ class DetectionService:
         self.mode_code = self.ctx.Value('q', self.generation)
         self.processing_event = self.ctx.Event()
         self.suppressed_alert_mask = self.ctx.Value('Q', 0)
+        self.alert_reset_mask = self.ctx.Value('Q', 0)
         if self.processing: self.processing_event.set()
         self.process = self.ctx.Process(target=run, args=(self.mailbox,self.results,self.stop_event,
-            self.mode_code,self.processing_event,self.suppressed_alert_mask), daemon=True)
+            self.mode_code,self.processing_event,self.suppressed_alert_mask,self.alert_reset_mask), daemon=True)
         try:
             self.process.start()
         except Exception as exc:
@@ -145,6 +146,12 @@ class DetectionService:
             if hasattr(self, 'suppressed_alert_mask'):
                 with self.suppressed_alert_mask.get_lock():
                     self.suppressed_alert_mask.value = mask
+
+    def reset_alert_labels(self, labels):
+        mask = C.alert_label_mask(set(labels))
+        if hasattr(self, 'alert_reset_mask'):
+            with self.alert_reset_mask.get_lock():
+                self.alert_reset_mask.value |= mask
 
     def state(self):
         with self.state_lock:

@@ -51,6 +51,8 @@ class Tests(unittest.TestCase):
         self.assertEqual(service.state()['suppressed_alert_labels'], ['battery'])
         with self.assertRaises(ValueError):
             service.set_suppressed_alert_labels({'unknown'})
+        with self.assertRaises(ValueError):
+            service.reset_alert_labels({'unknown'})
 
     def test_backend_images_are_cropped_per_detection(self):
         from uploader import crop_detection_images
@@ -77,6 +79,16 @@ class Tests(unittest.TestCase):
         self.assertEqual(risk['level'],3);self.assertEqual(len(events),1)
         self.assertEqual(e.evaluate([d,obj('person',model='coco')],1.2)[1],[])
         self.assertEqual(len(e.evaluate([d],12)[1]),1)
+
+    def test_direct_removal_reset_allows_only_that_label_to_alert_again(self):
+        e=RiskEngine(); coin=obj(); battery=obj('battery',track=2)
+        events=[]
+        for n in range(10):
+            _,events=e.evaluate([coin,battery],n*.1)
+        self.assertEqual({event['label'] for event in events},{'coin','battery'})
+        e.reset_alert_labels({'battery'})
+        _,events=e.evaluate([coin,battery],1.0)
+        self.assertEqual([event['label'] for event in events],['battery'])
 
     def test_urgent_without_id_or_votes(self):
         e=RiskEngine();d=obj(track=None);person=obj('person',model='coco')

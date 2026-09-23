@@ -10,7 +10,8 @@ def unsuppressed_events(events, mask):
             if not mask & C.ALERT_LABEL_BITS.get(event.get('label'), 0)]
 
 
-def run(mailbox, output, stop, mode_code, processing=None, suppressed_alert_mask=None):
+def run(mailbox, output, stop, mode_code, processing=None, suppressed_alert_mask=None,
+        alert_reset_mask=None):
     store = None
     active_code = mode_code.value
     def publish(state):
@@ -86,6 +87,13 @@ def run(mailbox, output, stop, mode_code, processing=None, suppressed_alert_mask
             objects, errors = models.infer(frame)
             if mode_code.value != active_code or (processing is not None and not processing.is_set()):
                 continue
+            reset_mask = 0
+            if alert_reset_mask is not None:
+                with alert_reset_mask.get_lock():
+                    reset_mask = alert_reset_mask.value
+                    alert_reset_mask.value = 0
+            if reset_mask:
+                engine.reset_alert_labels(C.alert_labels_from_mask(reset_mask))
             risk, events = engine.evaluate(objects,stamp)
             # The relocation target must remain visible to local control for drop
             # verification, but seeing it again after backing is not a new alert.

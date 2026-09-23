@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Activity, ArrowRight, BatteryFull, Loader2, Power, Smile, X } from 'lucide-react'
 import Header from '../components/Header'
 import HazardLocation from './HazardLocation'
@@ -15,7 +15,7 @@ import type { RegisteredChild } from '../services/children'
 import { ApiRequestError, apiErrorMessage } from '../services/apiError'
 import { activateChildOnDevice, getDashboard, getHazardDetail, getRobotState, sendDeviceCommand, type DashboardHazard, type DashboardSnapshot, type HazardDetail } from '../services/dashboard'
 import { stageBannerSubtitles, stageTitles } from '../lib/stages'
-import { describeHazard, orderHazardsForAttention, riskLabels } from '../lib/hazardRisk'
+import { describeHazard, findRedetectedHazard, orderHazardsForAttention, powerOnSafetyNotice, riskLabels, type CompletedDirectRemoval } from '../lib/hazardRisk'
 import HazardAlertBox from '../components/HazardAlertBox'
 import { apiBaseUrl, isMockMode } from '../lib/runtime'
 
@@ -69,6 +69,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   const [hazardError, setHazardError] = useState('')
   const [hazardErrorStatus, setHazardErrorStatus] = useState<number | null>(null)
   const [selectedHazard, setSelectedHazard] = useState<DashboardHazard | null>(null)
+  const [completedRemoval, setCompletedRemoval] = useState<CompletedDirectRemoval | null>(null)
   const [showMap, setShowMap] = useState(false)
   const [showSafetyProfile, setShowSafetyProfile] = useState(false)
   const [showReport, setShowReport] = useState(false)
@@ -185,8 +186,10 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   const exampleReportAvailable = Boolean(dashboard?.isMock && report?.available)
   const prioritizedHazards = orderHazardsForAttention(dashboard?.activeHazards ?? [])
   const activeHazard = prioritizedHazards[0]
+  const redetectedHazard = findRedetectedHazard(prioritizedHazards, completedRemoval)
+  const attentionHazard = redetectedHazard ?? activeHazard
   const activeHazardCount = prioritizedHazards.length
-  const alert = activeHazard ? describeHazard(activeHazard, stage, !dashboard?.isMock) : null
+  const alert = attentionHazard ? describeHazard(attentionHazard, stage, !dashboard?.isMock) : null
   const robotState = loadError ? null : dashboard?.robotState
   // 오래된 보고(stale)는 현재 상태의 근거가 아니므로 전원·작업 표시에 쓰지 않는다.
   const liveRobotState = robotState && !robotState.stale ? robotState : null
@@ -196,6 +199,9 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     ? powered ? mockPaused ? 'PAUSED' : 'RUNNING' : 'UNKNOWN'
     : robotState && !robotState.stale ? robotState.operationState : device?.operationState ?? 'UNKNOWN'
   const paused = powered && operationState === 'PAUSED'
+  const safetyStopNotice = powered
+    ? powerOnSafetyNotice(liveRobotState?.taskState ?? null, prioritizedHazards)
+    : ''
   // 실제 모드에서는 서버가 주지 않은 배터리 값을 목업 숫자로 채우지 않는다.
   const batteryPercent = connected ? device?.batteryPercent ?? null : null
   const safetyModeEnabled = connected && device?.safetyModeEnabled === true
@@ -205,7 +211,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   const displayName = dashboard?.child.childId === child.childId && dashboard.child.name.trim() ? dashboard.child.name : child.name
   const lastResponseTime = lastResponseAt?.toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
-  async function openHazardDetail(hazard: DashboardHazard) {
+  const openHazardDetail = useCallback(async (hazard: DashboardHazard) => {
     if (!dashboard) return
     const request = ++hazardRequest.current
     setSelectedHazard(hazard)
@@ -224,11 +230,11 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
       setHazardErrorStatus(status)
       setHazardError(apiErrorMessage(error, '위험 상세 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'))
     }
-  }
+  }, [dashboard])
 
   function openMap() {
-    if (activeHazard) {
-      void openHazardDetail(activeHazard)
+    if (attentionHazard) {
+      void openHazardDetail(attentionHazard)
       return
     }
     setSelectedHazard(null)
@@ -252,6 +258,17 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     setLoadErrorMessage('')
     return result
   }
+
+  const handleRemovalCompleted = useCallback((removal: CompletedDirectRemoval) => {
+    setCompletedRemoval(removal)
+  }, [])
+
+  // 완료된 직접 제거 건과 같은 물체가 새 ID로 들어오면 열린 케어 맵도 새 건으로 전환한다.
+  useEffect(() => {
+    if (!showMap || !redetectedHazard || selectedHazard?.hazardId !== completedRemoval?.hazardId) return
+    const timer = window.setTimeout(() => void openHazardDetail(redetectedHazard), 0)
+    return () => window.clearTimeout(timer)
+  }, [completedRemoval?.hazardId, openHazardDetail, redetectedHazard, selectedHazard?.hazardId, showMap])
 
   // 목업은 화면 내부의 가상 연결만 바꾸며 실제 기기 API를 호출하지 않는다.
   async function handleMockPower() {
@@ -363,7 +380,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     onUpdateChild(updated)
   }
 
-  if (showMap) return <HazardLocation key={selectedHazard?.hazardId ?? "none"} onSelect={(hazard) => void openHazardDetail(hazard)} onLivingResolved={(next) => { setHazardDetail(next); void refreshDashboard().catch(() => setLoadError(true)) }} hazard={currentSelectedHazard ?? selectedHazard} hazards={prioritizedHazards} deviceId={device?.deviceId ?? ''} stage={stage} operationState={operationState} detail={hazardDetail} error={hazardError} errorStatus={hazardErrorStatus} isMock={dashboard?.isMock ?? false} onBack={closeMap} onRetry={() => { if (selectedHazard) void openHazardDetail(selectedHazard) }} />
+  if (showMap) return <HazardLocation key={selectedHazard?.hazardId ?? "none"} onSelect={(hazard) => void openHazardDetail(hazard)} onLivingResolved={(next) => { setHazardDetail(next); void refreshDashboard().catch(() => setLoadError(true)) }} onRemovalCompleted={handleRemovalCompleted} hazard={currentSelectedHazard ?? selectedHazard} hazards={prioritizedHazards} deviceId={device?.deviceId ?? ''} stage={stage} operationState={operationState} detail={hazardDetail} error={hazardError} errorStatus={hazardErrorStatus} isMock={dashboard?.isMock ?? false} redetected={selectedHazard?.hazardId === redetectedHazard?.hazardId} onBack={closeMap} onRetry={() => { if (selectedHazard) void openHazardDetail(selectedHazard) }} />
   if (showSafetyProfile) return <SafetyProfileDetail child={child} onBack={() => setShowSafetyProfile(false)} onUpdateChild={handleProfileChildUpdate} onReregister={() => onChildUnavailable('다른 데모 프로필의 이름과 생년월일을 입력해 주세요.')} isMock={dashboard?.isMock ?? isMockMode} />
   if (showReport && report && reportAvailable) return <GrowthReport child={child} month={report.month} onBack={() => setShowReport(false)} />
 
@@ -372,19 +389,23 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
       <div className="mx-auto min-h-screen max-w-[402px] pb-[85px]">
         <Header title={`${displayName} 홈`} hasNotification />
         <main className="px-6 pt-[10px]">
-          {activeHazard && alert && (
+          {attentionHazard && alert && (
             <div className="mb-3">
               <HazardAlertBox
-                onClick={() => void openHazardDetail(activeHazard)}
-                ariaLabel={`${alert.urgencyLabel} ${activeHazardCount > 1 ? `위험 물체 ${activeHazardCount}건이 감지되었어요` : alert.title}. 스마트 안심 케어 맵으로 이동`}
-                badge={alert.urgencyLabel}
-                urgent={alert.urgent}
-                riskLabel={alert.risk ? riskLabels[alert.risk] : null}
-                title={activeHazardCount > 1 ? `위험 물체 ${activeHazardCount}건이 감지되었어요` : alert.title}
-                subtitle={loadError
+                onClick={() => void openHazardDetail(attentionHazard)}
+                ariaLabel={redetectedHazard
+                  ? '재감지된 위험 물체를 다시 치워 주세요. 스마트 안심 케어 맵으로 이동'
+                  : `${alert.urgencyLabel} ${activeHazardCount > 1 ? `위험 물체 ${activeHazardCount}건이 감지되었어요` : alert.title}. 스마트 안심 케어 맵으로 이동`}
+                badge={redetectedHazard ? '재감지' : alert.urgencyLabel}
+                urgent={redetectedHazard ? true : alert.urgent}
+                riskLabel={redetectedHazard ? null : alert.risk ? riskLabels[alert.risk] : null}
+                title={redetectedHazard ? '위험 물체가 다시 감지되었어요' : activeHazardCount > 1 ? `위험 물체 ${activeHazardCount}건이 감지되었어요` : alert.title}
+                subtitle={redetectedHazard
+                  ? '제거했던 위험 물체가 다시 보여요. 다시 치워 주세요.'
+                  : loadError
                   ? '최신 조회 실패 · 마지막으로 확인된 알림이에요'
                   : activeHazardCount > 1
-                    ? `대표 감지: ${activeHazard.objectName} · 눌러서 위치 확인`
+                    ? `대표 감지: ${attentionHazard.objectName} · 눌러서 위치 확인`
                     : '눌러서 스마트 안심 케어 맵 확인'}
               />
             </div>
@@ -458,13 +479,14 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
               </div>
 
               {!connected && <p className="mt-2 text-[12px] leading-[1.5] text-[#64748b]">기기 통신 상태를 확인해 주세요.</p>}
+              {safetyStopNotice && <p role="status" className="mt-2 rounded-[10px] bg-[#fff7ed] px-3 py-2 text-[12px] leading-[1.5] text-[#9a3412]">{safetyStopNotice}</p>}
               {connectError && <p role="alert" className="mt-2 text-[12px] text-[#a50034]">{connectError}</p>}
               <div className="mt-3 flex justify-center">
                 <button
                   type="button"
                   onClick={openMap}
                   title={!connected ? '기기 연결 없이도 감지된 위험과 사진을 볼 수 있어요. 처리 요청은 연결된 뒤에 가능합니다.' : undefined}
-                  className={`flex min-h-[38px] min-w-[205px] items-center justify-center rounded-full px-5 py-1.5 text-[14px] font-semibold text-white transition-colors focus-visible:outline-[#a50034] disabled:cursor-not-allowed disabled:opacity-45 ${activeHazard ? 'bg-[#b9003d]' : 'bg-[#167359]'}`}
+                  className={`flex min-h-[38px] min-w-[205px] items-center justify-center rounded-full px-5 py-1.5 text-[14px] font-semibold text-white transition-colors focus-visible:outline-[#a50034] disabled:cursor-not-allowed disabled:opacity-45 ${attentionHazard ? 'bg-[#b9003d]' : 'bg-[#167359]'}`}
                 >
                   스마트 안심 케어 맵 <ArrowRight size={15} className="ml-1" />
                 </button>

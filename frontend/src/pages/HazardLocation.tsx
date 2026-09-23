@@ -6,7 +6,7 @@ import robotIcon from '../assets/figma/home/imgVector5.svg'
 import { resolveLivingHazard, sendDeviceCommand, type DashboardHazard, type HazardDetail, type HazardMarker } from '../services/dashboard'
 import { apiErrorMessage } from '../services/apiError'
 import { getSafetyAction, requestRelocation, requestRemovalCheck } from '../services/operations'
-import { categoryLabels, classifyHazard, describeHazard, riskLabels, riskStyles, withTopicParticle, type HazardCategory } from '../lib/hazardRisk'
+import { categoryLabels, classifyHazard, describeHazard, riskLabels, riskStyles, withTopicParticle, type CompletedDirectRemoval, type HazardCategory } from '../lib/hazardRisk'
 import HazardAlertBox from '../components/HazardAlertBox'
 import type { Stage } from '../lib/stages'
 
@@ -46,10 +46,12 @@ interface Props {
   error: string
   errorStatus: number | null
   isMock: boolean
+  redetected: boolean
   onBack: () => void
   onRetry: () => void
   onSelect: (hazard: DashboardHazard) => void
   onLivingResolved: (detail: HazardDetail) => void
+  onRemovalCompleted: (removal: CompletedDirectRemoval) => void
 }
 
 const statusBoxClass = 'flex min-h-[54px] flex-1 items-center justify-center gap-2 rounded-[20px] px-2 text-center'
@@ -84,10 +86,10 @@ function HazardMapMarker({ category, relocated }: { category: HazardCategory | n
   )
 }
 
-export default function HazardLocation({ hazard, hazards, deviceId, stage, operationState, detail, error, errorStatus, isMock, onBack, onRetry, onSelect, onLivingResolved }: Props) {
+export default function HazardLocation({ hazard, hazards, deviceId, stage, operationState, detail, error, errorStatus, isMock, redetected: initiallyRedetected, onBack, onRetry, onSelect, onLivingResolved, onRemovalCompleted }: Props) {
   // 대시보드가 새 감지 시각을 받았는데 상세 응답은 이전 것이라면 예전 사진을 잠시 숨긴다.
   const currentDetail = !isMock && detail && hazard &&
-    new Date(detail.detectedAt).getTime() < new Date(hazard.detectedAt).getTime() ? null : detail
+    (detail.hazardId !== hazard.hazardId || new Date(detail.detectedAt).getTime() < new Date(hazard.detectedAt).getTime()) ? null : detail
   const name = currentDetail?.objectName ?? hazard?.objectName ?? ''
   const detectedAt = currentDetail?.detectedAt ?? hazard?.detectedAt
   const displayTime = detectedAt ? new Intl.DateTimeFormat('ko-KR', {
@@ -96,7 +98,7 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
   const [actionMessage, setActionMessage] = useState('')
   const [autoTransport, setAutoTransport] = useState(false)
   const [flow, setFlow] = useState<Flow>('idle')
-  const [redetected, setRedetected] = useState(false)
+  const [redetected, setRedetected] = useState(initiallyRedetected)
   const [failedCaptureUrl, setFailedCaptureUrl] = useState<string | null>(null)
   const [relocationState, setRelocationState] = useState<RealActionState>('idle')
   const [relocationActionId, setRelocationActionId] = useState<string | null>(null)
@@ -225,6 +227,14 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
         if (!active) return
         if (result.treatmentStatus === completed) {
           setState('done')
+          if (!relocation && result.completedAt) {
+            onRemovalCompleted({
+              hazardId: result.hazardId,
+              objectName: name,
+              completedAt: result.completedAt,
+              lastDetectedAt: detectedAt ?? result.completedAt,
+            })
+          }
         } else if (result.status === 'FAILED' || result.status === 'EXPIRED') {
           setState('idle')
           setActionId(null)
@@ -242,7 +252,7 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
       active = false
       window.clearInterval(timer)
     }
-  }, [isMock, pendingActionId, pendingKind])
+  }, [detectedAt, isMock, name, onRemovalCompleted, pendingActionId, pendingKind])
 
   function toggleAutoTransport() {
     if (!isMock) {
@@ -370,9 +380,9 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
 
         {restricted ? <main className="px-4 pt-6"><div role="alert" className="rounded-[16px] border border-[#f2c5cb] bg-white p-5 text-[14px] text-[#9d1237]">{error}</div></main> : <main className="space-y-[17px] px-4 pt-3">
           {redetected && activeHazard && (
-            <HazardAlertBox role="alert" ariaLabel="위험 물체 재감지 알림" badge="재감지" urgent title="위험 물체가 다시 감지되었어요" subtitle={`확인 중 ${name}이(가) 남아 있어요. 다시 조치해 주세요.`} />
+            <HazardAlertBox role="alert" ariaLabel="위험 물체 재감지 알림" badge="재감지" urgent title="위험 물체가 다시 감지되었어요" subtitle="제거했던 위험 물체가 다시 보여요. 다시 치워 주세요." />
           )}
-          {activeHazard && alert && (
+          {activeHazard && alert && !redetected && (
             <HazardAlertBox ariaLabel="위험 물체 감지 알림" badge={alert.urgencyLabel} urgent={alert.urgent} riskLabel={alert.risk ? riskLabel : null} title={alert.title} subtitle={displayTime ? `감지 시간 ${displayTime}` : undefined} />
           )}
 
