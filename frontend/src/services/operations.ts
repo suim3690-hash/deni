@@ -1,5 +1,6 @@
 import { generateId } from '../lib/id'
 import { apiErrorFromResponse } from './apiError'
+import { apiBaseUrl } from '../lib/runtime'
 
 export interface ActionReceipt {
   actionId: string
@@ -18,9 +19,9 @@ export interface ActionResult extends ActionReceipt {
 }
 
 function apiBase() {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL
+  const baseUrl = apiBaseUrl
   if (!baseUrl) throw new Error('API URL is missing')
-  return baseUrl.replace(/\/$/, '')
+  return baseUrl
 }
 
 // FR-025: request the device to reconfirm the hazard is gone before the guardian's

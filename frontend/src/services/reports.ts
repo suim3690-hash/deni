@@ -2,6 +2,7 @@ import { stageByOrder, stageCriteriaDescriptions, stageOrder, type Stage } from 
 import { apiErrorFromResponse } from './apiError'
 import { computeSafetyProfile } from './children'
 import { riskByStage, type HazardCategory } from '../lib/hazardRisk'
+import { apiBaseUrl } from '../lib/runtime'
 
 export interface ProfileStageChange {
   from: Stage | null
@@ -92,7 +93,7 @@ function mockNextStagePreview(month: string, birthDate: string): MonthlyReport['
 
 export async function getMonthlyReport(childId: string, childName: string, birthDate: string, month: string,
   signal?: AbortSignal): Promise<MonthlyReport> {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL
+  const baseUrl = apiBaseUrl
   const mockDetections = mockMonthlyDetections(month, birthDate)
   // 주소에 ?mockStageChange 를 붙이면 모든 달에 19일 걸음마 시기 → 유아 활동기 전환을 강제로 보여준다(디자인 확인용).
   const forcedChange: ProfileStageChange | null = new URLSearchParams(window.location.search).has('mockStageChange')
@@ -114,7 +115,7 @@ export async function getMonthlyReport(childId: string, childName: string, birth
   }
 
   const query = new URLSearchParams({ childId, month })
-  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/reports/monthly?${query}`, { signal })
+  const response = await fetch(`${baseUrl}/api/v1/reports/monthly?${query}`, { signal })
   if (!response.ok) throw await apiErrorFromResponse(response, '월간 리포트를 불러오지 못했어요.')
   const data = await response.json() as Omit<MonthlyReport, 'isMock'>
   return { ...data, isMock: false }

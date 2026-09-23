@@ -16,14 +16,25 @@ type Flow = 'idle' | 'relocating' | 'relocated' | 'removal-guide' | 'checking' |
 
 // 목업 안전 이송 때 위험 물체 마커가 옮겨 가는 안전한 장소(지도의 현관 구역)와 이동 시간
 const SAFE_ZONE_MARKER: HazardMarker = { x: 0.843, y: 0.585 }
-const MOCK_HAZARD_MARKERS: Record<HazardCategory, HazardMarker> = {
-  SWALLOW: { x: 0.296, y: 0.429 },
-  LIVING: { x: 0.655, y: 0.337 },
-}
-const DEFAULT_MOCK_MARKER: HazardMarker = { x: 0.472, y: 0.455 }
 const RELOCATE_MOCK_MS = 3000
 const AUTO_RESUME_MOCK_MS = 1500
 const MARKER_GLIDE_MS = 1200
+
+// 실제 공간 좌표를 제공하는 SLAM이 아직 없으므로 맵 마커는 위험 건별 임의 위치를 쓴다.
+// hazardId 기반의 결정적 좌표라 다시 조회해도 같은 위험 건의 마커가 움직이지 않는다.
+function markerForHazard(hazardId: string): HazardMarker {
+  let hash = 2166136261
+  for (const character of hazardId) {
+    hash ^= character.charCodeAt(0)
+    hash = Math.imul(hash, 16777619)
+  }
+  const xSeed = hash >>> 0
+  const ySeed = Math.imul(hash ^ 0x9e3779b9, 2246822519) >>> 0
+  return {
+    x: 0.16 + (xSeed / 0xffffffff) * 0.68,
+    y: 0.18 + (ySeed / 0xffffffff) * 0.62,
+  }
+}
 
 interface Props {
   hazard: DashboardHazard | null
@@ -122,11 +133,10 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
   // 기기가 제거를 확인해 준 상태. 이송과 마찬가지로 처리 완료로 보고 청소를 다시 시작한다.
   const removalDone = removalState === 'done'
   const treatmentDone = relocationDone || removalDone
-  // 위치 좌표는 화면 검증용 목업값을 사용한다. 유형별로 서로 다른 위치와 모양을 보여주고,
-  // 이송 흐름에서는 동일 마커가 안전 구역으로 이동하도록 한다.
-  const mockDetectedMarker = alert?.category ? MOCK_HAZARD_MARKERS[alert.category] : DEFAULT_MOCK_MARKER
+  // SLAM 연동 전까지 mock/실제 모드 모두 동일한 평면도와 위험 건별 임의 좌표를 사용한다.
+  const detectedMarker = hazard ? markerForHazard(hazard.hazardId) : null
   const marker: HazardMarker | null = hazard && !selectedResolved && flow !== 'running'
-    ? flow === 'relocating' || relocationDone ? SAFE_ZONE_MARKER : currentDetail?.marker ?? mockDetectedMarker
+    ? isMock && (flow === 'relocating' || relocationDone) ? SAFE_ZONE_MARKER : detectedMarker
     : null
   const markerGlideMs = flow === 'relocating' ? RELOCATE_MOCK_MS : MARKER_GLIDE_MS
   const defaultStatus = operationState === 'RUNNING' ? '로봇청소기 작동 중' : operationState === 'PAUSED' ? '로봇청소기 일시 정지' : '로봇청소기 상태 확인 전'
@@ -377,40 +387,38 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
 
           <section aria-label="스마트 안심 케어 맵" className="rounded-[22px] bg-white p-4 shadow-[0_2px_8px_rgba(48,60,90,0.06)]">
             <h2 className="mb-3 flex items-center gap-2 text-[15px] font-bold"><span className="size-[10px] rounded-full bg-[#2958c7]" />스마트 안심 케어 맵</h2>
-            {!isMock && hazard && !currentDetail && !error ? <p className="rounded-[16px] bg-[#f3f6fc] p-5 text-center text-[13px] text-[#64748b]">지도를 불러오고 있어요.</p> : (
-              <>
-                <div className="relative overflow-hidden rounded-[20px] border border-black/10">
-                  <img src={floorPlanPreview} alt="스마트 안심 케어 맵" className="block w-full" />
-                  {hazard && marker && (
-                    <span
-                      role="img"
-                      aria-label={`${category ? categoryLabels[category] : '위험 물체'} 지도 표시${currentDetail?.marker ? '' : ' (예시 위치)'}`}
-                      className={`absolute w-[7.5%] -translate-x-1/2 -translate-y-1/2 motion-reduce:animate-none ${relocationDone ? '' : 'animate-blink'}`}
-                      style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%`, transition: `left ${markerGlideMs}ms ease-in-out, top ${markerGlideMs}ms ease-in-out` }}
-                    >
-                      <HazardMapMarker category={category} relocated={relocationDone} />
-                    </span>
-                  )}
-                </div>
-                <div className="mt-2 flex items-center justify-center gap-4 text-[10px] text-[#64748b]" aria-label="위험 요소 마커 범례">
-                  <span className="flex items-center gap-1.5"><span className="grid size-4 place-items-center rounded-full bg-[#a5003a] text-[9px] font-bold text-white">!</span>삼킴 위험물</span>
-                  <span className="flex items-center gap-1.5"><span className="grid size-4 rotate-45 place-items-center rounded-[3px] bg-[#2563eb] text-[9px] font-bold text-white"><span className="-rotate-45">ϟ</span></span>생활공간 위험요소</span>
-                </div>
-                <p className="mt-1.5 text-center text-[11px] text-[#94a3b8]">{selectedResolved ? '처리 완료되어 지도 마커가 제거됐습니다.' : currentDetail?.marker ? '선택한 위험물의 서버 좌표를 표시합니다.' : '마커 위치는 화면 확인용 예시입니다.'}</p>
-              </>
-            )}
+            <div className="relative overflow-hidden rounded-[20px] border border-black/10">
+              <img src={floorPlanPreview} alt="스마트 안심 케어 맵" className="block w-full" />
+              {hazard && marker && (
+                <span
+                  role="img"
+                  aria-label={`${category ? categoryLabels[category] : '위험 물체'} 임의 위치 표시`}
+                  className={`absolute w-[7.5%] -translate-x-1/2 -translate-y-1/2 motion-reduce:animate-none ${relocationDone ? '' : 'animate-blink'}`}
+                  style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%`, transition: `left ${markerGlideMs}ms ease-in-out, top ${markerGlideMs}ms ease-in-out` }}
+                >
+                  <HazardMapMarker category={category} relocated={relocationDone} />
+                </span>
+              )}
+            </div>
+            <div className="mt-2 flex items-center justify-center gap-4 text-[10px] text-[#64748b]" aria-label="위험 요소 마커 범례">
+              <span className="flex items-center gap-1.5"><span className="grid size-4 place-items-center rounded-full bg-[#a5003a] text-[9px] font-bold text-white">!</span>삼킴 위험물</span>
+              <span className="flex items-center gap-1.5"><span className="grid size-4 rotate-45 place-items-center rounded-[3px] bg-[#2563eb] text-[9px] font-bold text-white"><span className="-rotate-45">ϟ</span></span>생활공간 위험요소</span>
+            </div>
+            <p className="mt-1.5 text-center text-[11px] text-[#94a3b8]">{selectedResolved
+              ? '처리 완료되어 지도 마커가 제거됐습니다.'
+              : hazard ? '실제 공간 지도 연동 전으로 위험 건별 임의 위치를 표시합니다.' : '현재 표시할 위험요소가 없습니다.'}</p>
           </section>
 
           <section aria-label="드니 AI 실시간 캡처" className="rounded-[22px] bg-white px-[18px] pb-[18px] pt-[16px] shadow-[0_2px_8px_rgba(48,60,90,0.06)]">
             <h2 className="flex items-center gap-2 text-[16px] font-bold text-[#171c25]"><img src={robotIcon} alt="" className="size-5" />드니 AI 실시간 캡처</h2>
             {activeHazard && alert ? (
               <>
-                <div className="relative mx-auto mt-3 w-[210px] overflow-hidden rounded-[12px] border-2 border-dashed border-[#e11d48]/70 bg-[#e5e7eb]">
+                <div className="relative mx-auto mt-3 w-[230px] overflow-hidden rounded-[12px] border-2 border-dashed border-[#e11d48]/70 bg-[#f1f5f9] px-4 pb-10 pt-4">
                   {captureLoading
-                    ? <div className="grid aspect-[35/24] place-items-center text-[13px] text-[#64748b]">감지 사진을 불러오고 있어요</div>
+                    ? <div className="grid aspect-[35/24] place-items-center rounded-[8px] bg-[#e5e7eb] text-[13px] text-[#64748b]">감지 사진을 불러오고 있어요</div>
                     : captureSrc
-                      ? <img src={captureSrc} onError={() => setFailedCaptureUrl(captureSrc)} alt={`${name} ${redetected ? '재감지' : '감지'} 사진`} className="aspect-[35/24] w-full object-cover" />
-                      : <div role="status" className="grid aspect-[35/24] place-items-center px-3 text-center text-[13px] text-[#64748b]">감지 사진을 불러오지 못했어요</div>}
+                      ? <img src={captureSrc} onError={() => setFailedCaptureUrl(captureSrc)} alt={`${name} ${redetected ? '재감지' : '감지'} 사진`} className="aspect-[35/24] w-full rounded-[8px] bg-[#e5e7eb] object-contain" />
+                      : <div role="status" className="grid aspect-[35/24] place-items-center rounded-[8px] bg-[#e5e7eb] px-3 text-center text-[13px] text-[#64748b]">감지 사진을 불러오지 못했어요</div>}
                   <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-[#141414]/90 px-2 py-1.5 text-white">
                     <strong className="min-w-0 text-[11px] leading-4">{redetected ? `재감지 · ${name}` : name}</strong>
                     <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${alertStyle.chip}`}>위험도 {riskLabel}</span>

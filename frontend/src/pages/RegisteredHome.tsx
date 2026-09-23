@@ -17,6 +17,7 @@ import { activateChildOnDevice, getDashboard, getHazardDetail, getRobotState, se
 import { stageBannerSubtitles, stageTitles } from '../lib/stages'
 import { describeHazard, orderHazardsForAttention, riskLabels } from '../lib/hazardRisk'
 import HazardAlertBox from '../components/HazardAlertBox'
+import { apiBaseUrl, isMockMode } from '../lib/runtime'
 
 type Modal = 'device' | null
 
@@ -109,7 +110,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     void refresh()
     // The backend updates activeHazards after a device detection. Refresh the
     // dashboard while this screen is open so a newly active hazard appears.
-    const pollTimer = import.meta.env.VITE_API_BASE_URL ? window.setInterval(() => void refresh(), 5000) : null
+    const pollTimer = apiBaseUrl ? window.setInterval(() => void refresh(), 5000) : null
     const refreshWhenVisible = () => { if (document.visibilityState === 'visible') void refresh() }
     document.addEventListener('visibilitychange', refreshWhenVisible)
     window.addEventListener('focus', refreshWhenVisible)
@@ -172,8 +173,10 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
 
   const device = dashboard?.device
   const isOnline = !loadError && device?.connectionState === 'ONLINE'
-  // 전원과 통신 연결은 별개다. 전원을 꺼도 기기가 온라인이면 통신과 상태 조회는 유지된다.
-  const connected = isOnline
+  const isMock = dashboard?.isMock === true
+  // 실제 모드는 서버의 연결 상태를 사용한다. 목업 모드는 화면 안에서 만든 가상 연결만 사용해
+  // 실제 WebSocket 연결과 목업 전원 상태가 서로 섞이지 않게 한다.
+  const connected = isMock ? mockPowered && isOnline : isOnline
   const profile = dashboard?.currentProfile ?? child.safetyProfile
   const isSupported = profile.status === 'APPLIED' && profile.stage !== null
   const stage = isSupported ? profile.stage : null
@@ -188,11 +191,17 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   // 오래된 보고(stale)는 현재 상태의 근거가 아니므로 전원·작업 표시에 쓰지 않는다.
   const liveRobotState = robotState && !robotState.stale ? robotState : null
   // 전원은 통신 연결과 별개다. 전원을 끄면 모터와 탐지만 멈추고 통신은 유지된다.
-  const powered = dashboard?.isMock ? mockPowered && isOnline : liveRobotState?.powerEnabled === true
-  const operationState = dashboard?.isMock ? mockPaused ? 'PAUSED' : 'RUNNING' : robotState && !robotState.stale ? robotState.operationState : device?.operationState ?? 'UNKNOWN'
+  const powered = isMock ? mockPowered && isOnline : liveRobotState?.powerEnabled === true
+  const operationState = isMock
+    ? powered ? mockPaused ? 'PAUSED' : 'RUNNING' : 'UNKNOWN'
+    : robotState && !robotState.stale ? robotState.operationState : device?.operationState ?? 'UNKNOWN'
   const paused = powered && operationState === 'PAUSED'
-  // 실제 API 모드에서도 배터리 보고 연동 전까지는 화면 확인용 고정값을 사용한다.
-  const batteryPercent = 80
+  // 실제 모드에서는 서버가 주지 않은 배터리 값을 목업 숫자로 채우지 않는다.
+  const batteryPercent = connected ? device?.batteryPercent ?? null : null
+  const safetyModeEnabled = connected && device?.safetyModeEnabled === true
+  const safetyModeLabel = !connected || device?.safetyModeEnabled === false
+    ? 'OFF'
+    : device?.safetyModeEnabled === true ? 'ON' : '확인 전'
   const displayName = dashboard?.child.childId === child.childId && dashboard.child.name.trim() ? dashboard.child.name : child.name
   const lastResponseTime = lastResponseAt?.toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
@@ -244,7 +253,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     return result
   }
 
-  // 목업은 전원 버튼 하나로 ThinQ 연결까지 함께 보여주고, 실제 모드는 연결 확인과 전원 명령을 나눠서 보낸다.
+  // 목업은 화면 내부의 가상 연결만 바꾸며 실제 기기 API를 호출하지 않는다.
   async function handleMockPower() {
     if (powered) {
       setMockPowered(false)
@@ -255,7 +264,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     try {
       await new Promise((resolve) => setTimeout(resolve, 1200))
       if (dashboard?.device?.connectionState === 'ONLINE') setMockPowered(true)
-      else setConnectError('ThinQ에 연결하지 못했어요. 로봇청소기 전원과 네트워크를 확인해 주세요.')
+      else setConnectError('화면 예시 기기에 연결하지 못했어요.')
     } finally {
       setConnecting(false)
     }
@@ -298,28 +307,30 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     setConnecting(true)
     try {
       // 연결이 확인되지 않은 상태에서는 전원 명령 대신 최신 연결 상태부터 다시 조회한다.
+      let commandDevice = device
       if (!isOnline) {
         const result = await refreshDashboard()
         if (!result.device) setConnectError('등록된 로봇청소기를 찾을 수 없어요.')
-        else if (result.device.connectionState !== 'ONLINE') setConnectError('ThinQ에 연결하지 못했어요. 로봇청소기 전원과 네트워크를 확인해 주세요.')
-        return
+        else if (result.device.connectionState !== 'ONLINE') setConnectError('기기와 통신할 수 없어요. PC 런타임과 네트워크를 확인해 주세요.')
+        else commandDevice = result.device
+        if (!result.device || result.device.connectionState !== 'ONLINE') return
       }
-      if (!device) {
+      if (!commandDevice) {
         setConnectError('등록된 로봇청소기를 찾을 수 없어요.')
         return
       }
       // 화면의 5초 주기 스냅샷이 아닌 최신 기기 보고로 명령 방향을 결정한다.
-      const state = await getRobotState(device.deviceId)
+      const state = await getRobotState(commandDevice.deviceId)
       if (state.stale || state.powerEnabled == null) {
         setConnectError('기기가 보고한 전원 상태를 아직 받지 못했어요. PC 런타임이 실행 중인지 확인해 주세요.')
         return
       }
       const targetPower = !state.powerEnabled
-      await sendDeviceCommand(device.deviceId, targetPower ? 'power-on' : 'power-off', false)
+      await sendDeviceCommand(commandDevice.deviceId, targetPower ? 'power-on' : 'power-off', false)
       // 명령 성공은 전원 상태 보고와 별개이므로 목표 상태가 보고될 때까지 버튼을 잠근다.
       let confirmed = false
       for (let attempt = 0; attempt < 12; attempt += 1) {
-        const latest = await getRobotState(device.deviceId)
+        const latest = await getRobotState(commandDevice.deviceId)
         if (!latest.stale && latest.powerEnabled === targetPower) {
           confirmed = true
           break
@@ -353,7 +364,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   }
 
   if (showMap) return <HazardLocation key={selectedHazard?.hazardId ?? "none"} onSelect={(hazard) => void openHazardDetail(hazard)} onLivingResolved={(next) => { setHazardDetail(next); void refreshDashboard().catch(() => setLoadError(true)) }} hazard={currentSelectedHazard ?? selectedHazard} hazards={prioritizedHazards} deviceId={device?.deviceId ?? ''} stage={stage} operationState={operationState} detail={hazardDetail} error={hazardError} errorStatus={hazardErrorStatus} isMock={dashboard?.isMock ?? false} onBack={closeMap} onRetry={() => { if (selectedHazard) void openHazardDetail(selectedHazard) }} />
-  if (showSafetyProfile) return <SafetyProfileDetail child={child} onBack={() => setShowSafetyProfile(false)} onUpdateChild={handleProfileChildUpdate} onReregister={() => onChildUnavailable('다른 데모 프로필의 이름과 생년월일을 입력해 주세요.')} isMock={dashboard?.isMock ?? !import.meta.env.VITE_API_BASE_URL} />
+  if (showSafetyProfile) return <SafetyProfileDetail child={child} onBack={() => setShowSafetyProfile(false)} onUpdateChild={handleProfileChildUpdate} onReregister={() => onChildUnavailable('다른 데모 프로필의 이름과 생년월일을 입력해 주세요.')} isMock={dashboard?.isMock ?? isMockMode} />
   if (showReport && report && reportAvailable) return <GrowthReport child={child} month={report.month} onBack={() => setShowReport(false)} />
 
   return (
@@ -384,7 +395,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
                 {dashboard?.isMock ? '화면 예시 · 서버 데이터 아님' : loadError ? '최신 조회 실패' : isRefreshing ? '홈 데이터 확인 중' : lastResponseAt ? '서버 조회 완료' : '홈 데이터 불러오는 중'}
                 {lastResponseAt && !dashboard?.isMock && <time dateTime={lastResponseAt.toISOString()} className="ml-1">· 마지막 응답 {lastResponseTime}</time>}
               </span>
-              {import.meta.env.VITE_API_BASE_URL && <button type="button" onClick={() => setRefreshKey((value) => value + 1)} disabled={isRefreshing} className="shrink-0 font-semibold text-[#a50034] disabled:opacity-50">다시 조회</button>}
+              {apiBaseUrl && <button type="button" onClick={() => setRefreshKey((value) => value + 1)} disabled={isRefreshing} className="shrink-0 font-semibold text-[#a50034] disabled:opacity-50">다시 조회</button>}
             </div>
             {loadError && <p role="alert" className="mt-1 text-[#a50034]">{loadErrorMessage}</p>}
           </div>
@@ -408,14 +419,14 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
               <PowerButton
                 onClick={() => void handlePower()}
                 state={connecting ? 'connecting' : powered ? 'on' : 'off'}
-                label={connecting ? '전원 명령을 보내는 중' : powered ? '전원 켜짐 · 눌러서 전원 끄기' : connected ? '전원 켜기 · 자동 주행과 위험물 탐지 시작' : '전원 켜고 ThinQ 연결'}
+                label={connecting ? '전원 명령을 보내는 중' : powered ? '전원 켜짐 · 눌러서 전원 끄기' : connected ? '전원 켜기 · 자동 주행과 위험물 탐지 시작' : isMock ? '화면 예시 기기 연결' : '기기 통신 상태 다시 확인'}
               />
             </div>
 
             <div className="mt-3 border-t border-[#e8edf5] pt-3">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="inline-flex items-center gap-1 rounded-full bg-[#f5f8ff] px-3 py-1.5 text-[12px] font-medium text-[#334155]"><BatteryFull size={15} className="text-[#10b981]" aria-hidden="true" />배터리 {batteryPercent != null ? `${batteryPercent}%` : '확인 전'}</span>
-                <span className={`rounded-full px-3 py-1.5 text-[12px] font-medium ${isOnline ? 'bg-[#e1fff2] text-[#167359]' : 'bg-[#f5f8ff] text-[#64748b]'}`}>⊙ 드니 모드 {isOnline ? 'ON' : 'OFF'}</span>
+                <span className={`rounded-full px-3 py-1.5 text-[12px] font-medium ${safetyModeEnabled ? 'bg-[#e1fff2] text-[#167359]' : 'bg-[#f5f8ff] text-[#64748b]'}`}>⊙ 드니 모드 {safetyModeLabel}</span>
               </div>
 
               <div className="mt-2 grid grid-cols-3 gap-2">
@@ -431,9 +442,9 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
                 <button
                   type="button"
                   onClick={() => setModal('device')}
-                  className={`inline-flex min-h-[34px] items-center justify-center rounded-full px-2 text-[11px] font-medium transition-colors focus-visible:outline-[#a50034] ${isOnline ? 'bg-[#e1fff2] text-[#167359]' : 'bg-[#f5f8ff] text-[#64748b]'}`}
+                  className={`inline-flex min-h-[34px] items-center justify-center rounded-full px-2 text-[11px] font-medium transition-colors focus-visible:outline-[#a50034] ${connected ? 'bg-[#e1fff2] text-[#167359]' : 'bg-[#f5f8ff] text-[#64748b]'}`}
                 >
-                  {isOnline ? '통신 유지' : '통신 끊김'}
+                  {connected ? '통신 연결' : '통신 끊김'}
                 </button>
                 <button
                   type="button"
@@ -516,9 +527,11 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
             </div>
             <p className="mt-4 text-[14px] leading-6 text-[#475569]">
               {!connected
-                ? '전원 버튼을 누르면 LG RONi를 ThinQ에 연결하고 가동해요.'
+                ? isMock
+                  ? '전원 버튼을 누르면 화면 예시 기기를 연결해요.'
+                  : 'PC 런타임과 로봇 기기의 통신이 끊겨 있어요.'
                 : powered
-                  ? 'LG RONi가 ThinQ에 연결되어 있고, 자동 주행과 위험물 탐지가 켜져 있어요.'
+                  ? 'LG RONi가 연결되어 있고, 자동 주행과 위험물 탐지가 켜져 있어요.'
                   : '연결은 유지되고 있지만 전원이 꺼져 있어요. 전원을 켜면 자동 주행과 위험물 탐지를 시작해요.'}
             </p>
           </section>
