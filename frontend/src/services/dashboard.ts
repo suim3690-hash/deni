@@ -232,11 +232,11 @@ export async function activateChildOnDevice(deviceId: string, childId: string): 
   if (!response.ok) throw await apiErrorFromResponse(response, '이 프로필을 로봇에 연결하지 못했어요.')
 }
 
-export async function acknowledgeLivingHazard(hazard: DashboardHazard): Promise<HazardDetail> {
+export async function resolveLivingHazard(hazard: DashboardHazard): Promise<HazardDetail> {
   const baseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
   if (!baseUrl) throw new Error('API URL is missing')
   const response = await fetch(`${baseUrl}/api/v1/hazards/${encodeURIComponent(hazard.hazardId)}/acknowledgements`, { method: 'POST' })
-  if (!response.ok) throw await apiErrorFromResponse(response, '생활공간 위험요소를 확인하지 못했어요.')
+  if (!response.ok) throw await apiErrorFromResponse(response, '생활공간 위험요소를 처리하지 못했어요.')
   return getHazardDetail(hazard, false)
 }
 

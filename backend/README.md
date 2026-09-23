@@ -28,12 +28,12 @@ $env:RUN_DB_TESTS = 'true'
 | 아이·프로필 | `POST /children`, `PATCH /children/{id}`, `GET /children/{id}/safety-profile` | 등록·월령/단계 계산·변경 이력 |
 | 홈·리포트 | `GET /dashboard`, `GET /reports/monthly` | 선택 아이의 위험·로봇 상태·월간 집계 |
 | 기기 | `POST /devices`, `POST /devices/{id}/active-child`, `GET /devices/{id}/status`, `GET /devices/{id}/robot-state` | 데모 프로필 3명이 한 기기를 공유, 마지막 선택 프로필에 새 탐지 귀속 |
-| 위험 | `GET /hazards`, `GET /hazards/{id}`, `POST /hazards/{id}/acknowledgements` | 목록·상세·생활공간 위험 확인 시각 저장 |
+| 위험 | `GET /hazards`, `GET /hazards/{id}`, `POST /hazards/{id}/acknowledgements` | 목록·상세·생활공간 위험 확인 완료 및 `RESOLVED` 처리 |
 | 탐지 | `POST /hardware/detections`, `GET /devices/{id}/detections`, `GET /devices/{id}/detections/{eventId}/image` | 원본 이벤트·이미지 저장, 지원 라벨은 위험 건 생성/갱신 |
 | 제어 | `POST /devices/{id}/commands/{pause\|resume\|power-on\|power-off}`, `GET /devices/{id}/commands/{commandId}` | 기기에 명령 전달, 실제 결과 조회 |
 | 안전 처리 | `POST /hazards/{id}/removal-checks`, `POST /hazards/{id}/relocations`, `GET /safety-actions/{id}` | 기기 재확인/이송 성공 증거가 있을 때만 위험 해결 |
 
-명령·아이 등록은 `Idempotency-Key`를 사용하고 탐지 업로드는 `eventId`로 중복을 막는다. 명령 접수만으로 성공 처리하지 않는다. 미처리 삼킴 위험이 있으면 일반 재개를 거부한다. 생활공간 위험은 확인해도 `ACTIVE`로 남아 지도에 표시된다.
+명령·아이 등록은 `Idempotency-Key`를 사용하고 탐지 업로드는 `eventId`로 중복을 막는다. 명령 접수만으로 성공 처리하지 않는다. 미처리 삼킴 위험이 있으면 일반 재개를 거부한다. 생활공간 위험은 확인 완료 시 `RESOLVED`로 전환되어 활성 지도에서 제외된다. 같은 라벨이 계속 보이는 동안은 완료 상태를 유지하고, 30초 이상 미검출 뒤 다시 보이면 새 위험으로 처리한다.
 
 | 아이 단계 | 삼킴 위험 | 생활공간 위험 |
 | --- | --- | --- |
@@ -51,7 +51,7 @@ Flyway V13은 기존 `ACTIVE`·`RESOLVED` 삼킴 위험의 등급을 현재 아�
 | `children`, `profile_history` | 아이·성장단계와 변경 이력 |
 | `devices`, `device_children` | 기기·연결 가능한 아이·현재 활성 아이 |
 | `detection_events` | 원본 모델·라벨·수신 시각·바운딩 박스 이미지 |
-| `hazards` | 분류된 위험·위험도·해결 상태·선택 사진 URL·생활 위험 확인 시각 |
+| `hazards` | 분류된 위험·위험도·해결 상태·선택 사진 URL·생활 위험 확인 완료 시각 |
 | `robot_live_state` | 기기별 최신 전원·작업·이동 상태 |
 | `operation_requests`, `device_command_delivery` | 요청 중복 키·전달/완료 결과 |
 

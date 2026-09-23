@@ -15,7 +15,7 @@ import type { RegisteredChild } from '../services/children'
 import { ApiRequestError, apiErrorMessage } from '../services/apiError'
 import { activateChildOnDevice, getDashboard, getHazardDetail, getRobotState, sendDeviceCommand, type DashboardHazard, type DashboardSnapshot, type HazardDetail, type RobotState } from '../services/dashboard'
 import { stageBannerSubtitles, stageTitles } from '../lib/stages'
-import { classifyHazard, describeHazard, orderHazardsForAttention, riskLabels } from '../lib/hazardRisk'
+import { describeHazard, orderHazardsForAttention, riskLabels } from '../lib/hazardRisk'
 import HazardAlertBox from '../components/HazardAlertBox'
 
 type Modal = 'device' | null
@@ -212,10 +212,8 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   const reportAvailable = Boolean(report?.available)
   const exampleReportAvailable = Boolean(dashboard?.isMock && report?.available)
   const prioritizedHazards = orderHazardsForAttention(dashboard?.activeHazards ?? [])
-  const pendingHazards = prioritizedHazards.filter((item) => !(classifyHazard(item.objectName) === 'LIVING' && item.acknowledgedAt))
-  const acknowledgedLivingHazards = prioritizedHazards.filter((item) => classifyHazard(item.objectName) === 'LIVING' && item.acknowledgedAt)
-  const activeHazard = pendingHazards[0]
-  const activeHazardCount = pendingHazards.length
+  const activeHazard = prioritizedHazards[0]
+  const activeHazardCount = prioritizedHazards.length
   const alert = activeHazard ? describeHazard(activeHazard, stage, !dashboard?.isMock) : null
   const robotState = loadError ? null : dashboard?.robotState
   // 오래된 보고(stale)는 현재 상태의 근거가 아니므로 전원·작업 표시에 쓰지 않는다.
@@ -357,7 +355,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     onUpdateChild(updated)
   }
 
-  if (showMap) return <HazardLocation key={selectedHazard?.hazardId ?? "none"} onSelect={(hazard) => void openHazardDetail(hazard)} onLivingAcknowledged={(next) => { setHazardDetail(next); void refreshDashboard().catch(() => setLoadError(true)) }} hazard={currentSelectedHazard ?? selectedHazard} hazards={prioritizedHazards} deviceId={device?.deviceId ?? ''} stage={stage} operationState={operationState} detail={hazardDetail} error={hazardError} errorStatus={hazardErrorStatus} isMock={dashboard?.isMock ?? false} onBack={closeMap} onRetry={() => { if (selectedHazard) void openHazardDetail(selectedHazard) }} />
+  if (showMap) return <HazardLocation key={selectedHazard?.hazardId ?? "none"} onSelect={(hazard) => void openHazardDetail(hazard)} onLivingResolved={(next) => { setHazardDetail(next); void refreshDashboard().catch(() => setLoadError(true)) }} hazard={currentSelectedHazard ?? selectedHazard} hazards={prioritizedHazards} deviceId={device?.deviceId ?? ''} stage={stage} operationState={operationState} detail={hazardDetail} error={hazardError} errorStatus={hazardErrorStatus} isMock={dashboard?.isMock ?? false} onBack={closeMap} onRetry={() => { if (selectedHazard) void openHazardDetail(selectedHazard) }} />
   if (showSafetyProfile) return <SafetyProfileDetail child={child} onBack={() => setShowSafetyProfile(false)} onUpdateChild={handleProfileChildUpdate} onReregister={() => onChildUnavailable('다른 데모 프로필의 이름과 생년월일을 입력해 주세요.')} isMock={dashboard?.isMock ?? !import.meta.env.VITE_API_BASE_URL} />
   if (showReport && report && reportAvailable) return <GrowthReport child={child} month={report.month} onBack={() => setShowReport(false)} />
 
@@ -382,11 +380,6 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
                     : '눌러서 스마트 안심 케어 맵 확인'}
               />
             </div>
-          )}
-          {acknowledgedLivingHazards.length > 0 && (
-            <button type="button" onClick={() => void openHazardDetail(acknowledgedLivingHazards[0])} className="mb-3 w-full rounded-xl border border-[#bfdbfe] bg-[#eff6ff] px-3 py-2 text-left text-[12px] font-semibold text-[#1d4ed8]">
-              확인한 생활공간 위험요소 {acknowledgedLivingHazards.length}건 · 지도에서 보기
-            </button>
           )}
           <div className="mb-3 rounded-xl border border-[#e2e8f0] bg-white px-3 py-2 text-[11px] text-[#475569]">
             <div className="flex items-center justify-between gap-2">

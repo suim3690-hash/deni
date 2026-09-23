@@ -134,8 +134,17 @@ class Hazard {
 	void acknowledgeLiving(OffsetDateTime now) {
 		if (acknowledgedAt == null) {
 			acknowledgedAt = now;
-			updatedAt = now;
 		}
+		status = HazardStatus.RESOLVED;
+		updatedAt = now;
+	}
+
+	/** 확인 완료한 생활공간 위험이 계속 보일 때 새 알림을 만들지 않도록 최근 관측 시각만 갱신한다. */
+	void touchAcknowledgedLiving(OffsetDateTime now) {
+		if (status != HazardStatus.RESOLVED || acknowledgedAt == null || !"LIVING".equals(objectType)) {
+			throw new IllegalStateException("Only acknowledged living hazards can be touched");
+		}
+		updatedAt = now;
 	}
 
 	UUID getId() {

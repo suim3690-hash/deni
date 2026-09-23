@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -84,7 +85,7 @@ class HazardServiceTests {
 	}
 
 	@Test
-	void livingAcknowledgementWaitsForSwallowAndPersistsWithoutResolving() {
+	void livingAcknowledgementWaitsForSwallowThenResolvesAndIsRetrySafe() {
 		UUID id = UUID.randomUUID();
 		UUID child = UUID.randomUUID();
 		Hazard living = new Hazard(id, child, "robot-1", HazardStatus.ACTIVE, "LIVING", "전선",
@@ -100,9 +101,11 @@ class HazardServiceTests {
 				() -> service.acknowledgeLiving(id)).getCode());
 		assertNull(living.getAcknowledgedAt());
 		var acknowledged = service.acknowledgeLiving(id);
-		assertEquals("ACTIVE", acknowledged.status());
+		assertEquals("RESOLVED", acknowledged.status());
 		assertEquals(living.getAcknowledgedAt(), acknowledged.acknowledgedAt());
-		assertEquals(acknowledged.acknowledgedAt(), service.acknowledgeLiving(id).acknowledgedAt());
+		var retried = service.acknowledgeLiving(id);
+		assertEquals("RESOLVED", retried.status());
+		assertEquals(acknowledged.acknowledgedAt(), retried.acknowledgedAt());
 	}
 
 	@Test
@@ -114,6 +117,29 @@ class HazardServiceTests {
 				null, null, null, null, null, DeviceOperationState.PAUSED, "event-swallow", DETECTED_AT)));
 		assertEquals("LIVING_ACK_NOT_AVAILABLE", assertThrows(ApiException.class,
 				() -> new HazardService(repository, guard).acknowledgeLiving(id)).getCode());
+	}
+
+	@Test
+	void continuousLivingRedetectionKeepsAcknowledgedHazardResolved() {
+		UUID child = UUID.randomUUID();
+		Hazard acknowledged = new Hazard(UUID.randomUUID(), child, "robot-1", HazardStatus.ACTIVE,
+				"LIVING", "전선", RiskLevel.HIGH, null, DETECTED_AT, null, null, null, null, null,
+				DeviceOperationState.RUNNING, "event-living-1", DETECTED_AT);
+		acknowledged.acknowledgeLiving(OffsetDateTime.now());
+		HazardRepository repository = mock(HazardRepository.class);
+		when(repository
+				.findFirstByDeviceIdAndChildIdAndObjectTypeAndObjectNameAndStatusAndAcknowledgedAtIsNotNullAndUpdatedAtGreaterThanEqualOrderByUpdatedAtDesc(
+						eq("robot-1"), eq(child), eq("LIVING"), eq("전선"), eq(HazardStatus.RESOLVED),
+						any(OffsetDateTime.class)))
+				.thenReturn(Optional.of(acknowledged));
+
+		var result = new HazardService(repository, guard).recordDetection(new HazardService.DetectionInput(
+				child, "robot-1", "LIVING", "전선", "HIGH", null, OffsetDateTime.now(),
+				null, null, null, null, "/image/new", "RUNNING", "event-living-2"));
+
+		assertEquals(acknowledged.getId(), result.hazardId());
+		assertEquals("RESOLVED", result.status());
+		verify(repository, never()).save(any());
 	}
 
 	@Test

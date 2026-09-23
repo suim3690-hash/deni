@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.time.Duration;
 import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -17,6 +18,7 @@ import java.util.UUID;
 public class HazardService {
 
 	private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
+	private static final Duration LIVING_REDETECTION_GAP = Duration.ofSeconds(30);
 
 	private final HazardRepository hazardRepository;
 	private final IdempotencyGuard idempotencyGuard;
@@ -55,10 +57,17 @@ public class HazardService {
 		Hazard hazard = hazardRepository.findById(hazardId)
 				.orElseThrow(() -> ApiException.notFound("HAZARD_NOT_FOUND", "위험 감지 정보를 찾을 수 없습니다."));
 		idempotencyGuard.lock("device", hazard.getDeviceId());
-		if (!"LIVING".equals(hazard.getObjectType()) || hazard.getStatus() != HazardStatus.ACTIVE) {
-			throw ApiException.conflict("LIVING_ACK_NOT_AVAILABLE", "활성 생활공간 위험요소만 확인할 수 있습니다.");
+		if (!"LIVING".equals(hazard.getObjectType())) {
+			throw ApiException.conflict("LIVING_ACK_NOT_AVAILABLE", "생활공간 위험요소만 확인 완료할 수 있습니다.");
 		}
-		if (hazard.getAcknowledgedAt() == null && hazardRepository.existsByDeviceIdAndChildIdAndObjectTypeAndStatus(
+		// 응답을 받지 못한 클라이언트가 같은 요청을 다시 보내도 이미 완료된 결과를 반환한다.
+		if (hazard.getStatus() == HazardStatus.RESOLVED && hazard.getAcknowledgedAt() != null) {
+			return toDetail(hazard);
+		}
+		if (hazard.getStatus() != HazardStatus.ACTIVE) {
+			throw ApiException.conflict("LIVING_ACK_NOT_AVAILABLE", "활성 생활공간 위험요소만 확인 완료할 수 있습니다.");
+		}
+		if (hazardRepository.existsByDeviceIdAndChildIdAndObjectTypeAndStatus(
 				hazard.getDeviceId(), hazard.getChildId(), "SWALLOW", HazardStatus.ACTIVE)) {
 			throw ApiException.conflict("SWALLOW_HAZARD_FIRST", "삼킴 위험물을 먼저 처리해 주세요.");
 		}
@@ -153,6 +162,17 @@ public class HazardService {
 			sameObject.refreshFromDetection(input.detectedAt(), normalizeOptional(input.captureImageUrl()),
 					riskLevel, operationState, now);
 			return toDetail(sameObject);
+		}
+		if ("LIVING".equals(objectType)) {
+			Hazard recentlyAcknowledged = hazardRepository
+					.findFirstByDeviceIdAndChildIdAndObjectTypeAndObjectNameAndStatusAndAcknowledgedAtIsNotNullAndUpdatedAtGreaterThanEqualOrderByUpdatedAtDesc(
+							deviceId, input.childId(), objectType, objectName, HazardStatus.RESOLVED,
+							now.minus(LIVING_REDETECTION_GAP))
+					.orElse(null);
+			if (recentlyAcknowledged != null) {
+				recentlyAcknowledged.touchAcknowledgedLiving(now);
+				return toDetail(recentlyAcknowledged);
+			}
 		}
 		return toDetail(hazardRepository.save(hazard));
 	}

@@ -48,10 +48,10 @@ export function classifyHazard(objectName: string): HazardCategory | null {
   return null
 }
 
-// 동시 감지 시 미처리 삼킴 위험을 먼저 보여주고, 확인한 생활 위험은 지도 목록에 남긴다.
-export function orderHazardsForAttention<T extends { objectName: string; detectedAt: string; acknowledgedAt?: string | null }>(items: T[]): T[] {
+// 동시 감지 시 삼킴 위험을 먼저 보여준다. 처리 완료된 위험은 서버의 ACTIVE 목록에서 제외된다.
+export function orderHazardsForAttention<T extends { objectName: string; detectedAt: string }>(items: T[]): T[] {
   const priority = (item: T) => classifyHazard(item.objectName) === 'SWALLOW' ? 0
-    : classifyHazard(item.objectName) === 'LIVING' ? item.acknowledgedAt ? 2 : 1 : 3
+    : classifyHazard(item.objectName) === 'LIVING' ? 1 : 2
   return [...items].sort((a, b) => priority(a) - priority(b)
     || Date.parse(b.detectedAt) - Date.parse(a.detectedAt))
 }
