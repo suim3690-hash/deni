@@ -70,7 +70,7 @@ class ScriptedCamera:
             self.sequence += 1
             hazards = [dict(label=name, bbox=[300, 200, 340, 240]) for name in self.labels] if self.processing else []
             return dict(status='ok', frame_stamp=time.monotonic(), sequence=self.sequence, hazards=hazards,
-                        markers=[dict(id=0, fill=self.fill, bearing=0.0, skew=0.1)],
+                        markers=[dict(id=0, fill=self.fill, bearing=0.0, skew=0.1, centre=[320, 220])],
                         frame_width=640, frame_height=480)
 
 
@@ -150,13 +150,17 @@ def main():
         camera.show(['coin'])
         wait_for(lambda: runtime.state()['taskState'] == 'HAZARD_PAUSED', 'hazard stop before relocation')
         relocate = issue('RELOCATE', {'hazardId': HAZARD, 'objectLabel': '동전'})
-        wait_for(lambda: runtime.state()['taskState'] == 'PUSHING', 'relocation start')
-        check('relocation pushes the object forward', wait_for(lambda: 'F' in motor.sent[-30:], 'push'))
-        # Reaching the marker size limit ends the push; the object is then out of the way.
-        camera.show(['coin'], fill=Settings().marker_stop_fill + 0.01)
-        wait_for(lambda: runtime.state()['taskState'] == 'BACKING', 'backing')
+        wait_for(lambda: runtime.state()['taskState'] == 'CAPTURING', 'target capture start')
         camera.show([])
+        wait_for(lambda: runtime.state()['taskState'] == 'PUSHING_TO_MARKER', 'marker-guided relocation start')
+        check('relocation keeps moving after the captured object leaves view', wait_for(lambda: 'F' in motor.sent[-30:], 'push'))
+        # Reaching the marker size limit ends the push; the object is then out of the way.
+        camera.show([], fill=Settings().marker_stop_fill + 0.01)
+        wait_for(lambda: runtime.state()['taskState'] == 'BACKING', 'backing')
+        camera.show(['coin'], fill=Settings().marker_stop_fill - 0.01)
+        wait_for(lambda: runtime.state()['taskState'] == 'VERIFYING_DROP', 'drop verification')
         wait_for(lambda: runtime.state()['taskState'] == 'TURNING_AROUND', 'turnaround')
+        camera.show([])
         wait_for(lambda: finished(relocate['commandId']), 'relocation result')
         check('relocation reverses then turns on the configured timers',
               'B' in motor.sent and 'R' in motor.sent)

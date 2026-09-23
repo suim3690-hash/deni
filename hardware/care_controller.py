@@ -4,6 +4,8 @@ import math
 
 SWALLOW = {'coin', 'marble', 'battery', 'dice', 'die'}
 LABELS = {'동전': 'coin', '구슬': 'marble', '배터리': 'battery', '주사위': 'dice'}
+RELOCATION_PHASES = {'ALIGNING_TARGET', 'CAPTURING', 'SEEKING_MARKER', 'PUSHING_TO_MARKER',
+                     'BACKING', 'VERIFYING_DROP', 'TURNING_AROUND'}
 
 
 @dataclass(frozen=True)
@@ -16,7 +18,12 @@ class Settings:
     bearing_deadband: float = .12
     turn_pulse_seconds: float = .12
     settle_seconds: float = .35
+    capture_seconds: float = .8
+    marker_search_timeout_seconds: float = 12.0
     reverse_seconds: float = 1.0
+    drop_verify_seconds: float = 1.0
+    drop_verify_timeout_seconds: float = 10.0
+    drop_verify_radius_ratio: float = .3
     turnaround_seconds: float = 1.0
     action_timeout_seconds: float = 120.0
 
@@ -26,7 +33,8 @@ class Settings:
                 if type(value) is not int or not 0 <= value < 50: raise ValueError('Invalid marker ID')
             elif not math.isfinite(value) or value <= 0:
                 raise ValueError(name + ' must be positive and finite')
-        if self.removal_absence_seconds < 2 or self.marker_stop_fill >= 1 or self.bearing_deadband >= 1:
+        if (self.removal_absence_seconds < 2 or self.marker_stop_fill >= 1 or self.bearing_deadband >= 1
+                or self.drop_verify_radius_ratio >= 1):
             raise ValueError('Invalid absence/fill/bearing settings')
 
 
@@ -49,6 +57,8 @@ class CareController:
         self.timed_remaining = 0
         self.last_output = 'S'
         self.pulse_until = self.settle_until = 0
+        self.phase_started = 0
+        self.verified_since = None
         self.generation = None
         self.require_frame_after = 0
         self.reason = 'POWER OFF'
@@ -70,6 +80,39 @@ class CareController:
             self.action = None
         self.finishing = False
         self.absent_since = None
+        self.verified_since = None
+
+    def _start_phase(self, phase, now, duration=0):
+        self.phase, self.phase_started, self.timed_remaining = phase, now, duration
+        self.pulse_until = self.settle_until = 0
+
+    def _steer(self, bearing, now, forward):
+        cfg = self.settings
+        if now < self.settle_until:
+            return 'S'
+        if abs(bearing) <= cfg.bearing_deadband:
+            self.pulse_until = 0
+            return 'F' if forward else 'S'
+        if not self.pulse_until:
+            self.pulse_until = now + cfg.turn_pulse_seconds
+        if now < self.pulse_until:
+            return 'R' if bearing > 0 else 'L'
+        self.pulse_until = 0
+        self.settle_until = now + cfg.settle_seconds
+        return 'S'
+
+    def _drop_is_verified(self, targets, marker, observation):
+        if len(targets) != 1 or marker is None or marker.get('skew', 1) > .5:
+            return False
+        try:
+            width, height = float(observation['frame_width']), float(observation['frame_height'])
+            x1, y1, x2, y2 = (float(value) for value in targets[0]['bbox'])
+            marker_x, marker_y = (float(value) for value in marker['centre'])
+            object_x, object_y = (x1+x2)/2, (y1+y2)/2
+            distance = math.hypot((object_x-marker_x)/width, (object_y-marker_y)/height)
+            return distance <= self.settings.drop_verify_radius_ratio
+        except (KeyError, TypeError, ValueError, ZeroDivisionError):
+            return False
 
     def _finish_motion(self, now):
         self.blocked.discard(self.action[2]['label'])
@@ -111,7 +154,8 @@ class CareController:
             reject('DEVICE_NOT_PAUSED'); return
         self.blocked.add(label)
         self.action = (command, identity, dict(params, label=label))
-        self.phase = 'RECHECKING' if command == 'RECHECK_HAZARD' else 'PUSHING'
+        self.phase = 'RECHECKING' if command == 'RECHECK_HAZARD' else 'ALIGNING_TARGET'
+        self.phase_started = now
         self.started = now
         self.absent_since = None
         self.last_observation = None
@@ -125,10 +169,11 @@ class CareController:
         ready = motor.get('ready', False)
         ack = motor.get('ack')
         self.observed_state = ('UNKNOWN' if not ready else
-            'PAUSED' if ack == 'S' else 'RELOCATING' if self.phase in ('PUSHING','BACKING','TURNING_AROUND') else 'RUNNING')
+            'PAUSED' if ack == 'S' else 'RELOCATING' if self.phase in RELOCATION_PHASES else 'RUNNING')
         if not ready:
             self.last_output = 'S'
             self.absent_since = None
+            self.verified_since = None
             self.require_frame_after = now
             self.reason = 'RECONNECTING'
             return 'S'
@@ -136,6 +181,7 @@ class CareController:
             self.generation = motor.get('generation')
             self.require_frame_after = now
             self.absent_since = None
+            self.verified_since = None
             self.last_output = 'S'
             self.pulse_until = self.settle_until = 0
         if self.control:
@@ -163,6 +209,7 @@ class CareController:
                  and stamp > self.require_frame_after)
         if not valid:
             self.absent_since = None
+            self.verified_since = None
             self.last_output = 'S'
             if observation.get('camera_unavailable'):
                 self.reason = 'CAMERA UNAVAILABLE'
@@ -207,35 +254,58 @@ class CareController:
                     self.last_output = 'S'
                     return 'S'
             self.last_observation = stamp
-        if self.phase == 'PUSHING':
+        if self.phase == 'ALIGNING_TARGET':
             label = self.action[2]['label']
             targets = [obj for obj in seen if obj['label']==label]
-            marker = next((m for m in observation.get('markers', []) if m['id']==cfg.marker_id), None)
-            # An explicit relocation selects this class even when other classes
-            # are visible. Keep those hazards blocked for after this action.
             if not targets:
                 self.reason = 'TARGET NOT VISIBLE'
             elif len(targets) != 1:
                 self.reason = 'MULTIPLE TARGETS OF SAME CLASS'
-            elif not marker:
-                self.reason = 'MARKER NOT VISIBLE'
+            else:
+                x1, _, x2, _ = targets[0]['bbox']
+                bearing = ((x1+x2)/2 / observation['frame_width'])*2-1
+                if abs(bearing) > cfg.bearing_deadband:
+                    command = self._steer(bearing, now, False)
+                else:
+                    # From here the object may disappear below the camera because
+                    # the semicircular arm has taken it in. Do not require it again
+                    # until the drop-off verification phase.
+                    self._start_phase('CAPTURING', now, cfg.capture_seconds)
+                    command = 'F'
+        elif self.phase == 'CAPTURING':
+            if self.last_output == 'F' and ack == 'F' and now-motor.get('acknowledged_at', 0)<.25:
+                self.timed_remaining -= dt
+            if self.timed_remaining <= 0:
+                self._start_phase('SEEKING_MARKER', now)
+                command = 'S'
+            else:
+                command = 'F'
+        elif self.phase in ('SEEKING_MARKER', 'PUSHING_TO_MARKER'):
+            marker = next((m for m in observation.get('markers', []) if m['id']==cfg.marker_id), None)
+            if marker is None:
+                if self.phase != 'SEEKING_MARKER':
+                    self._start_phase('SEEKING_MARKER', now)
+                    command = 'S'
+                elif now-self.phase_started >= cfg.marker_search_timeout_seconds:
+                    self._complete_action('FAILED', 'MARKER_NOT_FOUND')
+                    self.phase = 'HAZARD_PAUSED'
+                    command = 'S'
+                else:
+                    # The demo drop zone is searched clockwise. Rotation is pulsed;
+                    # the robot never drives forward without a visible marker.
+                    command = self._steer(1.0, now, False)
             elif marker.get('skew', 1) > .5:
                 self.reason = 'MARKER TOO SKEWED'
             elif marker['fill'] >= cfg.marker_stop_fill:
-                self.phase, self.timed_remaining = 'BACKING', cfg.reverse_seconds
-            elif now >= self.settle_until:
-                x1, _, x2, _ = targets[0]['bbox']
-                bearing = ((x1+x2)/2 / observation['frame_width'])*2-1
-                # First centre the object, then use the marker direction while pushing.
-                steering = bearing if abs(bearing)>cfg.bearing_deadband else marker['bearing']
-                if abs(steering)>cfg.bearing_deadband:
-                    if not self.pulse_until: self.pulse_until = now+cfg.turn_pulse_seconds
-                    if now < self.pulse_until:
-                        command = 'R' if steering>0 else 'L'
-                    else:
-                        self.pulse_until = 0; self.settle_until = now+cfg.settle_seconds
-                else:
-                    self.pulse_until = 0; command = 'F'
+                self._start_phase('BACKING', now, cfg.reverse_seconds)
+                command = 'S'
+            elif self.phase == 'SEEKING_MARKER':
+                command = self._steer(marker['bearing'], now, False)
+                if abs(marker['bearing']) <= cfg.bearing_deadband:
+                    self._start_phase('PUSHING_TO_MARKER', now)
+                    command = 'F'
+            else:
+                command = self._steer(marker['bearing'], now, True)
         elif self.phase in ('BACKING', 'TURNING_AROUND'):
             desired = 'B' if self.phase == 'BACKING' else 'R'
             # Count only periods with fresh ACKs, not disconnected wall time.
@@ -243,12 +313,37 @@ class CareController:
                 self.timed_remaining -= dt
             if self.timed_remaining <= 0:
                 if self.phase == 'BACKING':
-                    self.phase, self.timed_remaining = 'TURNING_AROUND', cfg.turnaround_seconds
+                    self._start_phase('VERIFYING_DROP', now)
+                    self.require_frame_after = now
+                    self.verified_since = None
+                    self.last_observation = None
                 else:
                     self._finish_motion(now)
                 command = 'S'
             else:
                 command = desired
+        elif self.phase == 'VERIFYING_DROP' and new_frame:
+            label = self.action[2]['label']
+            targets = [obj for obj in seen if obj['label']==label]
+            marker = next((m for m in observation.get('markers', []) if m['id']==cfg.marker_id), None)
+            verified = self._drop_is_verified(targets, marker, observation)
+            if verified:
+                if self.last_observation is None or stamp-self.last_observation > cfg.max_observation_gap:
+                    self.verified_since = stamp
+                if self.verified_since is None:
+                    self.verified_since = stamp
+                self.reason = 'DROP TARGET VERIFIED'
+                if stamp-self.verified_since >= cfg.drop_verify_seconds:
+                    self._start_phase('TURNING_AROUND', now, cfg.turnaround_seconds)
+            else:
+                self.verified_since = None
+                self.reason = ('DROP TARGET NOT VISIBLE' if not targets else
+                               'MULTIPLE DROP TARGETS' if len(targets) != 1 else
+                               'DROP MARKER NOT VISIBLE' if marker is None else 'DROP TARGET OUTSIDE SAFE ZONE')
+            self.last_observation = stamp
+            if self.phase == 'VERIFYING_DROP' and now-self.phase_started >= cfg.drop_verify_timeout_seconds:
+                self._complete_action('FAILED', 'DROP_NOT_VERIFIED')
+                self.phase = 'HAZARD_PAUSED'
         elif self.phase == 'RUNNING':
             command = 'F'
         self.last_output = command

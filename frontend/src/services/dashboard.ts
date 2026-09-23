@@ -53,7 +53,9 @@ function parseMarker(marker: { x?: unknown; y?: unknown } | null | undefined): H
 
 // 기기가 보고한 전원·작업 상태다. powerEnabled=false는 모터와 탐지가 멈춘 상태이며 통신은 유지된다.
 // 서버가 오래된 보고를 stale로 표시하면 값이 null이 되므로 전원 상태를 단정하지 않는다.
-export type TaskState = 'OFF' | 'RUNNING' | 'PAUSED' | 'HAZARD_PAUSED' | 'RECHECKING' | 'PUSHING' | 'BACKING' | 'TURNING_AROUND'
+export type TaskState = 'OFF' | 'RUNNING' | 'PAUSED' | 'HAZARD_PAUSED' | 'RECHECKING' |
+  'PUSHING' | 'ALIGNING_TARGET' | 'CAPTURING' | 'SEEKING_MARKER' | 'PUSHING_TO_MARKER' |
+  'BACKING' | 'VERIFYING_DROP' | 'TURNING_AROUND'
 
 export interface RobotState {
   operationState: 'RUNNING' | 'PAUSED' | 'RELOCATING' | 'UNKNOWN'

@@ -27,7 +27,7 @@
 | 전원·정지·재개 | `POST /devices/{deviceId}/commands/{power-on\|power-off\|pause\|resume}` | `Idempotency-Key: UUID`, 본문 `{}`. `202`는 접수일 뿐. 결과는 아래 GET으로 조회 |
 | 명령 결과 | `GET /devices/{deviceId}/commands/{commandId}` | `status: REQUESTED/SUCCEEDED/FAILED/EXPIRED/UNKNOWN`, `deliveryState`·기기 결과 |
 | 직접 제거 재확인 | `POST /hazards/{hazardId}/removal-checks` | 키·본문 `{}`. 기기가 선택 라벨의 2초 연속 부재를 보고해야 해결 |
-| 수동 안전 이송 | `POST /hazards/{hazardId}/relocations` | 키·본문 `{}`. 대상 한 개·마커 확인 후 기기 완료 보고가 필요 |
+| 수동 안전 이송 | `POST /hazards/{hazardId}/relocations` | 키·본문 `{}`. 대상 1개 확보·마커 이동·후진·안전 구역 배치 재확인 후 기기 완료 보고가 필요 |
 | 안전 처리 결과 | `GET /safety-actions/{actionId}` | `treatmentStatus`가 `COMPLETED` 또는 `TEMPORARY_COMPLETED`일 때만 완료 표시 |
 | 생활공간 위험 확인 완료 | `POST /hazards/{hazardId}/acknowledgements` | `acknowledgedAt` 저장과 함께 `RESOLVED` 처리하여 알림·활성 지도에서 제거. 미처리 삼킴 위험이 있으면 `409` |
 
@@ -49,7 +49,7 @@
 | 상세·이미지 | 선택한 위험 한 건의 이미지·마커만 표시. 기기는 물체별 바운딩박스 크롭 사진을 업로드 |
 | 같은 물체 이름 | 원본 이벤트는 각각 저장하지만 같은 기기·아이·분류·이름의 `ACTIVE` 위험은 병합 |
 | 직접 제거 | 같은 라벨이 하나라도 보이면 미완료. 다른 위험은 남겨 두고 정지 유지 |
-| 수동 이송 | 같은 라벨 대상이 여러 개면 거부. 다른 라벨 위험은 별도로 처리 |
+| 수동 이송 | 같은 라벨 대상이 여러 개면 확보를 시작하지 않음. 확보 뒤 물체가 안 보여도 마커를 따라가며, 후진 후 물체·마커 근접 재확인 실패 시 해결하지 않음. 다른 라벨 위험은 별도로 처리 |
 | 생활공간 위험 | 삼킴 위험 처리 후 확인 완료. 해당 건을 `RESOLVED`로 바꾸고 알림·활성 지도에서 제거. 같은 라벨이 계속 감지되면 완료 상태를 유지하고, 30초 이상 미검출 뒤 재감지되면 새 위험으로 처리 |
 
 ## 4. 오류·지원 범위

@@ -7,7 +7,12 @@
   "bearing_deadband": 0.12,
   "turn_pulse_seconds": 0.12,
   "settle_seconds": 0.35,
+  "capture_seconds": 0.8,
+  "marker_search_timeout_seconds": 12.0,
   "reverse_seconds": 1.0,
+  "drop_verify_seconds": 1.0,
+  "drop_verify_timeout_seconds": 10.0,
+  "drop_verify_radius_ratio": 0.3,
   "turnaround_seconds": 1.0,
   "action_timeout_seconds": 120.0
 }
