@@ -119,6 +119,51 @@ class HardwareIntegrationTests {
         } finally { channel.remove(id,session); }
     }
 
+    /** 이송은 물체를 안전 구역으로 옮길 뿐이므로 위험 자체를 해결로 바꾸지 않는다. */
+    @Test void relocationSuccessIsTemporaryAndLeavesHazardActive() throws Exception {
+        String id=device(); var session=mock(WebSocketSession.class); when(session.isOpen()).thenReturn(true); channel.register(id,session);
+        try {
+            var image=new java.awt.image.BufferedImage(2,2,java.awt.image.BufferedImage.TYPE_INT_RGB);
+            var out=new java.io.ByteArrayOutputStream(); javax.imageio.ImageIO.write(image,"png",out);
+            UUID hazard=uploads.save(id,UUID.randomUUID(),"HAZARD","동전",out.toByteArray()).hazardId();
+            pausedAndPowered(id);
+            var receipt=operations.requestRelocation(hazard,UUID.randomUUID());
+            dispatcher.dispatch();
+            messages.receive(id,"COMMAND_RESULT",json.valueToTree(Map.of("commandId",receipt.actionId().toString(),
+                "status","SUCCEEDED","operationState","PAUSED","hazardId",hazard.toString(),
+                "relocationCompleted",true,"completedAt",OffsetDateTime.now().toString())));
+            var result=operations.getAction(receipt.actionId());
+            assertEquals("SUCCEEDED",result.status());
+            assertEquals("TEMPORARY_COMPLETED",result.treatmentStatus());
+            assertEquals("ACTIVE",jdbc.queryForObject("SELECT status FROM hazards WHERE id=?",String.class,hazard));
+        } finally { channel.remove(id,session); }
+    }
+
+    /** 직접 제거는 물체가 사라진 증거이므로 이송과 달리 그 자리에서 해결로 본다. */
+    @Test void directRemovalSuccessResolvesTheHazard() throws Exception {
+        String id=device(); var session=mock(WebSocketSession.class); when(session.isOpen()).thenReturn(true); channel.register(id,session);
+        try {
+            var image=new java.awt.image.BufferedImage(2,2,java.awt.image.BufferedImage.TYPE_INT_RGB);
+            var out=new java.io.ByteArrayOutputStream(); javax.imageio.ImageIO.write(image,"png",out);
+            UUID hazard=uploads.save(id,UUID.randomUUID(),"HAZARD","동전",out.toByteArray()).hazardId();
+            pausedAndPowered(id);
+            var receipt=operations.requestRemovalCheck(hazard,UUID.randomUUID());
+            dispatcher.dispatch();
+            messages.receive(id,"COMMAND_RESULT",json.valueToTree(Map.of("commandId",receipt.actionId().toString(),
+                "status","SUCCEEDED","operationState","PAUSED","hazardId",hazard.toString(),
+                "hazardPresent",false,"absenceDurationMs",2500,"completedAt",OffsetDateTime.now().toString())));
+            assertEquals("COMPLETED",operations.getAction(receipt.actionId()).treatmentStatus());
+            assertEquals("RESOLVED",jdbc.queryForObject("SELECT status FROM hazards WHERE id=?",String.class,hazard));
+        } finally { channel.remove(id,session); }
+    }
+
+    /** 안전 처리 요청은 기기가 보고한 전원 ON과 정지 상태를 요구한다. */
+    void pausedAndPowered(String id) {
+        messages.receive(id,"ROBOT_STATE",json.valueToTree(Map.of("operationState","PAUSED","movementState","STOPPED",
+            "sampledAt",OffsetDateTime.now().minusSeconds(1).toString(),"batteryPercent",75,
+            "powerEnabled",true,"taskState","HAZARD_PAUSED")));
+    }
+
     @Test void activeProfilesUnresolvedSwallowHazardStillBlocksResume() throws Exception {
         String id=device();
         var image=new java.awt.image.BufferedImage(2,2,java.awt.image.BufferedImage.TYPE_INT_RGB);

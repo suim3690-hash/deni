@@ -5,6 +5,7 @@ import StageChangeTimeline from '../components/StageChangeTimeline'
 import { computeSafetyProfile, type RegisteredChild } from '../services/children'
 import { currentReportMonth, getMonthlyReport, type MonthlyReport } from '../services/reports'
 import { ApiRequestError, apiErrorMessage } from '../services/apiError'
+import { isMockMode } from '../lib/runtime'
 
 interface Props {
   child: RegisteredChild
@@ -33,7 +34,7 @@ export default function GrowthReport({ child, month: initialMonth, onBack }: Pro
   const report = request?.key === requestKey ? request.report : null
   const error = request?.key === requestKey ? request.error : ''
   const loading = request?.key !== requestKey
-  const isMock = !import.meta.env.VITE_API_BASE_URL
+  const isMock = isMockMode
   const monthNumber = Number(selectedMonth.slice(5))
   const yearNumber = Number(selectedMonth.slice(0, 4))
 

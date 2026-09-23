@@ -25,9 +25,11 @@
 | --- | --- | --- |
 | `POWER_ON`, `POWER_OFF`, `PAUSE`, `RESUME` | `{}` | OFF/PAUSE는 `PAUSED`, RESUME은 `RUNNING`. POWER_ON은 실제 모터 확인 후 상태 보고 |
 | `RECHECK_HAZARD` | `hazardId`, `objectLabel` | 같은 `hazardId`, `hazardPresent:false`, `absenceDurationMs>=2000` |
-| `RELOCATE` | `hazardId`, `objectLabel` | 같은 `hazardId`, `relocationCompleted:true` |
+| `RELOCATE` | `hazardId`, `objectLabel` | 대상 1개 확보·마커 추적·후진·물체/마커 근접 재확인 후 같은 `hazardId`, `relocationCompleted:true` |
 
 `ROBOT_STATE.operationState`는 `RUNNING/PAUSED/RELOCATING/UNKNOWN`, `movementState`는 `FORWARD/TURNING/BACKWARD/STOPPED/UNKNOWN`을 사용한다. 시간·거리·배터리는 미측정 시 `null`이다. 대체 추정값으로 성공을 꾸미지 않는다. 과거 상태는 최신 상태를 덮어쓰지 않는다.
+
+수동 이송의 `taskState`는 `ALIGNING_TARGET → CAPTURING → SEEKING_MARKER → PUSHING_TO_MARKER → BACKING → VERIFYING_DROP → TURNING_AROUND` 순서다. 마커가 보이지 않을 때는 전진하지 않으며, 배치 확인 실패 결과에는 `relocationCompleted`를 넣지 않는다. 이송 중 같은 라벨 대상은 `VERIFYING_DROP`의 로컬 판정에는 계속 쓰지만 새 탐지 이벤트로 업로드하지 않는다. 다른 라벨 위험은 그대로 업로드한다.
 
 명령은 백엔드의 DB 대기열에서 전달하며 `commandId`로 중복을 막는다. 전송 전 만료는 `EXPIRED`, 전송 후 결과 미수신은 `UNKNOWN`이다. `UNKNOWN`은 성공이 아니며 자동 재전송하지 않는다. 기기는 만료된 명령을 실행하지 않고 동일 ID의 결과를 재사용해야 한다. 최신 `PAUSED` 상태만으로 과거 명령의 성공을 추정하지 않는다. 안전 처리 요청은 실제 `COMMAND_RESULT`의 증거를 확인한 뒤 위험을 해결한다.
 

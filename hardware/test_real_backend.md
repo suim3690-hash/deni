@@ -51,12 +51,11 @@ $env:DETECTION_BLUR_THRESHOLD = '<정한 값>'
 
 ## 3. 실행
 
-Pi 카메라 서버를 먼저 띄우고 그때 표시되는 `Browser password`를 쓴다. 재시작하면 값이 바뀐다.
+비밀번호가 없는 통합 Pi 카메라·모터 서버를 먼저 띄운다.
 
 ```powershell
 cd "C:\Users\Admin\OneDrive\잡것들\DX_Project\3_DX\deni\hardware"
-python pc_dashboard.py --host 192.168.219.145 --camera-password "<표시된 비밀번호>" `
-  --port 8081 --detection-mode object --rotation 180
+python pc_dashboard.py --host 192.168.219.145 --port 8081 --detection-mode object
 ```
 
 **pc_dashboard는 한 번만 띄운다.** 백엔드는 기기 하나당 WebSocket 연결 하나만 허용하며,

@@ -2,6 +2,7 @@ import type { RegisteredChild } from './children'
 import { generateId } from '../lib/id'
 import { classifyHazard, riskByStage } from '../lib/hazardRisk'
 import { apiErrorFromResponse } from './apiError'
+import { apiBaseUrl } from '../lib/runtime'
 
 export type ConnectionState = 'ONLINE' | 'OFFLINE' | 'UNKNOWN'
 export type OperationState = 'RUNNING' | 'PAUSED' | 'STOPPING' | 'RESUMING' | 'READY_TO_RESUME' | 'UNKNOWN'
@@ -53,7 +54,9 @@ function parseMarker(marker: { x?: unknown; y?: unknown } | null | undefined): H
 
 // 기기가 보고한 전원·작업 상태다. powerEnabled=false는 모터와 탐지가 멈춘 상태이며 통신은 유지된다.
 // 서버가 오래된 보고를 stale로 표시하면 값이 null이 되므로 전원 상태를 단정하지 않는다.
-export type TaskState = 'OFF' | 'RUNNING' | 'PAUSED' | 'HAZARD_PAUSED' | 'RECHECKING' | 'PUSHING' | 'BACKING' | 'TURNING_AROUND'
+export type TaskState = 'OFF' | 'RUNNING' | 'PAUSED' | 'HAZARD_PAUSED' | 'RECHECKING' |
+  'PUSHING' | 'ALIGNING_TARGET' | 'CAPTURING' | 'SEEKING_MARKER' | 'PUSHING_TO_MARKER' |
+  'BACKING' | 'VERIFYING_DROP' | 'TURNING_AROUND'
 
 export interface RobotState {
   operationState: 'RUNNING' | 'PAUSED' | 'RELOCATING' | 'UNKNOWN'
@@ -163,7 +166,7 @@ export async function getHazardDetail(hazard: DashboardHazard, isMock: boolean):
     marker: { x: 0.296, y: 0.429 },
   }
 
-  const baseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
+  const baseUrl = apiBaseUrl
   if (!baseUrl) throw new Error('API URL is missing')
   const response = await fetch(`${baseUrl}/api/v1/hazards/${encodeURIComponent(hazard.hazardId)}`, { cache: 'no-store' })
   if (!response.ok) throw await apiErrorFromResponse(response, '위험 상세 정보를 불러오지 못했어요.')
@@ -196,7 +199,7 @@ export async function sendDeviceCommand(deviceId: string, action: DeviceCommand,
     return action === 'pause' || action === 'power-off' ? 'PAUSED' : 'RUNNING'
   }
 
-  const baseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
+  const baseUrl = apiBaseUrl
   if (!baseUrl) throw new Error('API URL is missing')
   const path = `${baseUrl}/api/v1/devices/${encodeURIComponent(deviceId)}/commands`
   const response = await fetch(`${path}/${action}`, {
@@ -222,7 +225,7 @@ export async function sendDeviceCommand(deviceId: string, action: DeviceCommand,
 // 로봇 한 대를 여러 데모 프로필이 함께 쓴다. 지금 열어 둔 프로필을 기기의 활성 프로필로 만들어,
 // 이후 탐지가 이 아이의 위험물로 기록되게 한다. 이미 활성이면 서버에서 아무것도 바뀌지 않는다.
 export async function activateChildOnDevice(deviceId: string, childId: string): Promise<void> {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
+  const baseUrl = apiBaseUrl
   if (!baseUrl) throw new Error('API URL is missing')
   const response = await fetch(`${baseUrl}/api/v1/devices/${encodeURIComponent(deviceId)}/active-child`, {
     method: 'POST',
@@ -233,7 +236,7 @@ export async function activateChildOnDevice(deviceId: string, childId: string): 
 }
 
 export async function resolveLivingHazard(hazard: DashboardHazard): Promise<HazardDetail> {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
+  const baseUrl = apiBaseUrl
   if (!baseUrl) throw new Error('API URL is missing')
   const response = await fetch(`${baseUrl}/api/v1/hazards/${encodeURIComponent(hazard.hazardId)}/acknowledgements`, { method: 'POST' })
   if (!response.ok) throw await apiErrorFromResponse(response, '생활공간 위험요소를 처리하지 못했어요.')
@@ -241,7 +244,7 @@ export async function resolveLivingHazard(hazard: DashboardHazard): Promise<Haza
 }
 
 export async function getRobotState(deviceId: string): Promise<RobotState> {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
+  const baseUrl = apiBaseUrl
   if (!baseUrl) throw new Error('API URL is missing')
   const response = await fetch(`${baseUrl}/api/v1/devices/${encodeURIComponent(deviceId)}/robot-state`)
   if (!response.ok) throw await apiErrorFromResponse(response, '로봇 동작 정보를 불러오지 못했어요.')
@@ -249,11 +252,11 @@ export async function getRobotState(deviceId: string): Promise<RobotState> {
 }
 
 export async function getDashboard(child: RegisteredChild): Promise<DashboardSnapshot> {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL
+  const baseUrl = apiBaseUrl
   if (!baseUrl) return mockDashboard(child)
 
   const query = new URLSearchParams({ childId: child.childId })
-  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/dashboard?${query}`, { cache: 'no-store' })
+  const response = await fetch(`${baseUrl}/api/v1/dashboard?${query}`, { cache: 'no-store' })
   if (!response.ok) throw await apiErrorFromResponse(response, '홈 정보를 불러오지 못했어요.')
   const data = await response.json() as DashboardData
   let robotState: DashboardData['robotState'] = null

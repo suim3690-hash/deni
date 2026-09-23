@@ -85,7 +85,7 @@ class HazardServiceTests {
 	}
 
 	@Test
-	void livingAcknowledgementWaitsForSwallowThenResolvesAndIsRetrySafe() {
+	void livingAcknowledgementResolvesAlongsideSwallowAndIsRetrySafe() {
 		UUID id = UUID.randomUUID();
 		UUID child = UUID.randomUUID();
 		Hazard living = new Hazard(id, child, "robot-1", HazardStatus.ACTIVE, "LIVING", "전선",
@@ -94,12 +94,9 @@ class HazardServiceTests {
 		HazardRepository repository = mock(HazardRepository.class);
 		when(repository.findById(id)).thenReturn(Optional.of(living));
 		when(repository.existsByDeviceIdAndChildIdAndObjectTypeAndStatus(
-				"robot-1", child, "SWALLOW", HazardStatus.ACTIVE)).thenReturn(true, false);
+				"robot-1", child, "SWALLOW", HazardStatus.ACTIVE)).thenReturn(true);
 		HazardService service = new HazardService(repository, guard);
 
-		assertEquals("SWALLOW_HAZARD_FIRST", assertThrows(ApiException.class,
-				() -> service.acknowledgeLiving(id)).getCode());
-		assertNull(living.getAcknowledgedAt());
 		var acknowledged = service.acknowledgeLiving(id);
 		assertEquals("RESOLVED", acknowledged.status());
 		assertEquals(living.getAcknowledgedAt(), acknowledged.acknowledgedAt());

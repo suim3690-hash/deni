@@ -2,10 +2,11 @@ import { useCallback, useState } from 'react'
 import ChildRegistration from './pages/ChildRegistration'
 import RegisteredHome from './pages/RegisteredHome'
 import type { RegisteredChild } from './services/children'
+import { isMockMode } from './lib/runtime'
 
-const childSessionKey = import.meta.env.VITE_API_BASE_URL
-  ? 'deni:registered-child:api:v1'
-  : 'deni:registered-child:mock:v1'
+const childSessionKey = isMockMode
+  ? 'deni:registered-child:mock:v1'
+  : 'deni:registered-child:api:v1'
 
 function isRegisteredChild(value: unknown): value is RegisteredChild {
   if (!value || typeof value !== 'object') return false

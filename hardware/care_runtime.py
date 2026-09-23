@@ -4,7 +4,6 @@ Starts powered off. Only backend POWER_ON starts detection and autonomous drivin
 Pi runs pi_robot_server.py; never run a second PC motor owner alongside this process.
 """
 import argparse
-import base64
 import json
 import logging
 from logging.handlers import RotatingFileHandler
@@ -30,6 +29,11 @@ class Runtime:
         self.lock = threading.RLock()
         self.snapshot_path = snapshot_path
 
+    def _sync_alert_suppression(self):
+        action = self.controller.action
+        labels = {action[2]['label']} if action and action[0] == 'RELOCATE' else set()
+        self.detector.set_suppressed_alert_labels(labels)
+
     def state(self):
         motor = self.motor.observation()
         with self.lock:
@@ -41,6 +45,7 @@ class Runtime:
         with self.lock:
             before = self.controller.powered
             self.controller.request(command, identity, parameters or {}, time.monotonic())
+            self._sync_alert_suppression()
             if before != self.controller.powered:
                 self.detector.set_processing(self.controller.powered)
         while not self.stop.wait(.05):
@@ -60,6 +65,7 @@ class Runtime:
             motor = self.motor.observation()
             with self.lock:
                 command = self.controller.step(observation, motor, time.monotonic())
+                self._sync_alert_suppression()
                 self.motor.submit(command, time.monotonic()+.15, motor['generation'])
                 state = (self.controller.phase, self.controller.reason, motor['ready'])
                 diagnostic = dict(task=self.controller.phase, reason=self.controller.reason,
@@ -67,6 +73,7 @@ class Runtime:
                     command=command, motor=motor, detectionStatus=observation.get('status'),
                     resultAge=observation.get('result_age'), blurScore=observation.get('blur_score'),
                     inferenceMs=observation.get('inference_ms'), sequence=observation.get('sequence'),
+                    suppressedAlerts=observation.get('suppressed_alert_labels',[]),
                     modelErrors=observation.get('model_errors'), cameraUnavailable=observation.get('camera_unavailable',False),
                     objects=[dict(label=d.get('label'),confidence=d.get('confidence'),stable=d.get('stable')) for d in observation.get('hazards',[])],
                     markers=observation.get('markers',[]), recordedAt=time.time())
@@ -88,12 +95,9 @@ class Runtime:
 
 def camera(args, feed, stop):
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    headers = {}
-    if args.camera_password:
-        headers['Authorization'] = 'Basic ' + base64.b64encode(('robot:'+args.camera_password).encode()).decode()
     while not stop.is_set():
         try:
-            request = urllib.request.Request(f'http://{args.host}:{args.camera_port}/stream.mjpg', headers=headers)
+            request = urllib.request.Request(f'http://{args.host}:{args.camera_port}/stream.mjpg')
             with opener.open(request, timeout=2) as response:
                 read_mjpeg(response, feed, stop)
         except Exception as exc:
@@ -107,9 +111,6 @@ def main():
     parser.add_argument('--host', default='172.30.1.10')
     parser.add_argument('--camera-port', type=int, default=8000)
     parser.add_argument('--control-port', type=int, default=8765)
-    parser.add_argument('--camera-password')
-    parser.add_argument('--motor-token')
-    parser.add_argument('--rotation', type=int, choices=(0,180), default=180)
     parser.add_argument('--config', type=Path, default=Path(__file__).with_name('care_config.json'))
     args = parser.parse_args()
     settings = Settings(**json.loads(args.config.read_text(encoding='utf-8')))
@@ -120,9 +121,11 @@ def main():
         logging.StreamHandler(), RotatingFileHandler(log/'care.log', maxBytes=2_000_000, backupCount=3, encoding='utf-8')])
     LOG.warning('Reverse %.2fs / turnaround %.2fs are temporary timing values, NOT a calibrated 180-degree angle.', settings.reverse_seconds, settings.turnaround_seconds)
     stop = threading.Event()
-    feed = CameraFeed(rotation=args.rotation)
+    # Pi already rotates every streamed frame by 180 degrees. Never rotate again.
+    feed = CameraFeed()
+    LOG.info('Using Pi global 180-degree stream unchanged for display, detection and uploads')
     detection = DetectionService(feed, mode='both', processing=False)
-    motor = MotorOutput(args.host, args.motor_token, args.control_port, DRIVE_REVERSED)
+    motor = MotorOutput(args.host, None, args.control_port, DRIVE_REVERSED)
     runtime = Runtime(motor,detection,stop,settings,log/'care_state.json')
     threads = []
     try:

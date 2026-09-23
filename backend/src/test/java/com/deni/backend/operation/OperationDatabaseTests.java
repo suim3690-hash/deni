@@ -55,7 +55,7 @@ class OperationDatabaseTests {
 	void removalReceiptDoesNotChangeActiveHazardAndNeverClaimsSafeCompletion() {
 		String device = "operation-db-" + UUID.randomUUID();
 		UUID child = setup(device);
-		UUID hazard = hazards.recordDetection(new HazardService.DetectionInput(child, device, "TOY_PART", "레고", "HIGH", null,
+		UUID hazard = hazards.recordDetection(new HazardService.DetectionInput(child, device, "SWALLOW", "동전", "HIGH", null,
 				OffsetDateTime.now(ZONE), null, null, null, null, null, "PAUSED", UUID.randomUUID().toString())).hazardId();
 		UUID key = UUID.randomUUID();
 		var receipt = operations.requestRemovalCheck(hazard, key);
@@ -77,7 +77,7 @@ class OperationDatabaseTests {
 		String device = "operation-db-" + UUID.randomUUID();
 		setup(device);
 		UUID otherChild = children.register("OPERATION_OTHER_CHILD_TEST", LocalDate.now(ZONE).minusMonths(20), UUID.randomUUID()).childId();
-		UUID hazard = hazards.recordDetection(new HazardService.DetectionInput(otherChild, device, "TOY_PART", "레고", "HIGH", null,
+		UUID hazard = hazards.recordDetection(new HazardService.DetectionInput(otherChild, device, "SWALLOW", "동전", "HIGH", null,
 				OffsetDateTime.now(ZONE), null, null, null, null, null, "PAUSED", UUID.randomUUID().toString())).hazardId();
 		assertEquals("HAZARD_DEVICE_MISMATCH", assertThrows(ApiException.class,
 				() -> operations.requestRemovalCheck(hazard, UUID.randomUUID())).getCode());
@@ -88,6 +88,11 @@ class OperationDatabaseTests {
 		UUID child = children.register("OPERATION_DATABASE_TEST", LocalDate.now(ZONE).minusMonths(20), UUID.randomUUID()).childId();
 		devices.register(child, device, "요청 저장 테스트");
 		devices.recordStatus(new DeviceService.StatusInput(device, "ONLINE", "PAUSED", 82, OffsetDateTime.now(ZONE).minusSeconds(1)));
+		// 제거 재확인은 기기가 보고한 최신 전원·정지 상태를 요구한다.
+		jdbc.update("""
+				INSERT INTO robot_live_state(device_id, operation_state, movement_state, sampled_at, power_enabled, task_state)
+				VALUES (?, 'PAUSED', 'STOPPED', clock_timestamp(), TRUE, 'HAZARD_PAUSED')
+				""", device);
 		return child;
 	}
 

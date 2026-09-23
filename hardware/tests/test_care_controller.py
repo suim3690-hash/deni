@@ -2,8 +2,13 @@ import unittest
 from care_controller import CareController, Settings
 
 
-def obj(label):
-    return dict(label=label, bbox=[45,30,55,60])
+def obj(label, bearing=0.0):
+    centre = (bearing + 1) * 50
+    return dict(label=label, bbox=[centre-5, 30, centre+5, 60])
+
+
+def drop_marker(fill=.01, bearing=0, skew=0, centre=(50,45)):
+    return dict(id=0, fill=fill, bearing=bearing, skew=skew, centre=list(centre))
 
 
 class CareTests(unittest.TestCase):
@@ -13,11 +18,12 @@ class CareTests(unittest.TestCase):
         self.seq = 0
         self.ack = 'S'
 
-    def tick(self, labels=(), *, gap=.1, valid=True, marker=None, connected=True, generation=1):
+    def tick(self, labels=(), *, gap=.1, valid=True, marker=None, connected=True, generation=1, bearing=0.0):
         self.now += gap
         self.seq += 1
         obs = dict(status='ok' if valid else 'blur', frame_stamp=self.now, sequence=self.seq,
-                   hazards=[obj(label) for label in labels], frame_width=100, markers=[] if marker is None else [marker])
+                   hazards=[obj(label, bearing) for label in labels], frame_width=100, frame_height=100,
+                   markers=[] if marker is None else [marker])
         result = self.c.step(obs, dict(ready=connected, ack=self.ack, generation=generation, acknowledged_at=self.now), self.now)
         self.ack = result
         return result
@@ -131,17 +137,55 @@ class CareTests(unittest.TestCase):
         self.assertFalse(self.c.powered)
         self.assertEqual(self.tick(generation=2),'S')
 
-    def test_relocation_needs_target_and_marker_then_backs_and_turns(self):
+    def test_large_bearing_turns_without_stopping_between_frames(self):
         self.start(); self.tick(['dice'])
         self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='주사위'),self.now)
-        self.assertEqual(self.tick(['dice']),'S')
-        marker=dict(id=0,fill=.01,bearing=0,skew=0)
-        self.assertEqual(self.tick(['dice'],marker=marker),'F')
-        marker['fill']=.14
-        self.assertEqual(self.tick(['dice'],marker=marker),'S')
+        # 오차가 coarse_bearing 이상이면 멈춤 없이 계속 돈다.
+        commands = [self.tick(['dice'], bearing=-.8) for _ in range(6)]
+        self.assertEqual(commands, ['L'] * 6)
+        self.assertEqual(self.c.phase,'ALIGNING_TARGET')
+
+    def test_small_bearing_still_pulses_so_it_does_not_overshoot(self):
+        self.start(); self.tick(['dice'])
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='주사위'),self.now)
+        # 데드밴드와 coarse_bearing 사이에서는 짧게 돌고 새 프레임을 기다린다.
+        commands = [self.tick(['dice'], bearing=.2) for _ in range(6)]
+        self.assertIn('R', commands)
+        self.assertIn('S', commands)
+
+    def test_blind_marker_search_keeps_stopping_to_look(self):
+        self.start(); self.tick(['dice'])
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='주사위'),self.now)
+        self.tick(['dice'])
+        while self.c.phase == 'CAPTURING': self.tick([])
+        self.assertEqual(self.c.phase,'SEEKING_MARKER')
+        # 마커가 보이지 않는 탐색은 흔들린 프레임으로 지나칠 수 있어 펄스를 유지한다.
+        commands = [self.tick([]) for _ in range(6)]
+        self.assertIn('S', commands)
+        self.assertIn('R', commands)
+
+    def test_relocation_captures_then_uses_marker_and_verifies_drop(self):
+        self.start(); self.tick(['dice'])
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='주사위'),self.now)
+        self.assertEqual(self.tick(['dice']),'F')
+        self.assertEqual(self.c.phase,'CAPTURING')
+        # The target can disappear below the camera after entering the arm.
+        while self.c.phase == 'CAPTURING': self.tick([])
+        self.assertEqual(self.c.phase,'SEEKING_MARKER')
+        self.assertEqual(self.tick([],marker=drop_marker(bearing=.5)),'R')
+        self.assertEqual(self.tick([],marker=drop_marker()),'F')
+        self.assertEqual(self.c.phase,'PUSHING_TO_MARKER')
+        self.assertEqual(self.tick([],marker=drop_marker(fill=.14)),'S')
         self.assertEqual(self.c.phase,'BACKING')
-        self.assertEqual(self.tick(['dice'],marker=marker),'B')
-        for _ in range(35): self.tick()
+        while self.c.phase == 'BACKING': self.tick([],marker=drop_marker(fill=.14))
+        self.assertEqual(self.c.phase,'VERIFYING_DROP')
+        for _ in range(20):
+            self.tick(['dice'],marker=drop_marker(fill=.08))
+            if self.c.phase == 'TURNING_AROUND': break
+        self.assertEqual(self.c.phase,'TURNING_AROUND')
+        for _ in range(40):
+            self.tick()
+            if 'move' in self.c.results: break
         self.assertEqual(self.c.results['move']['status'],'SUCCEEDED')
         self.assertTrue(self.c.results['move']['relocationCompleted'])
         self.assertEqual(self.c.phase,'RUNNING')
@@ -149,16 +193,18 @@ class CareTests(unittest.TestCase):
     def test_relocation_allows_other_hazards_but_leaves_them_unresolved(self):
         self.start(); self.tick(['dice', 'coin'])
         self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='주사위'),self.now)
-        marker=dict(id=0,fill=.01,bearing=0,skew=0)
-        self.assertEqual(self.tick(['dice','coin'],marker=marker),'F')
-        self.assertEqual(self.tick(['coin'],marker=marker),'S')
-        self.assertEqual(self.c.reason,'TARGET NOT VISIBLE')
-        self.assertEqual(self.tick(['dice','dice','coin'],marker=marker),'S')
-        self.assertEqual(self.c.reason,'MULTIPLE TARGETS OF SAME CLASS')
-        self.assertEqual(self.tick(['dice','coin'],marker=marker),'F')
-        marker['fill']=.14
-        self.tick(['dice','coin'],marker=marker)
-        commands=[self.tick(['coin']) for _ in range(35)]
+        self.assertEqual(self.tick(['dice','coin']),'F')
+        while self.c.phase == 'CAPTURING': self.tick(['coin'])
+        self.tick(['coin'],marker=drop_marker())
+        self.tick(['coin'],marker=drop_marker(fill=.14))
+        commands=[]
+        while self.c.phase == 'BACKING': commands.append(self.tick(['coin'],marker=drop_marker(fill=.14)))
+        for _ in range(20):
+            commands.append(self.tick(['dice','coin'],marker=drop_marker(fill=.08)))
+            if self.c.phase == 'TURNING_AROUND': break
+        for _ in range(40):
+            commands.append(self.tick(['coin']))
+            if 'move' in self.c.results: break
         self.assertIn('B',commands)
         self.assertIn('R',commands)
         self.assertEqual(self.c.results['move']['status'],'SUCCEEDED')
@@ -166,22 +212,55 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.c.blocked,{'coin'})
         self.assertEqual(self.tick(['coin']),'S')
 
-    def test_relocation_does_not_complete_from_marker_without_one_visible_target(self):
+    def test_relocation_requires_one_target_before_capture_and_at_drop(self):
         self.start(); self.tick(['dice'])
         self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='주사위'),self.now)
-        marker=dict(id=0,fill=.14,bearing=0,skew=0)
-        self.assertEqual(self.tick([],marker=marker),'S')
-        self.assertEqual(self.c.phase,'PUSHING')
+        self.assertEqual(self.tick([],marker=drop_marker()),'S')
+        self.assertEqual(self.c.phase,'ALIGNING_TARGET')
         self.assertEqual(self.c.reason,'TARGET NOT VISIBLE')
-        self.assertEqual(self.tick(['dice','dice'],marker=marker),'S')
-        self.assertEqual(self.c.phase,'PUSHING')
+        self.assertEqual(self.tick(['dice','dice'],marker=drop_marker()),'S')
+        self.assertEqual(self.c.phase,'ALIGNING_TARGET')
         self.assertEqual(self.c.reason,'MULTIPLE TARGETS OF SAME CLASS')
-        self.assertEqual(self.tick(['dice'],marker=marker),'S')
-        self.assertEqual(self.c.phase,'BACKING')
+        self.assertEqual(self.tick(['dice']),'F')
+        while self.c.phase == 'CAPTURING': self.tick([])
+        self.tick([],marker=drop_marker())
+        self.tick([],marker=drop_marker(fill=.14))
+        while self.c.phase == 'BACKING': self.tick([],marker=drop_marker(fill=.14))
+        # Seeing only the marker does not prove the object was delivered.
+        for _ in range(110):
+            self.tick([],marker=drop_marker(fill=.08))
+            if 'move' in self.c.results: break
+        self.assertEqual(self.c.results['move']['status'],'FAILED')
+        self.assertEqual(self.c.results['move']['errorCode'],'DROP_NOT_VERIFIED')
+        self.assertEqual(self.c.phase,'HAZARD_PAUSED')
+
+    def test_relocation_searches_without_forward_motion_and_fails_without_marker(self):
+        self.start(); self.tick(['coin'])
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='동전'),self.now)
+        self.tick(['coin'])
+        while self.c.phase == 'CAPTURING': self.tick([])
+        commands=[]
+        for _ in range(130):
+            commands.append(self.tick([]))
+            if 'move' in self.c.results: break
+        self.assertNotIn('F',commands)
+        self.assertIn('R',commands)
+        self.assertEqual(self.c.results['move']['status'],'FAILED')
+        self.assertEqual(self.c.results['move']['errorCode'],'MARKER_NOT_FOUND')
+        self.assertEqual(self.c.phase,'HAZARD_PAUSED')
 
     def test_configuration_validation(self):
         with self.assertRaises(ValueError): Settings(removal_absence_seconds=1)
         with self.assertRaises(ValueError): Settings(turnaround_seconds=float('nan'))
+
+    def test_measured_drop_layout_passes_updated_radius(self):
+        target = obj('battery')
+        target['bbox'] = [459.46, 341.55, 570.26, 705.18]
+        marker = drop_marker(centre=(639.2, 230.5))
+        observation = dict(frame_width=1280, frame_height=720)
+        self.assertFalse(CareController(Settings(drop_verify_radius_ratio=.3))
+                         ._drop_is_verified([target], marker, observation))
+        self.assertTrue(self.c._drop_is_verified([target], marker, observation))
 
 
 if __name__=='__main__': unittest.main()

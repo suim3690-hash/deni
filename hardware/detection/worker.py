@@ -5,7 +5,12 @@ from . import config as C
 from .service import offer
 
 
-def run(mailbox, output, stop, mode_code, processing=None):
+def unsuppressed_events(events, mask):
+    return [event for event in events
+            if not mask & C.ALERT_LABEL_BITS.get(event.get('label'), 0)]
+
+
+def run(mailbox, output, stop, mode_code, processing=None, suppressed_alert_mask=None):
     store = None
     active_code = mode_code.value
     def publish(state):
@@ -82,6 +87,10 @@ def run(mailbox, output, stop, mode_code, processing=None):
             if mode_code.value != active_code or (processing is not None and not processing.is_set()):
                 continue
             risk, events = engine.evaluate(objects,stamp)
+            # The relocation target must remain visible to local control for drop
+            # verification, but seeing it again after backing is not a new alert.
+            mask = suppressed_alert_mask.value if suppressed_alert_mask is not None else 0
+            events = unsuppressed_events(events, mask)
             processed += 1
             elapsed = time.monotonic()-started
             status = 'error' if all(name in errors for name, *_ in models.models) else ('partial' if errors else 'ok')

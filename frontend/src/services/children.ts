@@ -1,4 +1,5 @@
 import { apiErrorFromResponse } from './apiError'
+import { apiBaseUrl } from '../lib/runtime'
 
 export interface ChildRegistrationInput {
   name: string
@@ -132,7 +133,7 @@ async function mockGetSafetyProfile(childId: string, birthDate: string): Promise
 }
 
 export async function registerChild(input: ChildRegistrationInput, idempotencyKey: string): Promise<RegisteredChild> {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL
+  const baseUrl = apiBaseUrl
   if (!baseUrl) return mockRegisterChild(input, idempotencyKey)
 
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/children`, {
@@ -149,7 +150,7 @@ export async function registerChild(input: ChildRegistrationInput, idempotencyKe
 }
 
 export async function updateChild(childId: string, input: ChildRegistrationInput): Promise<RegisteredChild> {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL
+  const baseUrl = apiBaseUrl
   if (!baseUrl) return mockUpdateChild(childId, input)
 
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/children/${childId}`, {
@@ -163,7 +164,7 @@ export async function updateChild(childId: string, input: ChildRegistrationInput
 }
 
 export async function getSafetyProfile(childId: string, birthDate: string): Promise<SafetyProfileData> {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL
+  const baseUrl = apiBaseUrl
   if (!baseUrl) return mockGetSafetyProfile(childId, birthDate)
 
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/children/${encodeURIComponent(childId)}/safety-profile`)

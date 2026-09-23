@@ -16,6 +16,8 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -62,6 +64,12 @@ public class ApiExceptionHandler {
 		headers.addAll(result.getHeaders());
 		if (exception.getSupportedHttpMethods() != null) headers.setAllow(exception.getSupportedHttpMethods());
 		return new ResponseEntity<>(result.getBody(), headers, HttpStatus.METHOD_NOT_ALLOWED);
+	}
+
+	@ExceptionHandler({NoResourceFoundException.class, NoHandlerFoundException.class})
+	ResponseEntity<ErrorEnvelope> handleUnknownPath(Exception exception, HttpServletRequest request) {
+		// 없는 경로는 서버 장애가 아니다. 500으로 응답하면 호출자가 재시도 대상으로 오해한다.
+		return response(HttpStatus.NOT_FOUND, "NOT_FOUND", "요청한 경로를 찾을 수 없습니다.", null, request);
 	}
 
 	@ExceptionHandler(OptimisticLockingFailureException.class)
