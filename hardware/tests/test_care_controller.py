@@ -4,7 +4,7 @@ from care_controller import CareController, Settings
 
 def obj(label, bearing=0.0):
     centre = (bearing + 1) * 50
-    return dict(label=label, bbox=[centre-5, 30, centre+5, 60])
+    return dict(label=label, bbox=[centre-5, 30, centre+5, 60], stable=True)
 
 
 def drop_marker(fill=.01, bearing=0, skew=0, centre=(50,45)):
@@ -64,6 +64,27 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.c.results['remove']['status'],'SUCCEEDED')
         self.assertEqual(self.c.phase,'RUNNING')
         self.assertEqual(self.c.blocked,set())
+
+    def test_unconfirmed_candidate_stops_without_leaving_an_unremovable_block(self):
+        self.start()
+        self.now += .1
+        candidate = dict(obj('coin'), stable=False)
+        output = self.c.step(dict(status='ok', frame_stamp=self.now, sequence=100,
+                                 hazards=[candidate]),
+                             dict(ready=True, ack='F', generation=1, acknowledged_at=self.now), self.now)
+        self.assertEqual(output, 'S')
+        self.assertEqual(self.c.blocked, set())
+        self.assertEqual(self.tick(), 'F')
+
+    def test_urgent_candidate_latches_without_waiting_for_votes(self):
+        self.start()
+        self.now += .1
+        candidate = dict(obj('coin'), stable=False, reason='person_and_object')
+        output = self.c.step(dict(status='ok', frame_stamp=self.now, sequence=100,
+                                 hazards=[candidate]),
+                             dict(ready=True, ack='F', generation=1, acknowledged_at=self.now), self.now)
+        self.assertEqual(output, 'S')
+        self.assertEqual(self.c.blocked, {'coin'})
 
     def test_pending_treatment_waits_while_target_is_visible(self):
         self.start()

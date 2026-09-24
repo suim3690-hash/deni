@@ -88,6 +88,9 @@ class Tests(unittest.TestCase):
         self.assertEqual({event['label'] for event in events},{'coin','battery'})
         e.reset_alert_labels({'battery'})
         _,events=e.evaluate([coin,battery],1.0)
+        self.assertEqual(events, [])
+        for n in range(1, 10):
+            _,events=e.evaluate([coin,battery],1.0+n*.1)
         self.assertEqual([event['label'] for event in events],['battery'])
 
     def test_urgent_without_id_or_votes(self):

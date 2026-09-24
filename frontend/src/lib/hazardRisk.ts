@@ -70,12 +70,14 @@ export function findRedetectedHazard<T extends { hazardId: string; objectName: s
   removal: CompletedDirectRemoval | null,
 ): T | null {
   if (!removal) return null
+  const completedAt = Date.parse(removal.completedAt)
   const lastDetectedAt = Date.parse(removal.lastDetectedAt)
-  if (!Number.isFinite(lastDetectedAt)) return null
+  if (!Number.isFinite(completedAt) || !Number.isFinite(lastDetectedAt)) return null
+  const baseline = Math.max(completedAt, lastDetectedAt)
   return items
     .filter((item) => item.hazardId !== removal.hazardId
       && item.objectName === removal.objectName
-      && Date.parse(item.detectedAt) > lastDetectedAt)
+      && Date.parse(item.detectedAt) > baseline)
     .sort((a, b) => Date.parse(b.detectedAt) - Date.parse(a.detectedAt))[0] ?? null
 }
 

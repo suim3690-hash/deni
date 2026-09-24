@@ -21,11 +21,11 @@ class Settings:
     settle_seconds: float = .35
     capture_seconds: float = .8
     marker_search_timeout_seconds: float = 12.0
-    reverse_seconds: float = 1.0
+    reverse_seconds: float = 3.0
     drop_verify_seconds: float = 1.0
     drop_verify_timeout_seconds: float = 10.0
     drop_verify_radius_ratio: float = .45
-    turnaround_seconds: float = 1.0
+    turnaround_seconds: float = 3.0
     action_timeout_seconds: float = 120.0
 
     def __post_init__(self):
@@ -232,7 +232,11 @@ class CareController:
         seen = [dict(obj, label='dice' if obj['label']=='die' else obj['label'])
                 for obj in observation.get('hazards', []) if obj.get('label') in SWALLOW]
         labels = {obj['label'] for obj in seen}
-        self.blocked.update(labels)
+        # Stop immediately for a candidate, but only latch hazards confirmed by
+        # the same policy that creates upload events. A one-frame false positive
+        # must not leave an unremovable block with no corresponding app hazard.
+        self.blocked.update(obj['label'] for obj in seen
+                            if obj.get('stable') or obj.get('reason') == 'person_and_object')
         if self.phase == 'RUNNING' and self.blocked:
             self.phase = 'HAZARD_PAUSED'
         new_frame = observation.get('sequence') != self.last_sequence
@@ -250,6 +254,10 @@ class CareController:
         # 감지 후 정지는 사용자의 처리 선택 전까지 유지한다. 물체가 사라져도
         # RECHECK_HAZARD 성공 없이 자동 재개하면 DB의 ACTIVE 위험과 어긋난다.
         command = 'S'
+        if self.phase == 'RUNNING' and labels:
+            self.reason = 'VERIFYING HAZARD CANDIDATE'
+            self.last_output = 'S'
+            return 'S'
         if self.phase == 'RECHECKING' and new_frame:
             label = self.action[2]['label']
             if label in labels:

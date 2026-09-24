@@ -41,3 +41,16 @@ test('직접 제거 완료 뒤 같은 라벨의 새 위험만 재감지로 고�
   assert.equal(findRedetectedHazard(items, removal)?.hazardId, 'new-coin-2')
   assert.equal(findRedetectedHazard(items, null), null)
 })
+
+test('제거 완료 이전·동일 시각 감지와 잘못된 완료 시각은 재감지가 아니다', () => {
+  const removal = {
+    hazardId: 'old', objectName: '동전',
+    lastDetectedAt: '2026-09-23T01:00:10Z', completedAt: '2026-09-23T01:00:15Z',
+  }
+  for (const detectedAt of ['2026-09-23T01:00:12Z', removal.completedAt]) {
+    assert.equal(findRedetectedHazard([{ hazardId: 'new', objectName: '동전', detectedAt }], removal), null)
+  }
+  assert.equal(findRedetectedHazard([
+    { hazardId: 'new', objectName: '동전', detectedAt: '2026-09-23T01:00:20Z' },
+  ], { ...removal, completedAt: 'invalid' }), null)
+})

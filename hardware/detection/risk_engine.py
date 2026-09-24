@@ -14,11 +14,13 @@ class RiskEngine:
         self.next_unknown = 0
 
     def reset_alert_labels(self, labels):
-        """Allow the next stable sighting after a confirmed direct removal to alert immediately."""
+        """Require fresh class votes after a confirmed direct removal."""
         targets = set(labels)
         for key, label in list(self.labels.items()):
             if label in targets:
                 self.alerted.pop(key, None)
+                self.stabilizer.history.pop(key, None)
+                self.stabilizer.confirmed.pop(key, None)
 
     def evaluate(self, detections, now):
         # Real-time TTL, in addition to ByteTrack's processed-frame buffer.
