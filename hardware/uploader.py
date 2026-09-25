@@ -19,10 +19,10 @@ def configured():
     return bool(os.environ.get('ROBOT_HTTP_URL'))
 
 
-def connection(state_provider=None, command_handler=None):
+def connection(state_provider=None, command_handler=None, contact_handler=None):
     return Bridge(os.environ['ROBOT_DEVICE_ID'], os.environ['ROBOT_DEVICE_TOKEN'],
                   os.environ['ROBOT_HTTP_URL'], os.environ.get('ROBOT_WS_URL', 'ws://localhost:8080/ws/devices'), STORE,
-                  state_provider, command_handler)
+                  state_provider, command_handler, contact_handler)
 
 
 def crop_detection_images(jpeg, detections):
@@ -99,7 +99,7 @@ def start_uploader(stop):
     return thread
 
 
-def start_state_reporter(stop, state_provider=None, command_handler=None):
+def start_state_reporter(stop, state_provider=None, command_handler=None, contact_handler=None):
     """Socket session for robot state out and backend commands in.
 
     Runs on its own Bridge: bridge.py gives one writer per connection, and the
@@ -109,7 +109,7 @@ def start_state_reporter(stop, state_provider=None, command_handler=None):
         return None
     logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
     def session():
-        bridge = connection(state_provider, command_handler)
+        bridge = connection(state_provider, command_handler, contact_handler)
         async def supervise():
             socket = asyncio.create_task(bridge.run())
             async def wait_for_stop():

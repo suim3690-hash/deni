@@ -32,16 +32,19 @@ def now():
 
 class Bridge:
     def __init__(self, device, token, http_url, ws_url, store,
-                 state_provider=None, command_handler=None):
+                 state_provider=None, command_handler=None, contact_handler=None):
         """state_provider/command_handler are synchronous; they run off the socket loop.
 
         Without them the socket still runs, reporting UNKNOWN and failing every
         command, which is what an unattached transport can honestly claim.
+        contact_handler is called on the socket loop for every backend message,
+        so it must be cheap; the robot uses it to stop when the backend goes silent.
         """
         if not device or len(token) < 32:
             raise ValueError("Registered device ID and token of at least 32 characters required")
         self.device, self.ws_url = device, ws_url
         self.state_provider, self.command_handler = state_provider, command_handler
+        self.contact_handler = contact_handler
         self.http_url = http_url.rstrip("/")
         self.headers = {"Authorization": "Bearer " + token, "X-Device-Id": device}
         Path(store).parent.mkdir(parents=True, exist_ok=True)
@@ -233,6 +236,8 @@ class Bridge:
             reporter = asyncio.create_task(self.report(socket))
             async def receive():
                 async for raw in socket:
+                    if self.contact_handler is not None:
+                        self.contact_handler()
                     try:
                         message = json.loads(raw)
                         if message.get('type') == 'COMMAND':

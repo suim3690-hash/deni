@@ -18,13 +18,15 @@ class CareTests(unittest.TestCase):
         self.seq = 0
         self.ack = 'S'
 
-    def tick(self, labels=(), *, gap=.1, valid=True, marker=None, connected=True, generation=1, bearing=0.0):
+    def tick(self, labels=(), *, gap=.1, valid=True, marker=None, connected=True, generation=1, bearing=0.0,
+             backend=True, lag=0.0):
         self.now += gap
         self.seq += 1
-        obs = dict(status='ok' if valid else 'blur', frame_stamp=self.now, sequence=self.seq,
+        obs = dict(status='ok' if valid else 'blur', frame_stamp=self.now-lag, sequence=self.seq,
                    hazards=[obj(label, bearing) for label in labels], frame_width=100, frame_height=100,
                    markers=[] if marker is None else [marker])
-        result = self.c.step(obs, dict(ready=connected, ack=self.ack, generation=generation, acknowledged_at=self.now), self.now)
+        result = self.c.step(obs, dict(ready=connected, ack=self.ack, generation=generation, acknowledged_at=self.now),
+                             self.now, backend)
         self.ack = result
         return result
 
@@ -148,6 +150,51 @@ class CareTests(unittest.TestCase):
         for _ in range(8): self.tick(generation=2)
         self.assertEqual(self.c.results['remove']['status'],'SUCCEEDED')
 
+    def resume(self, identity, **tick):
+        self.c.request('RESUME', identity, {}, self.now)
+        for _ in range(3): self.tick(**tick)
+        return self.c.results[identity]
+
+    def test_motor_reconnect_does_not_restart_driving_without_resume(self):
+        self.start()
+        self.assertEqual(self.tick(), 'F')
+        self.assertEqual(self.tick(connected=False), 'S')
+        for _ in range(20): self.assertEqual(self.tick(generation=2), 'S')
+        self.assertEqual(self.c.phase, 'PAUSED')
+        self.assertEqual(self.resume('go', generation=2)['status'], 'SUCCEEDED')
+        self.assertEqual(self.tick(generation=2), 'F')
+
+    def test_motor_reconnect_fails_relocation_and_keeps_hazard_blocked(self):
+        self.start(); self.tick(['dice'])
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='주사위'),self.now)
+        self.tick(['dice'])
+        self.tick(connected=False)
+        self.assertEqual(self.tick(['dice'], generation=2), 'S')
+        self.assertEqual(self.c.results['move']['errorCode'], 'MOTOR_RECONNECTED')
+        self.assertEqual(self.c.phase, 'HAZARD_PAUSED')
+        self.assertEqual(self.c.blocked, {'dice'})
+
+    def test_backend_loss_stops_and_reconnect_waits_for_resume(self):
+        self.start()
+        self.assertEqual(self.tick(), 'F')
+        for _ in range(20): self.assertEqual(self.tick(backend=False), 'S')
+        self.assertEqual(self.c.reason, 'BACKEND DISCONNECTED')
+        for _ in range(20): self.assertEqual(self.tick(), 'S')
+        self.assertEqual(self.c.phase, 'PAUSED')
+        self.assertEqual(self.resume('go')['status'], 'SUCCEEDED')
+        self.assertEqual(self.tick(), 'F')
+
+    def test_backend_loss_fails_removal_check_and_keeps_hazard_blocked(self):
+        self.start(); self.tick(['coin'])
+        self.c.request('RECHECK_HAZARD','remove',dict(hazardId='h1',objectLabel='동전'),self.now)
+        for _ in range(5): self.tick()
+        self.assertEqual(self.tick(backend=False), 'S')
+        self.assertEqual(self.c.results['remove']['errorCode'], 'BACKEND_DISCONNECTED')
+        # 물체가 없어도 재연결만으로는 제거 성공이나 재주행으로 이어지지 않는다.
+        for _ in range(40): self.assertEqual(self.tick(), 'S')
+        self.assertEqual(self.c.phase, 'HAZARD_PAUSED')
+        self.assertEqual(self.c.blocked, {'coin'})
+
     def test_power_off_interrupts_treatment_and_stays_off_after_reconnect(self):
         self.start(); self.tick(['dice'])
         self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='주사위'),self.now)
@@ -255,24 +302,58 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.c.results['move']['errorCode'],'DROP_NOT_VERIFIED')
         self.assertEqual(self.c.phase,'HAZARD_PAUSED')
 
-    def test_relocation_searches_without_forward_motion_and_fails_without_marker(self):
-        self.start(); self.tick(['coin'])
-        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='동전'),self.now)
-        self.tick(['coin'])
+    def capture(self, label='coin', korean='동전'):
+        self.start(); self.tick([label])
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel=korean),self.now)
+        self.tick([label])
         while self.c.phase == 'CAPTURING': self.tick([])
+
+    def test_relocation_sweeps_both_ways_and_fails_only_after_turn_budget(self):
+        self.capture()
+        started = self.now
         commands=[]
-        for _ in range(130):
+        for _ in range(1000):
             commands.append(self.tick([]))
             if 'move' in self.c.results: break
         self.assertNotIn('F',commands)
-        self.assertIn('R',commands)
-        self.assertEqual(self.c.results['move']['status'],'FAILED')
+        # Right first by default, then the other way round to cover the circle.
+        self.assertLess(commands.index('R'), commands.index('L'))
         self.assertEqual(self.c.results['move']['errorCode'],'MARKER_NOT_FOUND')
         self.assertEqual(self.c.phase,'HAZARD_PAUSED')
+        # Wall time is not the limit: the old 12 s cut-off is well exceeded.
+        self.assertGreater(self.now-started, 20)
+        cfg = Settings()
+        self.assertGreaterEqual(self.c.search_turned, cfg.search_turns*cfg.full_turn_seconds)
+
+    def test_lost_marker_is_searched_toward_the_side_it_was_last_seen(self):
+        self.capture()
+        self.assertEqual(self.tick([],marker=drop_marker(bearing=-.5)),'L')
+        commands = [self.tick([]) for _ in range(120)]
+        turns = [command for command in commands if command in 'LR']
+        self.assertEqual(turns[0],'L')
+        self.assertIn('R',turns)
+
+    def test_one_missed_frame_while_pushing_does_not_turn_away(self):
+        self.capture()
+        self.assertEqual(self.tick([],marker=drop_marker()),'F')
+        self.assertEqual(self.c.phase,'PUSHING_TO_MARKER')
+        self.assertEqual(self.tick([]),'S')
+        self.assertEqual(self.tick([],marker=drop_marker()),'F')
+        self.assertEqual(self.c.phase,'PUSHING_TO_MARKER')
+
+    def test_search_turns_again_only_after_a_frame_taken_while_stopped(self):
+        self.capture()
+        commands = [self.tick([], lag=.5) for _ in range(40)]
+        first_stop = commands.index('R') + commands[commands.index('R'):].index('S')
+        waited = commands[first_stop:].index('R')
+        # settle 0.35 s plus 0.5 s result latency at 0.1 s per tick.
+        self.assertGreaterEqual(waited, 8)
 
     def test_configuration_validation(self):
         with self.assertRaises(ValueError): Settings(removal_absence_seconds=1)
         with self.assertRaises(ValueError): Settings(turnaround_seconds=float('nan'))
+        with self.assertRaises(ValueError): Settings(search_sweep_degrees=180)
+        with self.assertRaises(ValueError): Settings(search_turns=.5)
 
     def test_measured_drop_layout_passes_updated_radius(self):
         target = obj('battery')

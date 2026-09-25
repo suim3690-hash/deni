@@ -20,14 +20,77 @@ from uploader import configured, start_state_reporter, start_uploader
 
 LOG = logging.getLogger('care')
 MOVEMENT = {'F': 'FORWARD', 'B': 'BACKWARD', 'L': 'TURNING', 'R': 'TURNING', 'S': 'STOPPED'}
+# The drop-off marker is far away in these phases; floor objects are close in all others.
+MARKER_PHASES = {'SEEKING_MARKER', 'PUSHING_TO_MARKER'}
+
+
+class FocusSwitch:
+    """Pi autofocus range: far while looking for the marker, near otherwise.
+
+    Runs on its own thread so a slow or old Pi server never delays motor control.
+    """
+
+    def __init__(self, url, near, far, stop, post=None):
+        self.url, self.near, self.far, self.stop = url, near, far, stop
+        self.wanted, self.applied = near, None
+        self.wake = threading.Event()
+        self.post = post or self._post
+        self.warned = False
+
+    def want(self, far):
+        wanted = self.far if far else self.near
+        if wanted != self.wanted:
+            self.wanted = wanted
+            self.wake.set()
+
+    def _post(self, name):
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        request = urllib.request.Request(self.url + '?range=' + name, data=b'', method='POST')
+        with opener.open(request, timeout=2) as response:
+            response.read()
+
+    def sync_once(self):
+        """Apply the wanted range; False means retry later."""
+        wanted = self.wanted
+        if wanted == self.applied:
+            return True
+        try:
+            self.post(wanted)
+        except Exception as exc:
+            if not self.warned:
+                LOG.warning('Camera focus switch to %s failed (%s); Pi server may predate POST /focus',
+                            wanted, type(exc).__name__)
+                self.warned = True
+            return False
+        self.applied, self.warned = wanted, False
+        LOG.info('Camera focus range: %s', wanted)
+        return True
+
+    def run(self):
+        while not self.stop.is_set():
+            self.wake.clear()
+            if not self.sync_once():
+                self.stop.wait(2)
+                continue
+            self.wake.wait(1)
 
 
 class Runtime:
-    def __init__(self, motor, detector, stop, settings, snapshot_path=None):
+    def __init__(self, motor, detector, stop, settings, snapshot_path=None, focus=None):
         self.motor, self.detector, self.stop = motor, detector, stop
+        self.focus = focus
         self.controller = CareController(settings)
         self.lock = threading.RLock()
         self.snapshot_path = snapshot_path
+        # Monotonic time of the last backend message; None until the socket first answers.
+        self.backend_contact = None
+
+    def backend_contacted(self):
+        self.backend_contact = time.monotonic()
+
+    def backend_ok(self, now):
+        contact = self.backend_contact
+        return contact is not None and now-contact <= self.controller.settings.backend_timeout_seconds
 
     def _sync_alert_suppression(self):
         action = self.controller.action
@@ -68,10 +131,13 @@ class Runtime:
             observation = self.detector.state()
             motor = self.motor.observation()
             with self.lock:
-                command = self.controller.step(observation, motor, time.monotonic())
+                now = time.monotonic()
+                command = self.controller.step(observation, motor, now, self.backend_ok(now))
                 self._sync_alert_suppression()
                 self.motor.submit(command, time.monotonic()+.15, motor['generation'])
-                state = (self.controller.phase, self.controller.reason, motor['ready'])
+                if self.focus is not None:
+                    self.focus.want(self.controller.phase in MARKER_PHASES)
+                state =(self.controller.phase, self.controller.reason, motor['ready'])
                 diagnostic = dict(task=self.controller.phase, reason=self.controller.reason,
                     powered=self.controller.powered, blocked=sorted(self.controller.blocked),
                     command=command, motor=motor, detectionStatus=observation.get('status'),
@@ -116,6 +182,11 @@ def main():
     parser.add_argument('--camera-port', type=int, default=8000)
     parser.add_argument('--control-port', type=int, default=8765)
     parser.add_argument('--config', type=Path, default=Path(__file__).with_name('care_config.json'))
+    focus_ranges = ('macro', 'normal', 'full')
+    parser.add_argument('--focus-range', choices=focus_ranges, default='macro',
+                        help='Pi autofocus range for floor objects (default macro)')
+    parser.add_argument('--marker-focus-range', choices=focus_ranges, default='normal',
+                        help='Pi autofocus range while searching for or driving to the marker')
     args = parser.parse_args()
     settings = Settings(**json.loads(args.config.read_text(encoding='utf-8')))
     if not configured(): parser.error('Set ROBOT_HTTP_URL, ROBOT_WS_URL, ROBOT_DEVICE_ID and ROBOT_DEVICE_TOKEN')
@@ -130,7 +201,9 @@ def main():
     LOG.info('Using Pi global 180-degree stream unchanged for display, detection and uploads')
     detection = DetectionService(feed, mode='both', processing=False)
     motor = MotorOutput(args.host, None, args.control_port, DRIVE_REVERSED)
-    runtime = Runtime(motor,detection,stop,settings,log/'care_state.json')
+    focus = FocusSwitch(f'http://{args.host}:{args.camera_port}/focus',
+                        args.focus_range, args.marker_focus_range, stop)
+    runtime = Runtime(motor,detection,stop,settings,log/'care_state.json',focus)
     threads = []
     try:
         # Validate backend settings before starting the motor owner.
@@ -138,10 +211,10 @@ def main():
         if uploader: threads.append(uploader)
         detection.start()
         motor.thread.start()
-        for target, arguments in ((camera,(args,feed,stop)),(runtime.run,())):
+        for target, arguments in ((camera,(args,feed,stop)),(runtime.run,()),(focus.run,())):
             worker = threading.Thread(target=target,args=arguments,daemon=True)
             worker.start(); threads.append(worker)
-        reporter = start_state_reporter(stop,runtime.state,runtime.command)
+        reporter = start_state_reporter(stop,runtime.state,runtime.command,runtime.backend_contacted)
         if reporter: threads.append(reporter)
         LOG.info('Ready, powered OFF. Waiting for backend POWER_ON. Ctrl+C stops this runtime.')
         while not stop.wait(1): pass

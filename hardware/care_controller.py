@@ -20,13 +20,21 @@ class Settings:
     turn_pulse_seconds: float = .12
     settle_seconds: float = .35
     capture_seconds: float = .8
-    marker_search_timeout_seconds: float = 12.0
+    # Marker search sweeps toward the side the marker was last seen, then reverses
+    # until the whole circle is covered. Angles are estimated from acknowledged turn
+    # time only (no encoder), so full_turn_seconds must be calibrated on the floor.
+    full_turn_seconds: float = 6.0
+    search_sweep_degrees: float = 90.0
+    search_pulse_seconds: float = .25
+    search_turns: float = 2.0
     reverse_seconds: float = 3.0
     drop_verify_seconds: float = 1.0
     drop_verify_timeout_seconds: float = 10.0
     drop_verify_radius_ratio: float = .45
     turnaround_seconds: float = 3.0
     action_timeout_seconds: float = 120.0
+    # Backend answers every state report (sent at least once a second) with a RECEIPT.
+    backend_timeout_seconds: float = 3.0
 
     def __post_init__(self):
         for name, value in vars(self).items():
@@ -38,6 +46,8 @@ class Settings:
                 or self.drop_verify_radius_ratio >= 1
                 or not self.bearing_deadband < self.coarse_bearing < 1):
             raise ValueError('Invalid absence/fill/bearing settings')
+        if self.search_sweep_degrees >= 180 or self.search_turns < 1:
+            raise ValueError('Search must sweep under 180 degrees and cover at least one full turn')
 
 
 class CareController:
@@ -61,7 +71,14 @@ class CareController:
         self.pulse_until = self.settle_until = 0
         self.phase_started = 0
         self.verified_since = None
+        self.searching = False
+        self.search_dir = 1
+        self.search_position = self.search_turned = 0.0
+        self.search_reversed = False
+        self.still_after = 0
+        self.last_marker_bearing = None
         self.generation = None
+        self.backend_ok = True
         self.require_frame_after = 0
         self.reason = 'POWER OFF'
         self.observed_state = 'UNKNOWN'
@@ -87,11 +104,52 @@ class CareController:
     def _start_phase(self, phase, now, duration=0):
         self.phase, self.phase_started, self.timed_remaining = phase, now, duration
         self.pulse_until = self.settle_until = 0
+        self.searching = False
 
-    def _steer(self, bearing, now, forward, search=False):
+    def _begin_search(self, now):
+        """Stop and look once before turning; a single blurred frame is not a lost marker."""
+        self._start_phase('SEEKING_MARKER', now)
+        self.searching = True
+        self.search_dir = -1 if (self.last_marker_bearing or 0) < 0 else 1
+        self.search_position = self.search_turned = 0.0
+        self.search_reversed = False
+        self.still_after = now + self.settings.settle_seconds
+        self.reason = 'MARKER SEARCH'
+
+    def _search(self, stamp, motor, now, dt):
+        """Pulse-and-look sweep; returns None once the turn budget is spent.
+
+        Each pulse waits for a frame captured after the robot stopped, because
+        results arrive 0.3-0.5 s late and a frame taken mid-turn is too blurred
+        for ArUco. Failure depends on how far the robot turned, not wall time.
+        """
+        cfg = self.settings
+        ack = motor.get('ack')
+        if self.last_output in ('L', 'R') and ack == self.last_output and now-motor.get('acknowledged_at', 0) < .25:
+            self.search_turned += dt
+            self.search_position += dt if ack == 'R' else -dt
+        if self.search_turned >= cfg.search_turns*cfg.full_turn_seconds:
+            return None
+        sweep = cfg.full_turn_seconds*cfg.search_sweep_degrees/360
+        if not self.search_reversed and abs(self.search_position) >= sweep:
+            self.search_dir, self.search_reversed = -self.search_dir, True
+        turn = 'R' if self.search_dir > 0 else 'L'
+        if now < self.pulse_until:
+            return turn
+        if self.pulse_until:
+            self.pulse_until = 0
+            self.still_after = now + cfg.settle_seconds
+            return 'S'
+        if stamp < self.still_after:
+            self.reason = 'WAITING FOR STILL FRAME'
+            return 'S'
+        self.pulse_until = now + cfg.search_pulse_seconds
+        return turn
+
+    def _steer(self, bearing, now, forward):
         # Far from the target only the sign of the error matters, so the turn runs without stopping.
         # Close to it the short pulse and settle stay: they trade smoothness for a clean frame and
-        # keep the robot from overshooting the centre. A blind search must stop to look, so it pulses.
+        # keep the robot from overshooting the centre.
         cfg = self.settings
         if now < self.settle_until:
             return 'S'
@@ -99,7 +157,7 @@ class CareController:
             self.pulse_until = 0
             return 'F' if forward else 'S'
         turn = 'R' if bearing > 0 else 'L'
-        if not search and abs(bearing) >= cfg.coarse_bearing:
+        if abs(bearing) >= cfg.coarse_bearing:
             self.pulse_until = 0
             return turn
         if not self.pulse_until:
@@ -122,6 +180,22 @@ class CareController:
             return distance <= self.settings.drop_verify_radius_ratio
         except (KeyError, TypeError, ValueError, ZeroDivisionError):
             return False
+
+    def _stop_after_link_loss(self, code, keep_recheck):
+        """A restored link must never restart driving by itself; only a user RESUME does.
+
+        A physical task fails and keeps its hazard blocked. A stationary direct-removal
+        check may survive a motor reconnect, because its absence window restarts anyway.
+        """
+        if self.action and not (keep_recheck and self.action[0] == 'RECHECK_HAZARD'):
+            self.blocked.add(self.action[2]['label'])
+            self._complete_action('FAILED', code)
+            self.phase = 'HAZARD_PAUSED'
+        elif self.phase == 'RUNNING' and not self.finishing:
+            self.phase = 'PAUSED'
+        if self.control and self.control[0] == 'RESUME':
+            self.results[self.control[1]] = dict(status='FAILED', operationState='PAUSED', errorCode=code)
+            self.control = None
 
     def _finish_motion(self, now):
         self.blocked.discard(self.action[2]['label'])
@@ -162,6 +236,8 @@ class CareController:
         if self.phase not in ('HAZARD_PAUSED', 'PAUSED'):
             reject('DEVICE_NOT_PAUSED'); return
         self.blocked.add(label)
+        self.last_marker_bearing = None
+        self.searching = False
         self.action = (command, identity, dict(params, label=label))
         self.phase = 'RECHECKING' if command == 'RECHECK_HAZARD' else 'ALIGNING_TARGET'
         self.phase_started = now
@@ -171,7 +247,7 @@ class CareController:
         self.require_frame_after = now
         self.pulse_until = self.settle_until = 0
 
-    def step(self, observation, motor, now):
+    def step(self, observation, motor, now, backend_ok=True):
         cfg = self.settings
         dt = 0 if self.last_tick is None else max(0, min(now-self.last_tick, .2))
         self.last_tick = now
@@ -187,12 +263,15 @@ class CareController:
             self.reason = 'RECONNECTING'
             return 'S'
         if self.generation != motor.get('generation'):
+            reconnected = self.generation is not None
             self.generation = motor.get('generation')
             self.require_frame_after = now
             self.absent_since = None
             self.verified_since = None
             self.last_output = 'S'
             self.pulse_until = self.settle_until = 0
+            if reconnected:
+                self._stop_after_link_loss('MOTOR_RECONNECTED', keep_recheck=True)
         if self.control:
             kind, identity, requested = self.control
             if now-requested > 8:
@@ -207,6 +286,15 @@ class CareController:
                 if (stopped and ack == 'S') or ((not stopped or kind == 'POWER_ON') and self.last_output == 'F' and ack == 'F'):
                     self.results[identity] = dict(status='SUCCEEDED', operationState='PAUSED' if ack == 'S' else 'RUNNING')
                     self.control = None
+        if not backend_ok:
+            # Without the backend the app cannot pause the robot, so the robot pauses itself.
+            if self.backend_ok:
+                self._stop_after_link_loss('BACKEND_DISCONNECTED', keep_recheck=False)
+            self.backend_ok = False
+            self.absent_since = None
+            self.verified_since = None
+            self.reason = 'BACKEND DISCONNECTED'; self.last_output = 'S'; return 'S'
+        self.backend_ok = True
         if not self.powered:
             self.reason = 'POWER OFF'; self.last_output = 'S'; return 'S'
         if self.action and now-self.started > cfg.action_timeout_seconds:
@@ -299,18 +387,23 @@ class CareController:
                 command = 'F'
         elif self.phase in ('SEEKING_MARKER', 'PUSHING_TO_MARKER'):
             marker = next((m for m in observation.get('markers', []) if m['id']==cfg.marker_id), None)
+            if marker is not None:
+                if self.searching:
+                    self.searching = False
+                    self.pulse_until = 0
+                # A later loss sweeps toward this side first.
+                self.last_marker_bearing = marker['bearing']
             if marker is None:
-                if self.phase != 'SEEKING_MARKER':
-                    self._start_phase('SEEKING_MARKER', now)
-                    command = 'S'
-                elif now-self.phase_started >= cfg.marker_search_timeout_seconds:
-                    self._complete_action('FAILED', 'MARKER_NOT_FOUND')
-                    self.phase = 'HAZARD_PAUSED'
+                # The robot never drives forward without a visible marker.
+                if not self.searching:
+                    self._begin_search(now)
                     command = 'S'
                 else:
-                    # The demo drop zone is searched clockwise. Rotation is pulsed;
-                    # the robot never drives forward without a visible marker.
-                    command = self._steer(1.0, now, False, search=True)
+                    command = self._search(stamp, motor, now, dt)
+                    if command is None:
+                        self._complete_action('FAILED', 'MARKER_NOT_FOUND')
+                        self.phase = 'HAZARD_PAUSED'
+                        command = 'S'
             elif marker.get('skew', 1) > .5:
                 self.reason = 'MARKER TOO SKEWED'
             elif marker['fill'] >= cfg.marker_stop_fill:
