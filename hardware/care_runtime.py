@@ -84,6 +84,57 @@ class Runtime:
         self.snapshot_path = snapshot_path
         # Monotonic time of the last backend message; None until the socket first answers.
         self.backend_contact = None
+        self.health_lock = threading.Lock()
+        self.control_started = False
+        self.control_tick = 0.0
+        self.control_fault = None
+        # A late loop only makes reports UNKNOWN; the motor lease (0.15 s) already stops it.
+        # Latch a fault, which needs a restart, only after a real stall or a crash:
+        # a short disk or log hiccup must not end a demo.
+        self.control_timeout = .5
+        self.control_fault_after = 3.0
+
+    def fail_control(self, code):
+        with self.health_lock:
+            if self.control_fault is None:
+                LOG.error('Control fault latched: %s; restart required', code)
+                self.control_fault = code
+        # Never wait on the controller lock before withdrawing the motor lease.
+        if self.motor is not None:
+            self.motor.submit('S', 0)
+        if self.lock.acquire(blocking=False):
+            try:
+                controller = self.controller
+                controller.observed_state = 'UNKNOWN'
+                if controller.action:
+                    controller.blocked.add(controller.action[2]['label'])
+                    controller._complete_action('FAILED', code)
+                if controller.control:
+                    controller.results[controller.control[1]] = dict(
+                        status='FAILED', operationState='UNKNOWN', errorCode=code)
+                    controller.control = None
+                controller.phase = 'HAZARD_PAUSED' if controller.blocked else 'PAUSED'
+                controller.reason = code
+                controller.last_output = 'S'
+            finally:
+                self.lock.release()
+
+    def control_age(self):
+        with self.health_lock:
+            return time.monotonic()-self.control_tick if self.control_started else None
+
+    def control_healthy(self):
+        age = self.control_age()
+        return self.control_fault is None and age is not None and age <= self.control_timeout
+
+    def check_stall(self):
+        age = self.control_age()
+        if age is not None and age > self.control_fault_after:
+            self.fail_control('CONTROL_LOOP_STALE')
+
+    def supervise(self):
+        while not self.stop.wait(.1):
+            self.check_stall()
 
     def backend_contacted(self):
         self.backend_contact = time.monotonic()
@@ -96,45 +147,138 @@ class Runtime:
         action = self.controller.action
         labels = {action[2]['label']} if action and action[0] == 'RELOCATE' else set()
         self.detector.set_suppressed_alert_labels(labels)
+        if hasattr(self.detector, 'set_relocated_labels'):
+            self.detector.set_relocated_labels(self.controller.relocated_labels)
 
     def state(self):
+        # Never pair a fresh sampledAt with the last state of a loop that is not running.
+        unknown = dict(operationState='UNKNOWN', powerEnabled=None,
+                       taskState='CONTROL_FAULT' if self.control_fault else
+                       'CONTROL_STALE' if self.control_started else 'CONTROL_STARTING',
+                       movementState='UNKNOWN')
+        if not self.control_healthy():
+            return unknown
         motor = self.motor.observation()
-        with self.lock:
+        if not self.lock.acquire(timeout=.1):
+            return unknown
+        try:
+            if not self.control_healthy():
+                return unknown
             return dict(operationState=self.controller.observed_state,
                         powerEnabled=self.controller.powered, taskState=self.controller.phase,
                         movementState=MOVEMENT.get(motor['ack'], 'UNKNOWN') if motor['ready'] else 'UNKNOWN')
+        finally:
+            self.lock.release()
 
     def command(self, command, identity, parameters=None):
         parameters = parameters or {}
+        if command == 'RECOVER_COMMAND':
+            return self.recover_command(identity, parameters)
+        def fault_result(code=None):
+            result = dict(status='FAILED', operationState='UNKNOWN',
+                          errorCode=self.control_fault or code or 'CONTROL_LOOP_STALE')
+            if parameters.get('hazardId'): result['hazardId'] = parameters['hazardId']
+            return result
+        if self.control_fault:
+            return fault_result()
         reset_label = LABELS.get(parameters.get('objectLabel')) if command == 'RECHECK_HAZARD' else None
-        with self.lock:
+        if not self.lock.acquire(timeout=self.control_timeout):
+            # Nothing was started, so report failure; the supervisor latches a real stall.
+            return fault_result('CONTROL_LOCK_TIMEOUT')
+        try:
+            if self.control_fault:
+                return fault_result()
             before = self.controller.powered
             self.controller.request(command, identity, parameters, time.monotonic())
             self._sync_alert_suppression()
             if before != self.controller.powered:
                 self.detector.set_processing(self.controller.powered)
+        finally:
+            self.lock.release()
         while not self.stop.wait(.05):
-            with self.lock:
+            if self.control_fault:
+                return fault_result()
+            if not self.lock.acquire(timeout=.1):
+                continue
+            try:
                 result = self.controller.results.pop(identity, None)
                 if result is not None:
                     if result.get('status') == 'SUCCEEDED' and reset_label:
                         self.detector.reset_alert_labels({reset_label})
                     LOG.info('Command %s %s: %s', command, identity, result['status'])
                     return result
+            finally:
+                self.lock.release()
         return dict(status='FAILED', operationState='UNKNOWN', errorCode='PROCESS_STOPPING')
 
+    def recover_command(self, identity, parameters):
+        """No movement or replay. Close an unknown request only after fresh stop evidence."""
+        if not self.lock.acquire(timeout=.1):
+            return None
+        try:
+            controller = self.controller
+            # A finished result may not yet have reached the transport journal.
+            result = controller.results.pop(identity, None)
+            if result is not None:
+                return result
+            if controller.action and controller.action[1] != identity:
+                return None
+            if controller.control and controller.control[1] != identity:
+                return None
+            if controller.action:
+                controller.blocked.add(controller.action[2]['label'])
+                controller._complete_action('FAILED', 'RESULT_UNAVAILABLE')
+                controller.results.pop(identity, None)
+                controller.phase = 'HAZARD_PAUSED'
+                controller.last_output = 'S'
+                self.motor.submit('S', 0)
+                return None
+            if controller.control:
+                controller.control = None
+                controller.phase = 'HAZARD_PAUSED' if controller.blocked else 'PAUSED'
+                controller.last_output = 'S'
+                self.motor.submit('S', 0)
+                return None
+            motor = self.motor.observation()
+            if (not self.control_healthy() or not motor.get('ready') or motor.get('ack') != 'S'
+                    or time.monotonic()-motor.get('acknowledged_at', 0) > .25
+                    or controller.phase not in {'OFF', 'PAUSED', 'HAZARD_PAUSED'}):
+                return None
+            result = dict(status='FAILED', operationState='PAUSED', errorCode='RESULT_UNAVAILABLE')
+            if parameters.get('hazardId'): result['hazardId'] = parameters['hazardId']
+            return result
+        finally:
+            self.lock.release()
+
     def run(self):
+        with self.health_lock:
+            self.control_started = True
+            self.control_tick = time.monotonic()
+        try:
+            self._run_loop()
+        except Exception:
+            LOG.exception('Control loop stopped')
+            self.fail_control('CONTROL_LOOP_FAILED')
+
+    def _run_loop(self):
         previous = None
         next_snapshot = 0
         snapshot = self.snapshot_path
         while not self.stop.wait(.05):
+            if self.control_fault:
+                return
             observation = self.detector.state()
             motor = self.motor.observation()
             with self.lock:
                 now = time.monotonic()
                 command = self.controller.step(observation, motor, now, self.backend_ok(now))
                 self._sync_alert_suppression()
-                self.motor.submit(command, time.monotonic()+.15, motor['generation'])
+                # A watchdog fault is latched: a delayed iteration must never re-arm motion.
+                with self.health_lock:
+                    if self.control_fault:
+                        return
+                    self.motor.submit(command, time.monotonic()+.15, motor['generation'])
+                    self.control_tick = time.monotonic()
                 if self.focus is not None:
                     self.focus.want(self.controller.phase in MARKER_PHASES)
                 state =(self.controller.phase, self.controller.reason, motor['ready'])
@@ -199,7 +343,8 @@ def main():
     # Pi already rotates every streamed frame by 180 degrees. Never rotate again.
     feed = CameraFeed()
     LOG.info('Using Pi global 180-degree stream unchanged for display, detection and uploads')
-    detection = DetectionService(feed, mode='both', processing=False)
+    detection = DetectionService(feed, mode='both', processing=False,
+                                 safe_zone=(settings.marker_id, settings.drop_verify_radius_ratio))
     motor = MotorOutput(args.host, None, args.control_port, DRIVE_REVERSED)
     focus = FocusSwitch(f'http://{args.host}:{args.camera_port}/focus',
                         args.focus_range, args.marker_focus_range, stop)
@@ -211,7 +356,7 @@ def main():
         if uploader: threads.append(uploader)
         detection.start()
         motor.thread.start()
-        for target, arguments in ((camera,(args,feed,stop)),(runtime.run,()),(focus.run,())):
+        for target, arguments in ((camera,(args,feed,stop)),(runtime.run,()),(runtime.supervise,()),(focus.run,())):
             worker = threading.Thread(target=target,args=arguments,daemon=True)
             worker.start(); threads.append(worker)
         reporter = start_state_reporter(stop,runtime.state,runtime.command,runtime.backend_contacted)

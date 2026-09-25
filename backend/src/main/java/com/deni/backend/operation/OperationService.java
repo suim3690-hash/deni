@@ -43,13 +43,19 @@ public class OperationService {
 		if (existing != null) return new CommandReceipt(existing.getId(), existing.getStatus(), deliveryState(existing.getId()));
 		if (command.equals("resume")) {
 			if (deliveryDb != null && Boolean.TRUE.equals(deliveryDb.queryForObject(
-					"SELECT EXISTS(SELECT 1 FROM hazards WHERE device_id=? AND child_id=? AND status='ACTIVE' AND object_type='SWALLOW')", Boolean.class, id, devices.getLinkedChildId(id)))) {
+					"""
+					SELECT EXISTS(SELECT 1 FROM hazards h WHERE h.device_id=? AND h.child_id=?
+					  AND h.status='ACTIVE' AND h.object_type='SWALLOW' AND NOT EXISTS (
+					    SELECT 1 FROM operation_requests r JOIN device_command_delivery d ON d.command_id=r.id
+					    WHERE r.hazard_id=h.id AND r.device_id=h.device_id AND r.kind='RELOCATE'
+					      AND d.status='SUCCEEDED' AND d.completed_at>=h.detected_at))
+					""", Boolean.class, id, devices.getLinkedChildId(id)))) {
 				throw ApiException.conflict("HAZARD_UNRESOLVED", "미처리 위험물이 있어 청소를 재개할 수 없습니다.");
 			}
 			if (deliveryDb == null) throw ApiException.conflict("SAFETY_CONFIRMATION_REQUIRED", "기기 재개 전달 기능이 연결되지 않았습니다.");
 		}
 		requireOnline(device);
-		if (!command.equals("pause")) requireDelivery(device);
+		requireDelivery(device);
 		OperationRequest saved = requests.saveAndFlush(new OperationRequest(id, null, key, kind, now()));
 		if (device.commandsAvailable() && deliveryDb != null) {
 			deliveryDb.update("INSERT INTO device_command_delivery(command_id,device_id,expires_at) VALUES (?,?,?)",
@@ -98,6 +104,7 @@ public class OperationService {
 			throw ApiException.conflict("DEVICE_NOT_PAUSED", "일시정지 상태가 확인된 기기만 재확인 요청을 접수할 수 있습니다.");
 		}
 		requirePoweredPause(id);
+		requireDelivery(device);
 		OperationRequest saved = requests.saveAndFlush(new OperationRequest(id, hazardId, key, "DIRECT_REMOVAL_CHECK", now()));
 		queueAction(saved, device);
 		return new ActionReceipt(saved.getId(), saved.getKind(), saved.getStatus(), deliveryState(saved.getId()));
@@ -149,7 +156,7 @@ public class OperationService {
 	}
 
 	private void queueAction(OperationRequest request, DeviceService.DeviceStatus device) {
-		if(deliveryDb==null || !device.commandsAvailable()) return;
+		requireDelivery(device);
 		Integer busy=deliveryDb.queryForObject("SELECT count(*) FROM device_command_delivery d JOIN operation_requests r ON r.id=d.command_id WHERE d.device_id=? AND r.hazard_id IS NOT NULL AND d.status IN ('QUEUED','SENT','DELIVERED','UNKNOWN')",Integer.class,request.getDeviceId());
 		if(busy!=null && busy>0) throw ApiException.conflict("ACTION_IN_PROGRESS","이미 진행 중이거나 결과 확인이 필요한 처리 요청이 있습니다.");
 		deliveryDb.update("INSERT INTO device_command_delivery(command_id,device_id,expires_at) VALUES (?,?,?)",request.getId(),request.getDeviceId(),now().plusSeconds(10));

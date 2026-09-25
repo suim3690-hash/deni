@@ -3,6 +3,7 @@ import os
 import time
 from . import config as C
 from .service import offer
+from .safe_zone import safe_labels
 
 
 def unsuppressed_events(events, mask):
@@ -11,7 +12,7 @@ def unsuppressed_events(events, mask):
 
 
 def run(mailbox, output, stop, mode_code, processing=None, suppressed_alert_mask=None,
-        alert_reset_mask=None):
+        alert_reset_mask=None, relocated_mask=None, safe_zone=(0, .45)):
     store = None
     active_code = mode_code.value
     def publish(state):
@@ -42,6 +43,7 @@ def run(mailbox, output, stop, mode_code, processing=None, suppressed_alert_mask
         processed = 0
         skipped_blur = 0
         previous_stamp = 0
+        previous_safe = set()
         while not stop.is_set():
             if mode_code.value != loaded_code:
                 active_code = mode_code.value
@@ -94,7 +96,18 @@ def run(mailbox, output, stop, mode_code, processing=None, suppressed_alert_mask
                     alert_reset_mask.value = 0
             if reset_mask:
                 engine.reset_alert_labels(C.alert_labels_from_mask(reset_mask))
+            detected_markers = markers.detect(frame)
+            allowed = C.alert_labels_from_mask(relocated_mask.value) if relocated_mask is not None else set()
+            safe = safe_labels([obj for obj in objects if obj['confidence'] >= C.ALERT_CONF],
+                               detected_markers, allowed,
+                               frame.shape[1], frame.shape[0], *safe_zone)
+            # Leaving the visible safe zone must not wait for the old alert cooldown.
+            for key, label in list(engine.labels.items()):
+                if label in previous_safe - safe:
+                    engine.alerted.pop(key, None)
+            previous_safe = safe
             risk, events = engine.evaluate(objects,stamp)
+            events = [event for event in events if event['label'] not in safe]
             # The relocation target must remain visible to local control for drop
             # verification, but seeing it again after backing is not a new alert.
             mask = suppressed_alert_mask.value if suppressed_alert_mask is not None else 0
@@ -103,7 +116,7 @@ def run(mailbox, output, stop, mode_code, processing=None, suppressed_alert_mask
             elapsed = time.monotonic()-started
             status = 'error' if all(name in errors for name, *_ in models.models) else ('partial' if errors else 'ok')
             state = dict(risk,status=status,frame_stamp=stamp,sequence=last,
-                         markers=markers.detect(frame), frame_width=frame.shape[1], frame_height=frame.shape[0],
+                         markers=detected_markers, frame_width=frame.shape[1], frame_height=frame.shape[0],
                          frame_time=wall,inference_ms=round(elapsed*1000),blur_score=round(blur,1),
                          processed=processed,skipped_blur=skipped_blur,model_errors=errors,
                          storage_error=storage_error,events_created=0)

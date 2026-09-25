@@ -21,7 +21,11 @@ public class DetectionUploadService {
     public DetectionUploadService(JdbcTemplate jdbc,DeviceService devices,ChildService children,HazardService hazards,IdempotencyGuard guard) {
         this.jdbc=jdbc; this.devices=devices; this.children=children; this.hazards=hazards; this.guard=guard;
     }
+    /** In-process callers hand over a frame captured just now. */
     @Transactional public Receipt save(String id,UUID event,String model,String label,byte[] bytes) {
+        return save(id,event,model,label,bytes,OffsetDateTime.now());
+    }
+    @Transactional public Receipt save(String id,UUID event,String model,String label,byte[] bytes,OffsetDateTime capturedAt) {
         if(event==null || !Set.of("HAZARD","OBJECT").contains(model) || label==null || label.isBlank() || label.length()>100
             || bytes==null || bytes.length==0 || bytes.length>5242880) throw invalid();
         String mime;
@@ -31,6 +35,8 @@ public class DetectionUploadService {
         // Fully decode before accepting a frame; signature alone is insufficient.
         try { if(javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(bytes))==null) throw invalid(); }
         catch(java.io.IOException ex) { throw invalid(); }
+        // Serialize uploads with completed actions and active-child changes.
+        guard.lock("device",id);
         UUID child=devices.getLinkedChildId(id);
         guard.lock("raw-detection",event.toString());
         var existing=jdbc.queryForList("SELECT device_id,model_type,object_label,frame_image FROM detection_events WHERE event_id=?",event);
@@ -42,13 +48,18 @@ public class DetectionUploadService {
             return new Receipt(event,hazardId);
         }
         jdbc.update("INSERT INTO detection_events(event_id,device_id,model_type,object_label,frame_image,image_content_type) VALUES (?,?,?,?,?,?)",event,id,model,label,bytes,mime);
+        // Legacy outbox images have no trustworthy capture time. Keep the raw receipt,
+        // but never manufacture a post-treatment hazard using their upload time.
+        if(capturedAt==null) return new Receipt(event,null);
+        if(capturedAt.isAfter(OffsetDateTime.now().plusSeconds(5))) throw invalid();
         String category=List.of("전선","콘센트").stream().anyMatch(label::contains)?"LIVING":
             List.of("구슬","동전","배터리","주사위").stream().anyMatch(label::contains)?"SWALLOW":null;
         var profile=children.getSafetyProfile(child);
         if(category==null || profile.stage()==null) return new Receipt(event,null);
         String stage=String.valueOf(profile.stage());
         String risk=riskForStage(category,stage);
-        OffsetDateTime detected=jdbc.queryForObject("SELECT detected_at FROM detection_events WHERE event_id=?",OffsetDateTime.class,event);
+        // detection_events.detected_at remains DB receipt time; hazards uses capture time.
+        OffsetDateTime detected=capturedAt.isAfter(OffsetDateTime.now()) ? OffsetDateTime.now() : capturedAt;
         var hazard=hazards.recordDetection(new HazardService.DetectionInput(child,id,category,label,risk,
             "성장단계별 "+category+" 분류 기준 (v2)",detected,null,null,null,null,
             "/api/v1/devices/"+id+"/detections/"+event+"/image","UNKNOWN",event.toString()));

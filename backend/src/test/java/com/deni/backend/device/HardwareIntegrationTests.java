@@ -26,6 +26,7 @@ class HardwareIntegrationTests {
     @Autowired OperationService operations;
     @Autowired DeviceCommandDispatcher dispatcher;
     @Autowired DetectionUploadService uploads;
+    @Autowired com.deni.backend.hazard.HazardService hazards;
     @Autowired JdbcTemplate jdbc;
     @Autowired ObjectMapper json;
     String device() {
@@ -47,6 +48,26 @@ class HardwareIntegrationTests {
             assertFalse(devices.getStatus(id).commandsAvailable());
             state(id,"UNKNOWN","STOPPED",OffsetDateTime.now().minusSeconds(1));
             assertTrue(devices.getStatus(id).commandsAvailable());
+        } finally { channel.remove(id,session); }
+    }
+    @Test void unknownCommandQueriesResultWithoutReexecutingAndAcceptsRecovery() throws Exception {
+        String id=device(); var session=mock(WebSocketSession.class); when(session.isOpen()).thenReturn(true); channel.register(id,session);
+        try {
+            state(id,"RUNNING",OffsetDateTime.now().minusSeconds(1));
+            var receipt=operations.requestCommand(id,"pause",UUID.randomUUID());
+            dispatcher.dispatch();
+            jdbc.update("UPDATE device_command_delivery SET status='UNKNOWN' WHERE command_id=?",receipt.commandId());
+            clearInvocations(session);
+            dispatcher.dispatch();
+            var outgoing=org.mockito.ArgumentCaptor.forClass(org.springframework.web.socket.WebSocketMessage.class);
+            verify(session).sendMessage(outgoing.capture());
+            var query=json.readTree(outgoing.getValue().getPayload().toString());
+            assertEquals("COMMAND_STATUS",query.path("type").asText());
+            assertEquals(receipt.commandId().toString(),query.path("payload").path("commandId").asText());
+            assertEquals("UNKNOWN",jdbc.queryForObject("SELECT status FROM device_command_delivery WHERE command_id=?",String.class,receipt.commandId()));
+            messages.receive(id,"COMMAND_RESULT",json.valueToTree(Map.of("commandId",receipt.commandId().toString(),
+                "status","FAILED","operationState","PAUSED","errorCode","RESULT_UNAVAILABLE","completedAt",OffsetDateTime.now().toString())));
+            assertEquals("FAILED",jdbc.queryForObject("SELECT status FROM device_command_delivery WHERE command_id=?",String.class,receipt.commandId()));
         } finally { channel.remove(id,session); }
     }
     @Test void pauseTravelsToSessionAndOnlyMatchingResultConfirmsIt() throws Exception {
@@ -155,6 +176,62 @@ class HardwareIntegrationTests {
             assertEquals("COMPLETED",operations.getAction(receipt.actionId()).treatmentStatus());
             assertEquals("RESOLVED",jdbc.queryForObject("SELECT status FROM hazards WHERE id=?",String.class,hazard));
         } finally { channel.remove(id,session); }
+    }
+
+    /** 이송 완료는 저장 상태를 ACTIVE로 두되 목록·상세·재개 판정에서는 처리된 것으로 본다. */
+    @Test void relocatedHazardIsHandledEverywhereUntilSeenAgain() throws Exception {
+        String id=device(); var session=mock(WebSocketSession.class); when(session.isOpen()).thenReturn(true); channel.register(id,session);
+        try {
+            byte[] png=png();
+            UUID hazard=uploads.save(id,UUID.randomUUID(),"HAZARD","동전",png).hazardId();
+            pausedAndPowered(id);
+            var receipt=operations.requestRelocation(hazard,UUID.randomUUID());
+            dispatcher.dispatch();
+            messages.receive(id,"COMMAND_RESULT",json.valueToTree(Map.of("commandId",receipt.actionId().toString(),
+                "status","SUCCEEDED","operationState","PAUSED","hazardId",hazard.toString(),
+                "relocationCompleted",true,"completedAt",OffsetDateTime.now().toString())));
+            UUID child=devices.getLinkedChildId(id);
+            assertTrue(hazards.findActiveHazardsForChild(child).isEmpty());
+            assertEquals("RESOLVED",hazards.getHazard(hazard).status());
+            assertEquals("QUEUED",operations.requestCommand(id,"resume",UUID.randomUUID()).deliveryState());
+            // 이송 전에 찍혀 늦게 도착한 사진은 이송 결과를 되돌리지 않는다.
+            uploads.save(id,UUID.randomUUID(),"HAZARD","동전",png,OffsetDateTime.now().minusSeconds(30));
+            assertTrue(hazards.findActiveHazardsForChild(child).isEmpty());
+            // 이송 뒤 새로 관측되면(안전 구역 밖) 다시 미처리 위험이다.
+            uploads.save(id,UUID.randomUUID(),"HAZARD","동전",png,OffsetDateTime.now());
+            assertEquals(1,hazards.findActiveHazardsForChild(child).size());
+        } finally { channel.remove(id,session); }
+    }
+
+    /** 제거 전에 찍힌 사진이 제거 완료 뒤 도착해도 새 위험을 만들지 않는다. */
+    @Test void delayedFrameFromBeforeRemovalDoesNotRaiseNewHazard() throws Exception {
+        String id=device(); var session=mock(WebSocketSession.class); when(session.isOpen()).thenReturn(true); channel.register(id,session);
+        try {
+            byte[] png=png();
+            OffsetDateTime beforeRemoval=OffsetDateTime.now();
+            UUID hazard=uploads.save(id,UUID.randomUUID(),"HAZARD","동전",png).hazardId();
+            pausedAndPowered(id);
+            var receipt=operations.requestRemovalCheck(hazard,UUID.randomUUID());
+            dispatcher.dispatch();
+            messages.receive(id,"COMMAND_RESULT",json.valueToTree(Map.of("commandId",receipt.actionId().toString(),
+                "status","SUCCEEDED","operationState","PAUSED","hazardId",hazard.toString(),
+                "hazardPresent",false,"absenceDurationMs",2500,"completedAt",OffsetDateTime.now().toString())));
+            var late=uploads.save(id,UUID.randomUUID(),"HAZARD","동전",png,beforeRemoval);
+            assertEquals(hazard,late.hazardId());
+            UUID child=devices.getLinkedChildId(id);
+            assertTrue(hazards.findActiveHazardsForChild(child).isEmpty());
+            var fresh=uploads.save(id,UUID.randomUUID(),"HAZARD","동전",png,OffsetDateTime.now());
+            assertNotEquals(hazard,fresh.hazardId());
+            assertEquals(1,hazards.findActiveHazardsForChild(child).size());
+            // 촬영 시각이 없는 옛 대기열 사진은 원본만 보관하고 위험을 만들지 않는다.
+            assertNull(uploads.save(id,UUID.randomUUID(),"HAZARD","동전",png,null).hazardId());
+        } finally { channel.remove(id,session); }
+    }
+
+    byte[] png() throws Exception {
+        var image=new java.awt.image.BufferedImage(2,2,java.awt.image.BufferedImage.TYPE_INT_RGB);
+        var out=new java.io.ByteArrayOutputStream(); javax.imageio.ImageIO.write(image,"png",out);
+        return out.toByteArray();
     }
 
     /** 안전 처리 요청은 기기가 보고한 전원 ON과 정지 상태를 요구한다. */

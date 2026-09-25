@@ -1,5 +1,6 @@
 import threading
 import unittest
+import time
 
 from care_runtime import FocusSwitch, Runtime
 
@@ -22,6 +23,61 @@ class RuntimeAlertTests(unittest.TestCase):
         self.runtime = Runtime(None, self.detector, threading.Event(), None)
         self.runtime.controller.powered = True
         self.runtime.controller.phase = 'HAZARD_PAUSED'
+
+    def test_recovery_requires_fresh_stop_and_healthy_control(self):
+        from unittest.mock import Mock
+        motor = Mock()
+        motor.observation.return_value = dict(ready=True, ack='F', acknowledged_at=time.monotonic())
+        self.runtime.motor = motor
+        self.runtime.control_started = True
+        self.runtime.control_tick = time.monotonic()
+        self.assertIsNone(self.runtime.recover_command('missing', {'hazardId':'h1'}))
+        motor.observation.return_value['ack'] = 'S'
+        motor.observation.return_value['acknowledged_at'] = time.monotonic()-1
+        self.assertIsNone(self.runtime.recover_command('missing', {}))
+        motor.observation.return_value['acknowledged_at'] = time.monotonic()
+        result = self.runtime.recover_command('missing', {'hazardId':'h1'})
+        self.assertEqual(result['status'], 'FAILED')
+        self.assertEqual(result['errorCode'], 'RESULT_UNAVAILABLE')
+        self.assertEqual(result['hazardId'], 'h1')
+        self.runtime.control_tick = time.monotonic()-1
+        self.assertIsNone(self.runtime.recover_command('missing', {}))
+        motor.submit.assert_not_called()
+
+    def test_recovery_preserves_known_result(self):
+        known = dict(status='SUCCEEDED', operationState='PAUSED', hazardId='h1', relocationCompleted=True)
+        self.runtime.controller.results['finished'] = known
+        self.assertEqual(self.runtime.recover_command('finished', {}), known)
+
+    def test_stale_control_cannot_publish_cached_running_as_current_state(self):
+        self.runtime.controller.observed_state = 'RUNNING'
+        self.runtime.control_started = True
+        self.runtime.control_tick = time.monotonic() - 1
+        self.assertEqual(self.runtime.state()['operationState'], 'UNKNOWN')
+        self.assertEqual(self.runtime.state()['movementState'], 'UNKNOWN')
+
+    def test_short_stall_reports_unknown_without_latching_a_fault(self):
+        self.runtime.control_started = True
+        self.runtime.control_tick = time.monotonic() - 1
+        self.runtime.check_stall()
+        self.assertIsNone(self.runtime.control_fault)
+        self.assertEqual(self.runtime.state()['taskState'], 'CONTROL_STALE')
+        self.runtime.control_tick = time.monotonic() - 4
+        self.runtime.check_stall()
+        self.assertEqual(self.runtime.control_fault, 'CONTROL_LOOP_STALE')
+        self.assertEqual(self.runtime.state()['taskState'], 'CONTROL_FAULT')
+
+    def test_control_exception_finishes_action_and_latches_fault(self):
+        self.runtime.controller.request('RELOCATE', 'move',
+                                        {'hazardId':'h1','objectLabel':'동전'}, 10)
+        def broken_loop():
+            raise RuntimeError('injected control error')
+        self.runtime._run_loop = broken_loop
+        self.runtime.run()
+        self.assertEqual(self.runtime.controller.results['move']['status'], 'FAILED')
+        self.assertEqual(self.runtime.controller.blocked, {'coin'})
+        self.assertEqual(self.runtime.state()['taskState'], 'CONTROL_FAULT')
+        self.assertEqual(self.runtime.command('RESUME', 'resume')['status'], 'FAILED')
 
     def test_only_relocation_target_is_suppressed_until_action_ends(self):
         controller = self.runtime.controller

@@ -60,7 +60,7 @@ def crop_detection_images(jpeg, detections):
     return cropped
 
 
-def enqueue_frame(bridge, event_id, jpeg, detections, mode):
+def enqueue_frame(bridge, event_id, jpeg, detections, mode, captured_at=None):
     """One backend event per object; stable UUID across retry of this local event."""
     namespace = UUID(event_id)
     images = crop_detection_images(jpeg, detections)
@@ -71,7 +71,7 @@ def enqueue_frame(bridge, event_id, jpeg, detections, mode):
             raise ValueError('No backend mapping for model: ' + model)
         label = detection['label']
         ids.append(bridge.enqueue_detection(images[index], LABELS.get(label, label), model,
-                   str(uuid5(namespace, str(index)))))
+                   str(uuid5(namespace, str(index))), captured_at=captured_at))
     return ids
 
 

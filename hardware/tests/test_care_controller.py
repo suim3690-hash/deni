@@ -36,6 +36,18 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.c.results['on']['status'],'SUCCEEDED')
         self.assertEqual(self.c.phase,'RUNNING')
 
+    def test_removal_and_control_deadlines_survive_motor_disconnect(self):
+        self.start()
+        self.tick(['coin'])
+        self.c.request('RECHECK_HAZARD', 'remove', dict(hazardId='h1', objectLabel='동전'), self.now)
+        self.assertEqual(self.tick(connected=False, gap=121), 'S')
+        self.assertEqual(self.c.results['remove']['errorCode'], 'ACTION_TIMEOUT')
+        self.assertEqual(self.c.blocked, {'coin'})
+        self.c.request('PAUSE', 'pause', {}, self.now)
+        self.assertEqual(self.tick(connected=False, gap=9), 'S')
+        self.assertEqual(self.c.results['pause']['errorCode'], 'STATE_NOT_CONFIRMED')
+        self.assertIsNone(self.c.control)
+
     def test_power_on_warmup_does_not_cancel_driving_intent_after_eight_seconds(self):
         self.c.request('POWER_ON','on',{},self.now)
         for _ in range(100): self.assertEqual(self.tick(valid=False),'S')
@@ -66,6 +78,20 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.c.results['remove']['status'],'SUCCEEDED')
         self.assertEqual(self.c.phase,'RUNNING')
         self.assertEqual(self.c.blocked,set())
+
+    def test_relocated_object_is_exempt_only_while_marker_proves_its_safe_position(self):
+        self.start()
+        self.c.relocated_labels.add('coin')
+        self.assertEqual(self.tick(['coin'], marker=drop_marker()), 'F')
+        self.assertEqual(self.c.blocked, set())
+        self.assertEqual(self.tick(['coin']), 'S')
+        self.assertEqual(self.c.blocked, {'coin'})
+
+    def test_same_class_outside_drop_zone_is_not_ignored(self):
+        self.start()
+        self.c.relocated_labels.add('coin')
+        self.assertEqual(self.tick(['coin'], marker=drop_marker(centre=(0, 0))), 'S')
+        self.assertEqual(self.c.blocked, {'coin'})
 
     def test_unconfirmed_candidate_stops_without_leaving_an_unremovable_block(self):
         self.start()

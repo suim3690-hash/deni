@@ -25,6 +25,45 @@ class Contracts(unittest.TestCase):
         self.bridge.close()
         self.temp.cleanup()
 
+    def test_unknown_recovery_never_reexecutes_started_command(self):
+        calls, messages = [], []
+        class Socket:
+            async def send(self, raw):
+                messages.append(json.loads(raw))
+        def handler(command, identity, parameters):
+            calls.append(command)
+            if command != 'RECOVER_COMMAND':
+                raise RuntimeError('result lost after starting motion')
+            return dict(status='FAILED', operationState='PAUSED', errorCode='RESULT_UNAVAILABLE')
+        self.bridge.command_handler = handler
+        identity = str(uuid4())
+        request = dict(type='COMMAND', payload=dict(commandId=identity, command='RELOCATE',
+            expiresAt=(datetime.now(timezone.utc)+timedelta(seconds=10)).isoformat(), parameters={}))
+        async def scenario():
+            socket = Socket()
+            await self.bridge.handle(socket, request)
+            self.assertIsNotNone(self.bridge.db.execute('SELECT 1 FROM started_commands').fetchone())
+            # Even a repeated executable message must reconcile instead of moving again.
+            await self.bridge.handle(socket, request)
+            await self.bridge.handle(socket, dict(type='COMMAND_STATUS', payload=dict(commandId=identity)))
+        asyncio.run(scenario())
+        self.assertEqual(calls, ['RELOCATE', 'RECOVER_COMMAND'])
+        results = [m['payload'] for m in messages if m['type'] == 'COMMAND_RESULT']
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0], results[1])
+        self.assertEqual(results[0]['status'], 'FAILED')
+        self.assertIsNone(self.bridge.db.execute('SELECT 1 FROM started_commands').fetchone())
+        self.assertIsNotNone(self.bridge.db.execute('SELECT 1 FROM pending_results').fetchone())
+
+    def test_unknown_recovery_waits_for_inflight_handler(self):
+        identity = str(uuid4())
+        self.bridge.inflight.add(identity)
+        def handler(*args):
+            self.fail('An in-flight command must not be reconciled concurrently')
+        self.bridge.command_handler = handler
+        asyncio.run(self.bridge.recover_result(None, dict(commandId=identity)))
+        self.assertIsNone(self.bridge.db.execute('SELECT 1 FROM commands').fetchone())
+
     def test_http_multipart_retry_and_conflict(self):
         received = []
         class Handler(BaseHTTPRequestHandler):
@@ -45,7 +84,8 @@ class Contracts(unittest.TestCase):
         thread.start()
         try:
             self.bridge.http_url = "http://127.0.0.1:" + str(server.server_port)
-            event = self.bridge.enqueue_detection(b"\xff\xd8\xfftest", "동전", "HAZARD")
+            captured = "2026-09-25T01:02:03.456789+00:00"
+            event = self.bridge.enqueue_detection(b"\xff\xd8\xfftest", "동전", "HAZARD", captured_at=captured)
             self.bridge.flush_once()
             self.assertEqual(self.bridge.db.execute("SELECT status FROM events").fetchone()[0], "pending")
             self.bridge.flush_once()
@@ -55,6 +95,8 @@ class Contracts(unittest.TestCase):
             self.assertEqual(received[0][1]["Authorization"], "Bearer " + "x" * 32)
             self.assertEqual(received[0][1]["X-Device-Id"], "robot-test")
             self.assertEqual(received[0][2]["objectLabel"].decode(), "동전")
+            # The capture time survives the retry, so a delayed upload keeps its real age.
+            self.assertEqual(received[1][2]["capturedAt"].decode(), captured)
             with self.assertRaises(ValueError):
                 self.bridge.enqueue_detection(b"\xff\xd8\xffdifferent", "동전", "HAZARD", event)
         finally:

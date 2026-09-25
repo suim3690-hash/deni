@@ -69,7 +69,7 @@ class Bridge:
     def close(self):
         self.db.close()
 
-    def enqueue_detection(self, image_bytes, label, model_type, event_id=None):
+    def enqueue_detection(self, image_bytes, label, model_type, event_id=None, captured_at=None):
         """Call from the detector with an annotated JPEG/PNG; returns stable UUID.
 
         One writer process/thread owns each Bridge. Run inference separately
@@ -88,9 +88,16 @@ class Bridge:
         data = (self.device, model_type, label, image_bytes, mime)
         if existing is not None and existing != data:
             raise ValueError("Event ID already belongs to different content")
+        metadata = {}
+        if captured_at is not None:
+            stamp = datetime.fromisoformat(captured_at.replace('Z', '+00:00'))
+            if stamp.tzinfo is None:
+                raise ValueError('capturedAt requires a timezone')
+            metadata['capturedAt'] = stamp.isoformat()
+        # Reuse the existing TEXT field; retain capture metadata across retries/restarts.
         with self.db:
             self.db.execute("INSERT OR IGNORE INTO events VALUES (?,?,?,?,?,?,?,?)",
-                            (event, *data, "pending", None))
+                            (event, *data, "pending", json.dumps(metadata)))
         return event
 
     def flush_once(self):
@@ -99,11 +106,15 @@ class Bridge:
         Other HTTP failures and unexpected responses remain in the store as
         rejected for inspection; never create a replacement event automatically.
         """
-        rows = self.db.execute("SELECT id,model,label,image,mime FROM events WHERE status='pending' AND device=? ORDER BY rowid LIMIT 20", (self.device,)).fetchall()
-        for event, model, label, frame, mime in rows:
+        rows = self.db.execute("SELECT id,model,label,image,mime,response FROM events WHERE status='pending' AND device=? ORDER BY rowid LIMIT 20", (self.device,)).fetchall()
+        for event, model, label, frame, mime, stored in rows:
+            metadata = json.loads(stored) if stored else {}
+            data = {"eventId": event, "modelType": model, "objectLabel": label}
+            if metadata.get('capturedAt'):
+                data['capturedAt'] = metadata['capturedAt']
             try:
                 response = requests.post(self.http_url + "/api/v1/hardware/detections",
-                    headers=self.headers, data={"eventId": event, "modelType": model, "objectLabel": label},
+                    headers=self.headers, data=data,
                     files={"image": ("annotated.png" if mime == "image/png" else "annotated.jpg", frame, mime)},
                     timeout=(5, 20), allow_redirects=False)
             except requests.RequestException:
@@ -120,7 +131,7 @@ class Bridge:
             status = "sent" if accepted else "rejected"
             with self.db:
                 self.db.execute("UPDATE events SET status=?,response=? WHERE id=?",
-                    (status, json.dumps({"httpStatus": response.status_code, "body": body}, ensure_ascii=False), event))
+                    (status, json.dumps(dict(metadata, httpStatus=response.status_code, body=body), ensure_ascii=False), event))
             LOG.info("Event %s: %s (HTTP %s)", event, status, response.status_code)
 
     async def send(self, socket, kind, payload):
@@ -196,6 +207,9 @@ class Bridge:
         if message.get("type") == "ERROR":
             LOG.error("Backend rejected a message: %s", message.get("code"))
             return
+        if message.get("type") == "COMMAND_STATUS":
+            await self.recover_result(socket, message['payload'])
+            return
         if message.get("type") != "COMMAND":
             return
         payload = message["payload"]
@@ -204,6 +218,11 @@ class Bridge:
         cached = self.db.execute("SELECT result FROM commands WHERE id=? AND device=?", (command_id, self.device)).fetchone()
         if cached:
             await self.send(socket, "COMMAND_RESULT", json.loads(cached[0]))
+            return
+        started = self.db.execute('SELECT 1 FROM started_commands WHERE id=? AND device=?',
+                                  (command_id, self.device)).fetchone()
+        if started:
+            await self.recover_result(socket, payload)
             return
         expires = datetime.fromisoformat(payload["expiresAt"].replace("Z", "+00:00"))
         if expires.tzinfo is None:
@@ -216,7 +235,13 @@ class Bridge:
             await self.send(socket, "COMMAND_ACK", {"commandId": command_id, "status": "DELIVERED"})
             with self.db:
                 self.db.execute('INSERT OR IGNORE INTO started_commands VALUES (?,?)', (command_id,self.device))
-            result = await self.execute(command_id, payload["command"], payload.get('parameters', {}))
+            try:
+                result = await self.execute(command_id, payload["command"], payload.get('parameters', {}))
+            except Exception:
+                # Leave started_commands durable. A status query reconciles with the
+                # controller and its motor ACK, rather than re-running a physical task.
+                LOG.exception('Command execution/result validation failed; recovery required: %s', command_id)
+                return
             with self.db:
                 self.db.execute("INSERT INTO commands VALUES (?,?,?)", (command_id, self.device, json.dumps(result)))
                 self.db.execute('INSERT OR IGNORE INTO pending_results VALUES (?,?)', (command_id,self.device))
@@ -225,6 +250,36 @@ class Bridge:
                 await self.send(socket, "COMMAND_RESULT", result)
             except (OSError, WebSocketException):
                 LOG.warning('Result retained for reconnect: %s', command_id)
+        finally:
+            self.inflight.discard(command_id)
+
+    async def recover_result(self, socket, payload):
+        command_id = str(UUID(payload['commandId']))
+        if command_id in self.inflight:
+            return
+        cached = self.db.execute('SELECT result FROM commands WHERE id=? AND device=?',
+                                 (command_id, self.device)).fetchone()
+        if cached:
+            await self.send(socket, 'COMMAND_RESULT', json.loads(cached[0]))
+            return
+        if self.command_handler is None:
+            return
+        # Reserve the identity while reconciling so a delayed COMMAND cannot execute it.
+        self.inflight.add(command_id)
+        try:
+            outcome = await asyncio.to_thread(self.command_handler, 'RECOVER_COMMAND', command_id,
+                                              payload.get('parameters', {}))
+            if outcome is None:
+                return
+            if outcome.get('status') not in {'SUCCEEDED', 'FAILED'}:
+                raise ValueError('Invalid recovery outcome')
+            result = dict(outcome, commandId=command_id, completedAt=now())
+            with self.db:
+                self.db.execute('INSERT INTO commands VALUES (?,?,?)',
+                                (command_id, self.device, json.dumps(result)))
+                self.db.execute('INSERT OR IGNORE INTO pending_results VALUES (?,?)', (command_id,self.device))
+                self.db.execute('DELETE FROM started_commands WHERE id=? AND device=?', (command_id,self.device))
+            await self.send(socket, 'COMMAND_RESULT', result)
         finally:
             self.inflight.discard(command_id)
 
@@ -240,7 +295,7 @@ class Bridge:
                         self.contact_handler()
                     try:
                         message = json.loads(raw)
-                        if message.get('type') == 'COMMAND':
+                        if message.get('type') in {'COMMAND', 'COMMAND_STATUS'}:
                             async def process(message=message):
                                 try: await self.handle(socket, message)
                                 except Exception: LOG.exception('Command processing failed')

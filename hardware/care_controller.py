@@ -1,6 +1,7 @@
 """Robot task state machine. No networking, model imports or physical side effects."""
 from dataclasses import dataclass
 import math
+from detection.safe_zone import safe_labels
 
 SWALLOW = {'coin', 'marble', 'battery', 'dice', 'die'}
 LABELS = {'동전': 'coin', '구슬': 'marble', '배터리': 'battery', '주사위': 'dice'}
@@ -56,6 +57,7 @@ class CareController:
         self.powered = False
         self.phase = 'OFF'
         self.blocked = set()
+        self.relocated_labels = set()
         self.action = None
         self.finishing = False
         self.finished_at = 0
@@ -198,6 +200,8 @@ class CareController:
             self.control = None
 
     def _finish_motion(self, now):
+        if self.action[0] == 'RELOCATE':
+            self.relocated_labels.add(self.action[2]['label'])
         self.blocked.discard(self.action[2]['label'])
         self.finishing, self.finished_at = True, now
         self.phase = 'HAZARD_PAUSED' if self.blocked else 'RUNNING'
@@ -236,6 +240,7 @@ class CareController:
         if self.phase not in ('HAZARD_PAUSED', 'PAUSED'):
             reject('DEVICE_NOT_PAUSED'); return
         self.blocked.add(label)
+        self.relocated_labels.discard(label)
         self.last_marker_bearing = None
         self.searching = False
         self.action = (command, identity, dict(params, label=label))
@@ -255,6 +260,18 @@ class CareController:
         ack = motor.get('ack')
         self.observed_state = ('UNKNOWN' if not ready else
             'PAUSED' if ack == 'S' else 'RELOCATING' if self.phase in RELOCATION_PHASES else 'RUNNING')
+        # Deadlines remain effective even while the motor is disconnected.
+        if self.action and now-self.started > cfg.action_timeout_seconds:
+            self.blocked.add(self.action[2]['label'])
+            self._complete_action('FAILED', 'ACTION_TIMEOUT')
+            self.phase = 'HAZARD_PAUSED'
+            self.last_output = 'S'
+        if self.control and now-self.control[2] > 8:
+            self.results[self.control[1]] = dict(status='FAILED', operationState=self.observed_state,
+                                                errorCode='STATE_NOT_CONFIRMED')
+            self.control = None
+            self.phase = 'HAZARD_PAUSED' if self.blocked else 'PAUSED' if self.powered else 'OFF'
+            self.last_output = 'S'
         if not ready:
             self.last_output = 'S'
             self.absent_since = None
@@ -274,11 +291,7 @@ class CareController:
                 self._stop_after_link_loss('MOTOR_RECONNECTED', keep_recheck=True)
         if self.control:
             kind, identity, requested = self.control
-            if now-requested > 8:
-                self.results[identity] = dict(status='FAILED', operationState=self.observed_state, errorCode='STATE_NOT_CONFIRMED')
-                self.control = None
-                self.phase = 'PAUSED' if self.powered else 'OFF'
-            elif motor.get('acknowledged_at', 0) > requested:
+            if motor.get('acknowledged_at', 0) > requested:
                 # POWER_ON confirms the mode change while stopped; model warm-up
                 # must not cancel autonomous intent after eight seconds.
                 # Movement still waits for valid detection below.
@@ -297,9 +310,6 @@ class CareController:
         self.backend_ok = True
         if not self.powered:
             self.reason = 'POWER OFF'; self.last_output = 'S'; return 'S'
-        if self.action and now-self.started > cfg.action_timeout_seconds:
-            self._complete_action('FAILED', 'ACTION_TIMEOUT')
-            self.phase = 'HAZARD_PAUSED'
         stamp = observation.get('frame_stamp', 0)
         valid = (observation.get('status') == 'ok' and not observation.get('camera_unavailable')
                  and isinstance(stamp, (int, float)) and 0 <= now-stamp <= cfg.observation_ttl
@@ -319,6 +329,13 @@ class CareController:
             return 'S'
         seen = [dict(obj, label='dice' if obj['label']=='die' else obj['label'])
                 for obj in observation.get('hazards', []) if obj.get('label') in SWALLOW]
+        safe = safe_labels(seen, observation.get('markers', []), self.relocated_labels,
+                           observation.get('frame_width', 0), observation.get('frame_height', 0),
+                           cfg.marker_id, cfg.drop_verify_radius_ratio)
+        # Never suppress a whole class: a lost marker, another object, or an object
+        # outside the verified zone restores ordinary detection and stop behavior.
+        self.relocated_labels.difference_update({obj['label'] for obj in seen} - safe)
+        seen = [obj for obj in seen if obj['label'] not in safe]
         labels = {obj['label'] for obj in seen}
         # Stop immediately for a candidate, but only latch hazards confirmed by
         # the same policy that creates upload events. A one-frame false positive

@@ -103,6 +103,7 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
   const [failedCaptureUrl, setFailedCaptureUrl] = useState<string | null>(null)
   const [relocationState, setRelocationState] = useState<RealActionState>('idle')
   const [relocationActionId, setRelocationActionId] = useState<string | null>(null)
+  const [relocationCompletedAt, setRelocationCompletedAt] = useState<string | null>(null)
   const [removalState, setRemovalState] = useState<RealActionState>('idle')
   const [removalActionId, setRemovalActionId] = useState<string | null>(null)
   const [resuming, setResuming] = useState(false)
@@ -115,7 +116,9 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
 
   // 목업에서는 조치가 끝나면(running) 위험 물체가 해결된 것으로 본다.
   const category = classifyHazard(name)
-  const selectedResolved = locallyResolvedLiving || (!isMock && (detail?.status === 'RESOLVED' || removalState === 'done' || relocationState === 'done'))
+  const relocationHandled = relocationState === 'done' && relocationCompletedAt !== null
+    && Date.parse(detectedAt ?? '') <= Date.parse(relocationCompletedAt)
+  const selectedResolved = locallyResolvedLiving || (!isMock && (currentDetail?.status === 'RESOLVED' || removalState === 'done' || relocationHandled))
   const selectedHandled = selectedResolved
   const activeHazard = flow === 'running' || selectedHandled ? null : hazard
   const remainingHazards = selectedHandled ? hazards.filter((item) => item.hazardId !== hazard?.hazardId) : []
@@ -196,6 +199,15 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
   }, [deviceId, isMock, treatmentDone])
 
   // 실제 모드에서 접수 대기 중인 처리 요청. 이송과 직접 제거 재확인은 같은 조회 API를 쓴다.
+  useEffect(() => {
+    if (isMock || relocationState !== 'done' || !relocationCompletedAt || !detectedAt) return
+    if (Date.parse(detectedAt) > Date.parse(relocationCompletedAt)) {
+      setRelocationState('idle')
+      setRelocationActionId(null)
+      setRelocationCompletedAt(null)
+    }
+  }, [detectedAt, isMock, relocationCompletedAt, relocationState])
+
   const pendingKind: 'relocation' | 'removal' | null = relocationState === 'pending' && relocationActionId
     ? 'relocation'
     : removalState === 'pending' && removalActionId ? 'removal' : null
@@ -216,6 +228,7 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
         if (!active) return
         if (result.treatmentStatus === completed) {
           setState('done')
+          if (relocation) setRelocationCompletedAt(result.completedAt)
           if (!relocation && result.completedAt) {
             onRemovalCompleted({
               hazardId: result.hazardId,
