@@ -24,18 +24,23 @@ function apiBase() {
   return baseUrl
 }
 
-// FR-025: request the device to reconfirm the hazard is gone before the guardian's
-// "direct removal" can be marked complete. The backend queues this for the device and
-// only reports COMPLETED after the device confirms a continuous absence window, so the
-// caller has to poll getSafetyAction instead of assuming the receipt means success.
-export async function requestRemovalCheck(hazardId: string): Promise<ActionReceipt> {
-  const response = await fetch(`${apiBase()}/api/v1/hazards/${encodeURIComponent(hazardId)}/removal-checks`, {
+async function requestHazardAction(
+  hazardId: string,
+  action: 'removal-checks' | 'relocations',
+  errorMessage: string,
+): Promise<ActionReceipt> {
+  const response = await fetch(`${apiBase()}/api/v1/hazards/${encodeURIComponent(hazardId)}/${action}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Idempotency-Key': generateId() },
     body: '{}',
   })
-  if (!response.ok) throw await apiErrorFromResponse(response, '직접 제거 재확인 요청을 접수하지 못했어요.')
+  if (!response.ok) throw await apiErrorFromResponse(response, errorMessage)
   return response.json() as Promise<ActionReceipt>
+}
+
+// 접수는 완료가 아니다. 기기의 연속 미검출 확인 후 getSafetyAction으로 완료를 조회한다.
+export async function requestRemovalCheck(hazardId: string): Promise<ActionReceipt> {
+  return requestHazardAction(hazardId, 'removal-checks', '직접 제거 재확인 요청을 접수하지 못했어요.')
 }
 
 export async function getSafetyAction(actionId: string): Promise<ActionResult> {
@@ -44,18 +49,7 @@ export async function getSafetyAction(actionId: string): Promise<ActionResult> {
   return response.json() as Promise<ActionResult>
 }
 
-// FR-026/028: relocation pushes a swallow hazard to the ArUco marker position, so the
-// body stays empty and a safeZoneId is rejected. The backend refuses the request when
-// relocation cannot start (RELOCATION_NOT_SUPPORTED, DEVICE_NOT_PAUSED,
-// DEVICE_NOT_CONTROLLABLE, ACTION_IN_PROGRESS); the caller surfaces that as the FR-028
-// "이동 불가 시 직접 제거 안내" alternate flow rather than treating it as a bug.
-// Completion is only TEMPORARY_COMPLETED after the device reports it, via getSafetyAction.
+// 마커 위치로 이송하므로 본문은 비운다. 거절 사유는 호출부에 전달하고 완료는 별도 조회한다.
 export async function requestRelocation(hazardId: string): Promise<ActionReceipt> {
-  const response = await fetch(`${apiBase()}/api/v1/hazards/${encodeURIComponent(hazardId)}/relocations`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': generateId() },
-    body: '{}',
-  })
-  if (!response.ok) throw await apiErrorFromResponse(response, '안전 위치 이동 요청을 접수하지 못했어요.')
-  return response.json() as Promise<ActionReceipt>
+  return requestHazardAction(hazardId, 'relocations', '안전 위치 이동 요청을 접수하지 못했어요.')
 }

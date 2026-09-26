@@ -1,40 +1,43 @@
-# 프론트엔드
+# frontend — 보호자 화면
 
-React 19 · TypeScript · Vite · Tailwind CSS. 백엔드 HTTP API를 조회하고 사용자 명령을 전달하는 보호자 화면이다. DB나 로봇 WebSocket에는 직접 접속하지 않는다.
+React · TypeScript · Vite · Tailwind CSS로 만든 웹 화면입니다. 백엔드 HTTP API로 아이 정보·위험·로봇 상태를 조회합니다.
+
+## 파일·폴더 안내
+
+| 경로 | 역할 |
+| --- | --- |
+| `src/main.tsx`, `src/App.tsx` | 앱 시작과 화면 전환 |
+| `src/pages/` | 아이 등록, 홈, 위험 위치, 안전 프로필, 성장 리포트 화면 |
+| `src/components/` | 헤더, 위험 알림, 성장단계 이력 등 공용 UI |
+| `src/services/` | 아이·대시보드·안전 처리·리포트 API와 오류 처리 |
+| `src/lib/` | 성장단계·위험도 계산, 실행 모드, ID 생성 |
+| `src/assets/`, `public/` | 화면 이미지·아이콘·정적 파일 |
+| `src/index.css` | 공통 스타일 |
+| `tests/` | 위험도·알림·오류 처리 테스트 |
+| `.env.example`, `.env.mock` | API 설정 예시와 mock 모드 설정 |
+| `package.json`, `vite.config.ts`, `tsconfig*.json` | 실행 명령·의존성·빌드 설정 |
 
 ## 실행
 
+저장소 루트에서 아래 명령을 실행합니다. Node.js와 npm이 필요합니다.
+
 ```powershell
 cd frontend
-npm ci                         # 최초 또는 의존성 변경 시
-npm run dev                    # 실제 API: 기본 http://localhost:5173
-npm run dev -- --mode mock      # 백엔드 없이 UI 확인
+npm ci
+npm run dev
 ```
 
-일반 실행은 항상 실제 API 모드이며 환경파일이 없으면 `http://localhost:8080`을 사용한다. 다른 API 주소가 필요할 때만 `.env.local`에 `VITE_API_BASE_URL`을 설정하고 Vite를 재시작한다. mock은 `.env.mock`의 `VITE_USE_MOCK=true`를 사용하는 `--mode mock` 실행에서만 활성화된다. 다른 PC에서 열면 프론트 주소를 백엔드 `APP_CORS_ALLOWED_ORIGINS`에 추가한다.
+화면 주소는 기본 `http://localhost:5173`, API 주소는 `http://localhost:8080`입니다. API 주소를 바꾸려면 `.env.local`에 `VITE_API_BASE_URL`을 설정하고 재시작합니다. 다른 PC에서 접속할 때는 백엔드의 `APP_CORS_ALLOWED_ORIGINS`도 설정합니다.
 
-| 화면 | 실제 API 모드에서 하는 일 |
-| --- | --- |
-| 아이 등록·프로필 | 아이 등록/수정, 월령·성장단계·안전 기준 표시 |
-| 홈 | 대시보드·로봇 상태를 5초마다 갱신, 최신 전원 상태에 따라 ON/OFF·일시정지/재개 명령. 전원 ON 뒤 미처리 삼킴 위험으로 안전 정지되면 케어 맵 처리를 안내 |
-| 스마트 안심 케어 맵 | 두 위험 유형에 같은 평면도 사용, 위험 건별 고정 임의 좌표 표시, 삼킴 위험 우선 선택 |
-| 실제 감지 사진 | 서버가 저장한 물체별 크롭 사진만 표시하고 카드 내부 여백으로 전체 물체 확인 |
-| 안전 처리 | 직접 제거 재확인 또는 수동 안전 이송 요청 후 기기 결과를 조회해 완료 표시 |
-| 직접 제거 재감지 | 제거 확인 성공 뒤 같은 물체가 새 위험 ID로 감지되면 홈·케어 맵에 `재감지`와 `다시 치워 주세요`를 표시하고 새 사진·조치 화면으로 전환 |
-| 생활공간 위험 | `위험 요소 확인 완료`를 서버에 저장해 처리하고 알림·지도 마커 제거 |
-| 월간 리포트 | 서버의 월별 감지·성장단계 이력 표시 |
+백엔드 없이 화면만 확인하려면 개발 서버를 아래 명령으로 실행합니다.
 
-삼킴 위험도는 영아기 `HIGH` → 걸음마 `VERY_HIGH` → 유아 활동기 `MEDIUM`이다. 생활공간 위험은 `HIGH` → `HIGH` → `VERY_HIGH`이다. 동시에 여러 건이면 **홈 알림 한 개에 건수를 보여주고**, 삼킴 위험부터 선택한다. 실제 모드의 목록은 백엔드가 반환한 `ACTIVE` 위험만 사용한다. 감지 사진도 선택한 위험 건의 서버 이미지만 사용하며 새 상세 데이터가 도착하기 전에는 이전 사진을 숨긴다.
+```powershell
+npm run dev -- --mode mock
+```
 
-| 구분 | 현재 제한 |
-| --- | --- |
-| 자동 이송 모드 | 토글 안내만 제공하는 목업. 기기에 자동 명령을 보내지 않음 |
-| 지도 마커 | 실측 좌표가 아닌 `hazardId` 기반 고정 임의 좌표. 한 번에 선택한 위험의 마커만 표시 |
-| 같은 이름의 여러 물체 | 백엔드에서 한 `ACTIVE` 위험으로 합치므로 개별 사진·마커·처리를 구분할 수 없음 |
-| 생활공간 위험 확인 | 확인 완료 시 DB 위험을 `RESOLVED`로 처리하고 활성 지도에서 제거 |
-| 새 브라우저 | 선택 아이는 `sessionStorage`에만 기억. 계정 기반 목록·로그인은 없음 |
+일반 실행은 mock으로 자동 전환하지 않습니다. 지도는 임의 좌표이며 자동 이송 토글은 안내용입니다.
 
-목업은 반드시 `npm run dev -- --mode mock`으로 실행한다. 이후 `?mockHazard=swallow|living|none`, `?mockDevice=offline|unknown|paused`, `?mockRedetect=1` 등으로 상태를 바꿔 확인할 수 있다. 일반 `npm run dev`에서는 API 설정 누락 시에도 mock으로 자동 전환하지 않으므로 실제 서버 데이터와 예시 데이터가 섞이지 않는다.
+## 검증
 
 ```powershell
 npm run build
@@ -42,4 +45,4 @@ npm run lint
 node --test tests/*.test.mjs
 ```
 
-API 계약은 [프론트–백엔드 명세](../docs/API_명세서_프론트-백엔드.md), 전체 실행은 [한 PC 통합 실행](../docs/한_PC_통합_실행_가이드.md)을 참고한다.
+[화면 동작·mock 옵션](../docs/화면_백엔드_동작_참고.md) · [API 명세](../docs/API_명세서_프론트-백엔드.md) · [통합 실행](../docs/한_PC_통합_실행_가이드.md)
