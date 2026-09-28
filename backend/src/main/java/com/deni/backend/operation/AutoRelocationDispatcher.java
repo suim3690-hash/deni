@@ -2,6 +2,8 @@ package com.deni.backend.operation;
 
 import java.util.Map;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -23,6 +25,8 @@ public class AutoRelocationDispatcher {
     static final int SKIP_AFTER = 2;
     static final int DISABLE_AFTER = 3;
 
+    private static final Logger LOG = LoggerFactory.getLogger(AutoRelocationDispatcher.class);
+    private final Map<String, String> lastSkip = new java.util.concurrent.ConcurrentHashMap<>();
     private final JdbcTemplate jdbc;
     private final OperationService operations;
     /** 기기 -> 방금 발행한 요청. 다음 주기에 그 결과를 보고 실패를 센다. */
@@ -41,9 +45,18 @@ public class AutoRelocationDispatcher {
                 if (!settle(device)) continue;
                 UUID hazard = nextHazard(device);
                 if (hazard == null) continue;
-                issued.put(device, operations.requestRelocation(hazard, UUID.randomUUID()).actionId());
+                UUID command = operations.requestRelocation(hazard, UUID.randomUUID()).actionId();
+                issued.put(device, command);
+                lastSkip.remove(device);
+                LOG.info("Auto relocation queued {} for hazard {} on {}", command, hazard, device);
             } catch (Exception ex) {
-                // 정지 상태가 아니거나 이미 처리 중인 것은 흔한 경우다. 다음 주기에 다시 본다.
+                // 정지 상태가 아니거나 이미 처리 중인 것은 흔한 경우이므로 다음 주기에 다시 본다.
+                // 다만 사유를 삼키면 자동 이송이 왜 시작되지 않는지 알 길이 없어, 사유가 바뀔
+                // 때만 한 번 남긴다. 2초마다 같은 줄이 쌓이지 않는다.
+                String reason = ex.getClass().getSimpleName() + ": " + ex.getMessage();
+                if (!reason.equals(lastSkip.put(device, reason))) {
+                    LOG.info("Auto relocation is waiting on {}: {}", device, reason);
+                }
                 issued.remove(device);
             }
         }
@@ -91,7 +104,7 @@ public class AutoRelocationDispatcher {
               AND NOT EXISTS (SELECT 1 FROM operation_requests r JOIN device_command_delivery d
                 ON d.command_id=r.id WHERE r.hazard_id=h.id
                   AND d.status IN ('QUEUED','SENT','DELIVERED','UNKNOWN'))
-            ORDER BY """ + order + ", h.detected_at", UUID.class, arguments.toArray());
+            ORDER BY\s""" + order + ", h.detected_at", UUID.class, arguments.toArray());
         for (UUID hazard : candidates) {
             if (hazardFailures.getOrDefault(hazard, 0) < SKIP_AFTER) return hazard;
         }
