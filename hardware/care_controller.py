@@ -270,6 +270,22 @@ class CareController:
         self.phase = 'HAZARD_PAUSED' if self.blocked else 'RUNNING'
         self.require_frame_after = now
 
+    def _action_targets(self, seen):
+        """Objects this action may steer to or verify against.
+
+        With a chosen instance only that object counts, so a second one of the same
+        kind no longer makes the target ambiguous. An object the tracker gave no
+        identity could be the chosen one, so it still counts and keeps the pick
+        ambiguous rather than being quietly ignored.
+        """
+        params = self.action[2]
+        same = [obj for obj in seen if obj['label'] == params['label']]
+        instance = params.get('objectInstanceId')
+        if not instance:
+            return same
+        return ([obj for obj in same if obj.get('object_instance_id') == instance]
+                + [obj for obj in same if not obj.get('object_instance_id')])
+
     def _recheck_target_visible(self, seen):
         params = self.action[2]
         instance = params.get('objectInstanceId')
@@ -469,8 +485,7 @@ class CareController:
                     return 'S'
             self.last_observation = stamp
         if self.phase == 'ALIGNING_TARGET':
-            label = self.action[2]['label']
-            targets = [obj for obj in seen if obj['label']==label]
+            targets = self._action_targets(seen)
             if not targets:
                 self.reason = 'TARGET NOT VISIBLE'
             elif len(targets) != 1:
@@ -542,8 +557,7 @@ class CareController:
             else:
                 command = desired
         elif self.phase == 'VERIFYING_DROP' and new_frame:
-            label = self.action[2]['label']
-            targets = [obj for obj in seen if obj['label']==label]
+            targets = self._action_targets(seen)
             marker = next((m for m in observation.get('markers', []) if m['id']==cfg.marker_id), None)
             verified = self._drop_is_verified(targets, marker, observation)
             if verified:

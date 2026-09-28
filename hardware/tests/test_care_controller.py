@@ -117,6 +117,27 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.c.phase,'RUNNING')
         self.assertEqual(self.tick(),'F')
 
+    def test_relocation_picks_the_selected_instance_among_same_label_objects(self):
+        self.start(); self.tick(['battery','battery'], instance_ids=['a','b'])
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='배터리',objectInstanceId='b'),self.now)
+        # 같은 종류가 둘이어도 선택한 개체가 있으면 대상이 모호하지 않다.
+        self.assertEqual(self.tick(['battery','battery'], instance_ids=['a','b']),'F')
+        self.assertEqual(self.c.phase,'CAPTURING')
+        self.assertNotEqual(self.c.reason,'MULTIPLE TARGETS OF SAME CLASS')
+
+    def test_relocation_without_the_selected_instance_stays_ambiguous(self):
+        self.start(); self.tick(['battery','battery'], instance_ids=['a','b'])
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='배터리'),self.now)
+        self.assertEqual(self.tick(['battery','battery'], instance_ids=['a','b']),'S')
+        self.assertEqual(self.c.reason,'MULTIPLE TARGETS OF SAME CLASS')
+
+    def test_relocation_stays_ambiguous_while_an_unidentified_object_could_be_the_target(self):
+        self.start(); self.tick(['battery','battery'], instance_ids=['b',None])
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='배터리',objectInstanceId='b'),self.now)
+        # 추적이 번호를 주지 못한 물체는 선택한 개체일 수 있으므로 무시하지 않는다.
+        self.assertEqual(self.tick(['battery','battery'], instance_ids=['b',None]),'S')
+        self.assertEqual(self.c.reason,'MULTIPLE TARGETS OF SAME CLASS')
+
     def test_absent_instance_clears_itself_while_the_visible_one_stays_blocked(self):
         self.start()
         self.tick(['coin','coin'], instance_ids=['a','b'])
