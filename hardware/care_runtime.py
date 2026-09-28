@@ -165,13 +165,15 @@ class Runtime:
             if not self.control_healthy():
                 return unknown
             korean = {english: label for label, english in LABELS.items()}
+            live = self.controller.detection_live(time.monotonic())
             return dict(operationState=self.controller.observed_state,
                         powerEnabled=self.controller.powered, taskState=self.controller.phase,
                         movementState=MOVEMENT.get(motor['ack'], 'UNKNOWN') if motor['ready'] else 'UNKNOWN',
-                        clearedObjectInstanceIds=list(self.controller.cleared_instances),
+                        detectionLive=live,
+                        visibleObjectInstanceIds=list(self.controller.visible_instances) if live else [],
                         # The backend stores Korean object names, as the upload path sends them.
-                        clearedObjectLabels=[korean[label] for label in self.controller.cleared_labels
-                                             if label in korean])
+                        visibleObjectLabels=[korean[label] for label in self.controller.visible_labels
+                                             if label in korean] if live else [])
         finally:
             self.lock.release()
 

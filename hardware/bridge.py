@@ -23,10 +23,10 @@ MOVEMENT_STATES = {"FORWARD", "TURNING", "BACKWARD", "STOPPED", "UNKNOWN"}
 UNOBSERVED_STATE = {"operationState": "UNKNOWN", "movementState": "UNKNOWN",
                     "batteryPercent": None, "movementDurationMs": None,
                     "movementDistanceM": None, "powerEnabled": None, "taskState": None,
-                    # Hazards live detection stopped seeing. Repeated in every report until
-                    # they are seen again, so a dropped message cannot strand them as active.
-                    "clearedObjectInstanceIds": [], "clearedObjectLabels": []}
-CLEARED_LIMIT = 32
+                    # What live detection sees right now. detectionLive false means the lists
+                    # carry no information, so an empty list is never read as "all gone".
+                    "detectionLive": False, "visibleObjectInstanceIds": [], "visibleObjectLabels": []}
+VISIBLE_LIMIT = 64
 STATE_PERIOD = 1.0
 
 
@@ -164,12 +164,14 @@ class Bridge:
         state = dict(UNOBSERVED_STATE, **observed)
         if state["operationState"] not in OPERATION_STATES or state["movementState"] not in MOVEMENT_STATES:
             raise ValueError("State provider returned a state the backend rejects")
-        for key in ("clearedObjectInstanceIds", "clearedObjectLabels"):
+        if not isinstance(state["detectionLive"], bool):
+            raise ValueError("State provider returned a non-boolean detectionLive")
+        for key in ("visibleObjectInstanceIds", "visibleObjectLabels"):
             values = state[key]
-            if (not isinstance(values, list) or len(values) > CLEARED_LIMIT
+            if (not isinstance(values, list) or len(values) > VISIBLE_LIMIT
                     or not all(isinstance(value, str) and 0 < len(value) <= 100 for value in values)):
                 raise ValueError("State provider returned an unusable " + key)
-        state["clearedObjectInstanceIds"] = [str(UUID(value)) for value in state["clearedObjectInstanceIds"]]
+        state["visibleObjectInstanceIds"] = [str(UUID(value)) for value in state["visibleObjectInstanceIds"]]
         # sampledAt is set after reading, so it describes this observation.
         return dict(state, sampledAt=now())
 

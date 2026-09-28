@@ -3,8 +3,6 @@ from dataclasses import dataclass
 import math
 from detection.safe_zone import safe_labels
 
-# Cleared hazards ride along in every state report, so the list is capped rather than drained.
-CLEARED_HISTORY = 32
 SWALLOW = {'coin', 'marble', 'battery', 'dice', 'die'}
 LABELS = {'동전': 'coin', '구슬': 'marble', '배터리': 'battery', '주사위': 'dice'}
 RELOCATION_PHASES = {'ALIGNING_TARGET', 'CAPTURING', 'SEEKING_MARKER', 'PUSHING_TO_MARKER',
@@ -69,10 +67,10 @@ class CareController:
         # Frame stamp of the last sighting, keyed by label and by object instance.
         self.last_seen = {}
         self.last_valid_stamp = None
-        # Dropped by absence. Resent with every state report rather than drained on send,
-        # because a state report carries no receipt this side can wait for.
-        self.cleared_instances = []
-        self.cleared_labels = []
+        # What the last valid frame actually held. Reported as-is so the backend can
+        # retire hazards this robot never knew about, such as ones from an earlier run.
+        self.visible_instances = []
+        self.visible_labels = []
         self.relocated_labels = set()
         self.action = None
         self.finishing = False
@@ -210,17 +208,14 @@ class CareController:
         if self.last_valid_stamp is None or stamp-self.last_valid_stamp > cfg.max_observation_gap:
             self.last_seen = dict.fromkeys(self.last_seen, stamp)
         self.last_valid_stamp = stamp
-        visible = set()
+        instances, labels = set(), set()
         for obj in seen:
-            visible.add(obj['label'])
+            labels.add(obj['label'])
             self.last_seen[obj['label']] = stamp
             if obj.get('object_instance_id'):
-                visible.add(obj['object_instance_id'])
+                instances.add(obj['object_instance_id'])
                 self.last_seen[obj['object_instance_id']] = stamp
-        # A hazard that came back must stop being reported as cleared, or the backend
-        # would keep resolving the new sighting it is meant to show.
-        self.cleared_instances = [key for key in self.cleared_instances if key not in visible]
-        self.cleared_labels = [label for label in self.cleared_labels if label not in visible]
+        self.visible_instances, self.visible_labels = sorted(instances), sorted(labels)
         busy = self.action[2]['label'] if self.action else None
 
         def absent(key):
@@ -228,17 +223,21 @@ class CareController:
         for key in [key for key, label in self.blocked_instances.items()
                     if label != busy and absent(key)]:
             self.blocked_instances.pop(key)
-            self.cleared_instances.append(key)
-        gone = {label for label in self.blocked if label != busy
-                and label not in self.blocked_instances.values() and absent(label)}
-        self.blocked.difference_update(gone)
-        self.cleared_labels.extend(sorted(gone - set(self.cleared_labels)))
-        del self.cleared_instances[:-CLEARED_HISTORY]
-        del self.cleared_labels[:-CLEARED_HISTORY]
+        self.blocked.difference_update({label for label in self.blocked if label != busy
+                                        and label not in self.blocked_instances.values() and absent(label)})
         self.last_seen = {key: value for key, value in self.last_seen.items()
                           if key in self.blocked or key in self.blocked_instances}
         if self.phase == 'HAZARD_PAUSED' and not self.blocked and not self.action and not self.finishing:
             self.phase = 'RUNNING'
+
+    def detection_live(self, now):
+        """Whether a recent valid frame stands behind the visible lists.
+
+        Nothing may be retired on the strength of an empty list that only means
+        the camera, the model or the power is off.
+        """
+        return (self.powered and self.last_valid_stamp is not None
+                and 0 <= now-self.last_valid_stamp <= self.settings.observation_ttl)
 
     def _stop_after_link_loss(self, code, keep_recheck):
         """A restored link must never restart driving by itself; only a user RESUME does.

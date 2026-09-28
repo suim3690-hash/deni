@@ -124,7 +124,9 @@ class CareTests(unittest.TestCase):
         for _ in range(int(Settings().absent_clear_seconds / .1) + 5):
             self.assertEqual(self.tick(['coin'], instance_ids=['b']),'S')
         self.assertEqual(self.c.blocked_instances,{'b':'coin'})
-        self.assertEqual(self.c.cleared_instances,['a'])
+        # 보고에는 사라진 개체가 빠지고 보이는 개체만 남는다.
+        self.assertEqual((self.c.visible_instances,self.c.visible_labels),(['b'],['coin']))
+        self.assertTrue(self.c.detection_live(self.now))
         # 같은 종류가 아직 보이므로 라벨 차단과 정지는 유지한다.
         self.assertEqual(self.c.blocked,{'coin'})
         self.assertEqual(self.c.phase,'HAZARD_PAUSED')
@@ -135,10 +137,20 @@ class CareTests(unittest.TestCase):
         for _ in range(int(Settings().absent_clear_seconds / .1) + 5):
             self.assertEqual(self.tick(valid=False),'S')
         self.assertEqual(self.c.blocked,{'coin'})
+        # 탐지가 멈춘 동안의 빈 목록은 "전부 사라짐"으로 보고되지 않는다.
+        self.assertFalse(self.c.detection_live(self.now))
         # 공백 뒤 첫 유효 프레임은 그동안 못 본 시간을 미검출로 세지 않는다.
         self.tick()
         self.assertEqual(self.c.blocked,{'coin'})
         self.assertEqual(self.c.phase,'HAZARD_PAUSED')
+
+    def test_power_off_never_reports_an_empty_scene_as_live(self):
+        self.start()
+        self.tick(['coin'])
+        self.assertTrue(self.c.detection_live(self.now))
+        self.c.request('POWER_OFF','off',{},self.now)
+        for _ in range(5): self.tick()
+        self.assertFalse(self.c.detection_live(self.now))
 
     def test_relocated_object_is_exempt_only_while_marker_proves_its_safe_position(self):
         self.start()

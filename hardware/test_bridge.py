@@ -218,17 +218,23 @@ class Contracts(unittest.TestCase):
                     await bridge_with(provider=lambda: {"movementState": "SPINNING"}).robot_state()
                 with self.assertRaises(ValueError):
                     await bridge_with(provider=lambda: {"batteryPercent": 50, "speed": 1}).robot_state()
-                # Cleared hazards end a hazard on the server, so a malformed list is refused.
-                for cleared in ({"clearedObjectInstanceIds": "not-a-list"},
-                                {"clearedObjectInstanceIds": ["not-a-uuid"]},
-                                {"clearedObjectLabels": [str(index) for index in range(33)]}):
+                # The backend retires hazards missing from these lists, so a malformed
+                # one is refused rather than read as "nothing is there any more".
+                for visible in ({"visibleObjectInstanceIds": "not-a-list"},
+                                {"visibleObjectInstanceIds": ["not-a-uuid"]},
+                                {"visibleObjectLabels": [str(index) for index in range(65)]},
+                                {"detectionLive": "yes"}):
                     with self.assertRaises(ValueError):
-                        await bridge_with(provider=lambda cleared=cleared: dict(
-                            operationState="PAUSED", movementState="STOPPED", **cleared)).robot_state()
+                        await bridge_with(provider=lambda visible=visible: dict(
+                            operationState="PAUSED", movementState="STOPPED", **visible)).robot_state()
                 state = await bridge_with(provider=lambda: dict(
                     operationState="PAUSED", movementState="STOPPED",
-                    clearedObjectLabels=["동전"])).robot_state()
-                self.assertEqual((state["clearedObjectLabels"], state["clearedObjectInstanceIds"]), (["동전"], []))
+                    detectionLive=True, visibleObjectLabels=["동전"])).robot_state()
+                self.assertEqual((state["detectionLive"], state["visibleObjectLabels"],
+                                  state["visibleObjectInstanceIds"]), (True, ["동전"], []))
+                # A provider that says nothing still reports detection as not live.
+                self.assertIs((await bridge_with(provider=lambda: dict(
+                    operationState="PAUSED", movementState="STOPPED")).robot_state())["detectionLive"], False)
 
                 # The backend stores SUCCEEDED only with PAUSED, so never send that pair.
                 # handle() keeps a rejected result to itself instead of raising: nothing is

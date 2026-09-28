@@ -16,7 +16,7 @@
 
 | 방향 | `type` | 주요 `payload` |
 | --- | --- | --- |
-| 기기 → 백 | `ROBOT_STATE` | `operationState`, `movementState`, `sampledAt`, 선택적 `batteryPercent`, `movementDurationMs`, `movementDistanceM`, `powerEnabled`, `taskState`, `clearedObjectInstanceIds`, `clearedObjectLabels` |
+| 기기 → 백 | `ROBOT_STATE` | `operationState`, `movementState`, `sampledAt`, 선택적 `batteryPercent`, `movementDurationMs`, `movementDistanceM`, `powerEnabled`, `taskState`, `detectionLive`, `visibleObjectInstanceIds`, `visibleObjectLabels` |
 | 백 → 기기 | `COMMAND` | `commandId`, `command`, `expiresAt`, `parameters` |
 | 기기 → 백 | `COMMAND_ACK` | `commandId`, `status:"DELIVERED"` |
 | 기기 → 백 | `COMMAND_RESULT` | `commandId`, `status:"SUCCEEDED"/"FAILED"`, `operationState`, `completedAt`, 선택적 실패 코드·안전 처리 증거 |
@@ -29,7 +29,11 @@
 
 `ROBOT_STATE.operationState`는 `RUNNING/PAUSED/RELOCATING/UNKNOWN`, `movementState`는 `FORWARD/TURNING/BACKWARD/STOPPED/UNKNOWN`을 사용한다. 시간·거리·배터리는 미측정 시 `null`이다. 대체 추정값으로 성공을 꾸미지 않는다. 과거 상태는 최신 상태를 덮어쓰지 않는다.
 
-`clearedObjectInstanceIds`와 `clearedObjectLabels`는 실시간 인식이 5초(`absent_clear_seconds`) 넘게 보지 못해 기기가 스스로 차단에서 뺀 위험이다. 백엔드는 해당 위험을 사용자 확인 없이 `RESOLVED`로 종료한다. 관측이 `max_observation_gap`보다 길게 끊긴 구간은 미검출로 세지 않으며, 진행 중인 처리 요청의 대상은 그 요청이 결과로 끝낸다. 두 목록은 상태 보고마다 최대 32개까지 다시 실어 보내므로 메시지 하나가 유실돼도 정리가 남는다. 물체가 다시 보이면 목록에서 빠지고 새 위험으로 올라온다. 개체 식별자가 있는 위험은 `clearedObjectInstanceIds`로만 종료하고, `clearedObjectLabels`는 식별자가 없는 과거 기록에만 적용한다.
+`visibleObjectInstanceIds`와 `visibleObjectLabels`는 그 보고 시점에 실시간 인식이 **보고 있는** 위험이며, 기기가 무엇을 지웠는지가 아니다. 백엔드는 이 목록에 5초 넘게 나타나지 않은 `ACTIVE` 위험을 사용자 확인 없이 `RESOLVED`로 종료한다. 기기가 아니라 백엔드가 판단하므로, 방금 켜져서 이전 실행의 위험을 모르는 기기가 접속해도 남은 위험이 정리된다.
+
+`detectionLive`가 false면 두 목록은 아무 정보도 담지 않는다. 전원 OFF, 카메라 불가, 추론 정지, 오래된 프레임이 여기 해당하며 이때 백엔드는 아무것도 종료하지 않고 타이머만 다시 시작한다. 빈 목록을 "전부 사라짐"으로 읽으면 안 된다. 개체 식별자가 있는 위험은 그 개체가 보이는지로만 판단하고, 식별자가 없는 과거 기록만 종류로 판단한다. 진행 중인 처리 요청의 대상은 그 요청이 결과로 끝낸다.
+
+기기 쪽도 같은 기준(`absent_clear_seconds`, 기본 5초)으로 차단을 스스로 풀어 주행을 재개한다. 관측이 `max_observation_gap`보다 길게 끊긴 구간은 미검출로 세지 않는다.
 
 수동 이송의 `taskState`는 `ALIGNING_TARGET → CAPTURING → SEEKING_MARKER → PUSHING_TO_MARKER → BACKING → VERIFYING_DROP → TURNING_AROUND` 순서다. 마커가 보이지 않을 때는 전진하지 않으며, 배치 확인 실패 결과에는 `relocationCompleted`를 넣지 않는다. 이송 중 같은 라벨 대상은 `VERIFYING_DROP`의 로컬 판정에는 계속 쓰지만 새 탐지 이벤트로 업로드하지 않는다. 다른 라벨 위험은 그대로 업로드한다.
 
