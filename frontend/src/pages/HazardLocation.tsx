@@ -215,10 +215,10 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
     ? 'relocation'
     : removalState === 'pending' && removalActionId ? 'removal' : null
   const pendingActionId = pendingKind === 'relocation' ? relocationActionId : pendingKind === 'removal' ? removalActionId : null
-  const completionContext = useRef({ name, detectedAt, onRemovalCompleted })
+  const completionContext = useRef({ name, detectedAt, hazards, onRemovalCompleted })
   useEffect(() => {
-    completionContext.current = { name, detectedAt, onRemovalCompleted }
-  }, [name, detectedAt, onRemovalCompleted])
+    completionContext.current = { name, detectedAt, hazards, onRemovalCompleted }
+  }, [name, detectedAt, hazards, onRemovalCompleted])
 
   // 실제 모드: 요청 접수 후 처리 결과를 주기적으로 조회한다. 서버가 완료를 알려줄 때만 완료로 표시한다.
   // 전달 결과가 UNKNOWN인 동안에는 기기가 늦게 보고할 수 있으므로 조회를 멈추지 않는다.
@@ -240,12 +240,13 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
           setState('done')
           if (relocation) setRelocationCompletedAt(result.completedAt)
           if (!relocation && result.completedAt) {
-            const { name, detectedAt, onRemovalCompleted } = completionContext.current
+            const { name, detectedAt, hazards, onRemovalCompleted } = completionContext.current
             onRemovalCompleted({
               hazardId: result.hazardId,
               objectName: name,
               completedAt: result.completedAt,
               lastDetectedAt: detectedAt ?? result.completedAt,
+              knownHazardIds: hazards.map(item => item.hazardId),
             })
           }
         } else if (result.status === 'FAILED' || result.status === 'EXPIRED') {

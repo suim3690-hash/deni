@@ -234,6 +234,43 @@ class HardwareIntegrationTests {
         return out.toByteArray();
     }
 
+    @Test void twoBatteriesKeepSeparateHazardsAcrossRepeatedUploads() throws Exception {
+        String id=device(); UUID a=UUID.randomUUID(), b=UUID.randomUUID();
+        var at=OffsetDateTime.now().minusSeconds(2);
+        var first=uploads.save(id,UUID.randomUUID(),"OBJECT","배터리",png(),at,a);
+        var second=uploads.save(id,UUID.randomUUID(),"OBJECT","배터리",png(),at,b);
+        assertNotEquals(first.hazardId(),second.hazardId());
+        var again=uploads.save(id,UUID.randomUUID(),"OBJECT","배터리",png(),at.plusSeconds(1),a);
+        assertEquals(first.hazardId(),again.hazardId());
+        assertEquals(2,jdbc.queryForObject("SELECT count(*) FROM hazards WHERE device_id=?",Integer.class,id));
+        jdbc.update("UPDATE hazards SET status='RESOLVED',updated_at=clock_timestamp() WHERE id=?",first.hazardId());
+        var other=uploads.save(id,UUID.randomUUID(),"OBJECT","배터리",png(),at.plusSeconds(1),b);
+        assertEquals(second.hazardId(),other.hazardId());
+    }
+
+    @Test void removalCommandCarriesSelectedInstanceAndResolvesOnlyThatHazard() throws Exception {
+        String id=device(); UUID a=UUID.randomUUID(), b=UUID.randomUUID();
+        var at=OffsetDateTime.now().minusSeconds(2);
+        var first=uploads.save(id,UUID.randomUUID(),"OBJECT","배터리",png(),at,a);
+        var second=uploads.save(id,UUID.randomUUID(),"OBJECT","배터리",png(),at,b);
+        var session=mock(WebSocketSession.class); when(session.isOpen()).thenReturn(true); channel.register(id,session);
+        try {
+            pausedAndPowered(id);
+            var receipt=operations.requestRemovalCheck(first.hazardId(),UUID.randomUUID());
+            dispatcher.dispatch();
+            var outgoing=org.mockito.ArgumentCaptor.forClass(org.springframework.web.socket.WebSocketMessage.class);
+            verify(session).sendMessage(outgoing.capture());
+            var command=json.readTree(outgoing.getValue().getPayload().toString());
+            assertEquals(a.toString(),command.path("payload").path("parameters").path("objectInstanceId").asText());
+            messages.receive(id,"COMMAND_RESULT",json.valueToTree(Map.of("commandId",receipt.actionId().toString(),
+                "status","SUCCEEDED","operationState","PAUSED","hazardId",first.hazardId().toString(),
+                "hazardPresent",false,"absenceDurationMs",2000,"completedAt",OffsetDateTime.now().toString())));
+            assertEquals("COMPLETED",operations.getAction(receipt.actionId()).treatmentStatus());
+            assertEquals("RESOLVED",jdbc.queryForObject("SELECT status FROM hazards WHERE id=?",String.class,first.hazardId()));
+            assertEquals("ACTIVE",jdbc.queryForObject("SELECT status FROM hazards WHERE id=?",String.class,second.hazardId()));
+        } finally { channel.remove(id,session); }
+    }
+
     /** 안전 처리 요청은 기기가 보고한 전원 ON과 정지 상태를 요구한다. */
     void pausedAndPowered(String id) {
         messages.receive(id,"ROBOT_STATE",json.valueToTree(Map.of("operationState","PAUSED","movementState","STOPPED",

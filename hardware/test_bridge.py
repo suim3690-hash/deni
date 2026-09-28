@@ -85,7 +85,8 @@ class Contracts(unittest.TestCase):
         try:
             self.bridge.http_url = "http://127.0.0.1:" + str(server.server_port)
             captured = "2026-09-25T01:02:03.456789+00:00"
-            event = self.bridge.enqueue_detection(b"\xff\xd8\xfftest", "동전", "HAZARD", captured_at=captured)
+            instance = str(uuid4())
+            event = self.bridge.enqueue_detection(b"\xff\xd8\xfftest", "동전", "HAZARD", captured_at=captured, object_instance_id=instance)
             self.bridge.flush_once()
             self.assertEqual(self.bridge.db.execute("SELECT status FROM events").fetchone()[0], "pending")
             self.bridge.flush_once()
@@ -97,6 +98,9 @@ class Contracts(unittest.TestCase):
             self.assertEqual(received[0][2]["objectLabel"].decode(), "동전")
             # The capture time survives the retry, so a delayed upload keeps its real age.
             self.assertEqual(received[1][2]["capturedAt"].decode(), captured)
+            self.assertEqual(received[1][2]["objectInstanceId"].decode(), instance)
+            with self.assertRaises(ValueError):
+                self.bridge.enqueue_detection(b"\xff\xd8\xfftest", "동전", "HAZARD", event, captured_at=captured, object_instance_id=str(uuid4()))
             with self.assertRaises(ValueError):
                 self.bridge.enqueue_detection(b"\xff\xd8\xffdifferent", "동전", "HAZARD", event)
         finally:
@@ -216,14 +220,21 @@ class Contracts(unittest.TestCase):
                     await bridge_with(provider=lambda: {"batteryPercent": 50, "speed": 1}).robot_state()
 
                 # The backend stores SUCCEEDED only with PAUSED, so never send that pair.
-                claim = dict(status="SUCCEEDED", operationState="RUNNING")
-                request = {"type": "COMMAND", "payload": {"commandId": str(uuid4()), "command": "PAUSE",
-                    "expiresAt": (datetime.now(timezone.utc) + timedelta(seconds=10)).isoformat()}}
-                with self.assertRaises(ValueError):
-                    await bridge_with(handler=lambda *_: claim).handle(Capture(), request)
-                request['payload']['commandId'] = str(uuid4())
-                with self.assertRaises(ValueError):
-                    await bridge_with(handler=lambda *_: dict(status="PENDING")).handle(Capture(), request)
+                # handle() keeps a rejected result to itself instead of raising: nothing is
+                # sent, and the command stays started so a COMMAND_STATUS query reconciles it.
+                for claim in (dict(status="SUCCEEDED", operationState="RUNNING"), dict(status="PENDING")):
+                    bridge = bridge_with(handler=lambda *_, claim=claim: claim)
+                    command = str(uuid4())
+                    capture = Capture()
+                    await bridge.handle(capture, {"type": "COMMAND", "payload": {"commandId": command,
+                        "command": "PAUSE",
+                        "expiresAt": (datetime.now(timezone.utc) + timedelta(seconds=10)).isoformat()}})
+                    self.assertEqual([m["type"] for m in capture.messages], ["COMMAND_ACK"])
+                    self.assertIsNone(bridge.db.execute(
+                        "SELECT result FROM commands WHERE id=?", (command,)).fetchone())
+                    self.assertIsNotNone(bridge.db.execute(
+                        "SELECT 1 FROM started_commands WHERE id=?", (command,)).fetchone())
+                    self.assertNotIn(command, bridge.inflight)
             finally:
                 for bridge in opened:
                     bridge.close()
@@ -239,14 +250,17 @@ class Contracts(unittest.TestCase):
         try:
             self.bridge.http_url = f'http://127.0.0.1:{server.server_port}'
             local_id = str(uuid4())
-            objects = [{'model': 'object', 'label': 'coin'}, {'model': 'object', 'label': 'battery'}]
+            instances = [str(uuid4()), str(uuid4())]
+            objects = [{'model': 'object', 'label': 'battery', 'object_instance_id': identity} for identity in instances]
             ids = enqueue_frame(self.bridge, local_id, b'\xff\xd8\xfftest', objects, 'object')
             self.assertEqual(ids, enqueue_frame(self.bridge, local_id, b'\xff\xd8\xfftest', objects, 'object'))
             self.assertEqual(len(set(ids)), 2)
             with patch.object(mock_backend, 'TOKEN', 'x' * 32):
                 self.bridge.flush_once()
-            self.assertEqual(mock_backend.EVENTS[ids[0]][0], '동전')
+            self.assertEqual(mock_backend.EVENTS[ids[0]][0], '배터리')
             self.assertEqual(mock_backend.EVENTS[ids[1]][0], '배터리')
+            stored = [json.loads(self.bridge.db.execute('SELECT response FROM events WHERE id=?', (identity,)).fetchone()[0])['objectInstanceId'] for identity in ids]
+            self.assertEqual(stored, instances)
             self.assertEqual(self.bridge.db.execute("SELECT COUNT(*) FROM events WHERE status='sent'").fetchone()[0], 2)
         finally:
             server.shutdown()

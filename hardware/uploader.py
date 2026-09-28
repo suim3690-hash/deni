@@ -71,7 +71,8 @@ def enqueue_frame(bridge, event_id, jpeg, detections, mode, captured_at=None):
             raise ValueError('No backend mapping for model: ' + model)
         label = detection['label']
         ids.append(bridge.enqueue_detection(images[index], LABELS.get(label, label), model,
-                   str(uuid5(namespace, str(index))), captured_at=captured_at))
+                   str(uuid5(namespace, str(index))), captured_at=captured_at,
+                   object_instance_id=detection.get('object_instance_id')))
     return ids
 
 

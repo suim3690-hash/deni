@@ -26,6 +26,9 @@ public class DetectionUploadService {
         return save(id,event,model,label,bytes,OffsetDateTime.now());
     }
     @Transactional public Receipt save(String id,UUID event,String model,String label,byte[] bytes,OffsetDateTime capturedAt) {
+        return save(id,event,model,label,bytes,capturedAt,null);
+    }
+    @Transactional public Receipt save(String id,UUID event,String model,String label,byte[] bytes,OffsetDateTime capturedAt,UUID objectInstanceId) {
         if(event==null || !Set.of("HAZARD","OBJECT").contains(model) || label==null || label.isBlank() || label.length()>100
             || bytes==null || bytes.length==0 || bytes.length>5242880) throw invalid();
         String mime;
@@ -39,15 +42,16 @@ public class DetectionUploadService {
         guard.lock("device",id);
         UUID child=devices.getLinkedChildId(id);
         guard.lock("raw-detection",event.toString());
-        var existing=jdbc.queryForList("SELECT device_id,model_type,object_label,frame_image FROM detection_events WHERE event_id=?",event);
+        var existing=jdbc.queryForList("SELECT device_id,model_type,object_label,frame_image,object_instance_id FROM detection_events WHERE event_id=?",event);
         if(!existing.isEmpty()) {
             var row=existing.getFirst();
             if(!id.equals(row.get("device_id")) || !model.equals(row.get("model_type")) || !label.equals(row.get("object_label"))
-                || !Arrays.equals(bytes,(byte[])row.get("frame_image"))) throw ApiException.conflict("DETECTION_EVENT_REUSED","동일 이벤트에 다른 데이터가 있습니다.");
+                || !Arrays.equals(bytes,(byte[])row.get("frame_image"))
+                || !Objects.equals(objectInstanceId,row.get("object_instance_id"))) throw ApiException.conflict("DETECTION_EVENT_REUSED","동일 이벤트에 다른 데이터가 있습니다.");
             UUID hazardId=jdbc.queryForObject("SELECT hazard_id FROM detection_events WHERE event_id=?",UUID.class,event);
             return new Receipt(event,hazardId);
         }
-        jdbc.update("INSERT INTO detection_events(event_id,device_id,model_type,object_label,frame_image,image_content_type) VALUES (?,?,?,?,?,?)",event,id,model,label,bytes,mime);
+        jdbc.update("INSERT INTO detection_events(event_id,device_id,model_type,object_label,frame_image,image_content_type,object_instance_id) VALUES (?,?,?,?,?,?,?)",event,id,model,label,bytes,mime,objectInstanceId);
         // Legacy outbox images have no trustworthy capture time. Keep the raw receipt,
         // but never manufacture a post-treatment hazard using their upload time.
         if(capturedAt==null) return new Receipt(event,null);
@@ -62,7 +66,7 @@ public class DetectionUploadService {
         OffsetDateTime detected=capturedAt.isAfter(OffsetDateTime.now()) ? OffsetDateTime.now() : capturedAt;
         var hazard=hazards.recordDetection(new HazardService.DetectionInput(child,id,category,label,risk,
             "성장단계별 "+category+" 분류 기준 (v2)",detected,null,null,null,null,
-            "/api/v1/devices/"+id+"/detections/"+event+"/image","UNKNOWN",event.toString()));
+            "/api/v1/devices/"+id+"/detections/"+event+"/image","UNKNOWN",event.toString()),objectInstanceId);
         entityManager.flush();
         jdbc.update("UPDATE detection_events SET hazard_id=? WHERE event_id=?",hazard.hazardId(),event);
         return new Receipt(event,hazard.hazardId());

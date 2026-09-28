@@ -2,6 +2,7 @@
 from . import config as C
 from .stabilization import ClassStabilizer
 from .model_loader import iou
+from uuid import uuid4
 
 
 class RiskEngine:
@@ -12,6 +13,7 @@ class RiskEngine:
         self.labels = {}
         self.unknown = []
         self.next_unknown = 0
+        self.instances = {}
 
     def reset_alert_labels(self, labels):
         """Require fresh class votes after a confirmed direct removal."""
@@ -32,6 +34,7 @@ class RiskEngine:
         self.alerted = {k:v for k,v in self.alerted.items() if now-v[0] <= C.TRACK_FORGET_SEC}
         active_keys = self.seen.keys() | self.alerted.keys()
         self.labels = {key: label for key, label in self.labels.items() if key in active_keys}
+        self.instances = {key: value for key, value in self.instances.items() if key in active_keys}
         self.unknown = [u for u in self.unknown if now-u['time'] <= C.TRACK_FORGET_SEC]
         used_unknown = set()
         people = any(d['label']=='person' and d['confidence'] >= C.EMERGENCY_CONF for d in detections)
@@ -58,10 +61,16 @@ class RiskEngine:
                 key = (d['model'], 'track', d['track_id'])
                 # Carry cooldown over from a matching raw alert when an ID appears.
                 for u in self.unknown:
-                    if u['model']==d['model'] and u['label']==label and iou(d['bbox'], u['bbox'])>0.5:
+                    if u['key'] not in used_unknown and u['model']==d['model'] and u['label']==label and iou(d['bbox'], u['bbox'])>0.5:
                         if key not in self.alerted and u['key'] in self.alerted:
                             self.alerted[key] = self.alerted[u['key']]
+                        if key not in self.instances and u['key'] in self.instances:
+                            self.instances[key] = self.instances[u['key']]
+                        used_unknown.add(u['key'])
                         break
+            if key not in self.instances:
+                self.instances[key] = str(uuid4())
+            obj['object_instance_id'] = self.instances[key]
             self.seen[key] = now
             self.labels[key] = label
             self.stabilizer.update(key, d['class_id'], confidence)

@@ -195,6 +195,12 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
   const liveRobotState = robotState && !robotState.stale ? robotState : null
   // 전원은 통신 연결과 별개다. 전원을 끄면 모터와 탐지만 멈추고 통신은 유지된다.
   const powered = isMock ? mockPowered && isOnline : liveRobotState?.powerEnabled === true
+  // 전원을 끈 세션의 제거 완료 이력으로 다음 첫 감지를 재감지로 표시하지 않는다.
+  useEffect(() => {
+    if (isMock ? !mockPowered : liveRobotState?.powerEnabled === false) {
+      setCompletedRemoval(null)
+    }
+  }, [isMock, mockPowered, liveRobotState?.powerEnabled])
   const operationState = isMock
     ? powered ? mockPaused ? 'PAUSED' : 'RUNNING' : 'UNKNOWN'
     : robotState && !robotState.stale ? robotState.operationState : device?.operationState ?? 'UNKNOWN'
@@ -280,7 +286,10 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     setConnecting(true)
     try {
       await new Promise((resolve) => setTimeout(resolve, 1200))
-      if (dashboard?.device?.connectionState === 'ONLINE') setMockPowered(true)
+      if (dashboard?.device?.connectionState === 'ONLINE') {
+        setCompletedRemoval(null)
+        setMockPowered(true)
+      }
       else setConnectError('화면 예시 기기에 연결하지 못했어요.')
     } finally {
       setConnecting(false)
@@ -344,6 +353,7 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
       }
       const targetPower = !state.powerEnabled
       await sendDeviceCommand(commandDevice.deviceId, targetPower ? 'power-on' : 'power-off', false)
+      setCompletedRemoval(null)
       // 명령 성공은 전원 상태 보고와 별개이므로 목표 상태가 보고될 때까지 버튼을 잠근다.
       let confirmed = false
       for (let attempt = 0; attempt < 12; attempt += 1) {

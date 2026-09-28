@@ -39,6 +39,24 @@ def delayed_worker(mailbox, output, stop):
 
 
 class Tests(unittest.TestCase):
+    def test_same_label_objects_keep_distinct_ids_across_frames(self):
+        engine = RiskEngine()
+        first, second = obj('battery', track=1), obj('battery', track=2)
+        second['bbox'] = [60, 10, 90, 40]
+        initial, _ = engine.evaluate([first, second], 0)
+        ids = [d['object_instance_id'] for d in initial['hazards']]
+        self.assertEqual(len(set(ids)), 2)
+        later, _ = engine.evaluate([second, first], .1)
+        self.assertEqual([d['object_instance_id'] for d in later['hazards']], ids[::-1])
+        restarted, _ = RiskEngine().evaluate([first], .2)
+        self.assertNotEqual(restarted['hazards'][0]['object_instance_id'], ids[0])
+
+    def test_raw_detection_identity_survives_tracker_assignment(self):
+        engine = RiskEngine()
+        raw, _ = engine.evaluate([obj('battery', track=None)], 0)
+        tracked, _ = engine.evaluate([obj('battery', track=7)], .1)
+        self.assertEqual(raw['hazards'][0]['object_instance_id'], tracked['hazards'][0]['object_instance_id'])
+
     def test_relocation_target_alert_is_filtered_without_hiding_other_hazards(self):
         events = [obj('battery'), obj('coin'), obj('die')]
         filtered = unsuppressed_events(events, C.alert_label_mask({'battery'}))

@@ -19,12 +19,15 @@ class CareTests(unittest.TestCase):
         self.ack = 'S'
 
     def tick(self, labels=(), *, gap=.1, valid=True, marker=None, connected=True, generation=1, bearing=0.0,
-             backend=True, lag=0.0):
+             backend=True, lag=0.0, instance_ids=None):
         self.now += gap
         self.seq += 1
         obs = dict(status='ok' if valid else 'blur', frame_stamp=self.now-lag, sequence=self.seq,
                    hazards=[obj(label, bearing) for label in labels], frame_width=100, frame_height=100,
                    markers=[] if marker is None else [marker])
+        if instance_ids is not None:
+            for hazard, identity in zip(obs['hazards'], instance_ids):
+                hazard['object_instance_id'] = identity
         result = self.c.step(obs, dict(ready=connected, ack=self.ack, generation=generation, acknowledged_at=self.now),
                              self.now, backend)
         self.ack = result
@@ -35,6 +38,42 @@ class CareTests(unittest.TestCase):
         self.tick(); self.tick(); self.tick()
         self.assertEqual(self.c.results['on']['status'],'SUCCEEDED')
         self.assertEqual(self.c.phase,'RUNNING')
+
+    def test_selected_instance_removal_leaves_same_label_other_instance_paused(self):
+        for label, korean in [('battery', '배터리'), ('coin', '동전'), ('marble', '구슬'), ('dice', '주사위')]:
+            with self.subTest(label=label):
+                self.setUp(); self.start()
+                self.tick([label, label], instance_ids=['a', 'b'])
+                self.c.request('RECHECK_HAZARD', 'remove-a', dict(hazardId='ha', objectLabel=korean, objectInstanceId='a'), self.now)
+                for _ in range(30):
+                    self.assertEqual(self.tick([label], instance_ids=['b']), 'S')
+                self.assertEqual(self.c.results['remove-a']['status'], 'SUCCEEDED')
+                self.assertFalse(self.c.results['remove-a']['hazardPresent'])
+                self.assertEqual(self.c.results['remove-a']['operationState'], 'PAUSED')
+                self.assertEqual(self.c.blocked_instances, {'b': label})
+                self.c.request('RECHECK_HAZARD', 'remove-b', dict(hazardId='hb', objectLabel=korean, objectInstanceId='b'), self.now)
+                for _ in range(30): self.tick()
+                self.assertEqual(self.c.results['remove-b']['status'], 'SUCCEEDED')
+                self.assertEqual(self.c.blocked_instances, {})
+                self.assertEqual(self.c.phase, 'RUNNING')
+
+    def test_selected_instance_remaining_or_unidentified_never_counts_as_removed(self):
+        for identity in ['a', None]:
+            with self.subTest(identity=identity):
+                self.setUp(); self.start()
+                self.tick(['battery', 'battery'], instance_ids=['a', 'b'])
+                self.c.request('RECHECK_HAZARD', 'remove', dict(hazardId='h', objectLabel='배터리', objectInstanceId='a'), self.now)
+                for _ in range(30): self.tick(['battery'], instance_ids=[identity])
+                self.assertEqual(self.c.results['remove']['status'], 'FAILED')
+                self.assertTrue(self.c.results['remove']['hazardPresent'])
+
+    def test_absent_same_label_other_object_stays_blocked_until_its_own_check(self):
+        self.start(); self.tick(['coin', 'coin'], instance_ids=['a', 'b'])
+        self.c.request('RECHECK_HAZARD', 'remove', dict(hazardId='h', objectLabel='동전', objectInstanceId='a'), self.now)
+        for _ in range(30): self.assertEqual(self.tick(), 'S')
+        self.assertEqual(self.c.results['remove']['status'], 'SUCCEEDED')
+        self.assertEqual(self.c.blocked_instances, {'b': 'coin'})
+        self.assertEqual(self.c.phase, 'HAZARD_PAUSED')
 
     def test_removal_and_control_deadlines_survive_motor_disconnect(self):
         self.start()
@@ -293,7 +332,7 @@ class CareTests(unittest.TestCase):
             self.tick(['dice'],marker=drop_marker(fill=.08))
             if self.c.phase == 'TURNING_AROUND': break
         self.assertEqual(self.c.phase,'TURNING_AROUND')
-        for _ in range(40):
+        for _ in range(int(self.c.settings.turnaround_seconds / .1) + 20):
             self.tick()
             if 'move' in self.c.results: break
         self.assertEqual(self.c.results['move']['status'],'SUCCEEDED')
@@ -312,7 +351,7 @@ class CareTests(unittest.TestCase):
         for _ in range(20):
             commands.append(self.tick(['dice','coin'],marker=drop_marker(fill=.08)))
             if self.c.phase == 'TURNING_AROUND': break
-        for _ in range(40):
+        for _ in range(int(self.c.settings.turnaround_seconds / .1) + 20):
             commands.append(self.tick(['coin']))
             if 'move' in self.c.results: break
         self.assertIn('B',commands)

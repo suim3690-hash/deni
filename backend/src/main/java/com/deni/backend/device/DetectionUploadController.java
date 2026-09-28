@@ -24,11 +24,12 @@ public class DetectionUploadController {
             @RequestHeader("X-Device-Id") String deviceId,@RequestParam UUID eventId,
             @RequestParam String modelType,@RequestParam String objectLabel,@RequestParam MultipartFile image,
             @RequestParam(required=false) @org.springframework.format.annotation.DateTimeFormat(
-                    iso=org.springframework.format.annotation.DateTimeFormat.ISO.DATE_TIME) java.time.OffsetDateTime capturedAt)
+                    iso=org.springframework.format.annotation.DateTimeFormat.ISO.DATE_TIME) java.time.OffsetDateTime capturedAt,
+            @RequestParam(required=false) UUID objectInstanceId)
             throws java.io.IOException {
         if(token.length()<32 || !configuredDevice.equals(deviceId) || !MessageDigest.isEqual(
                 ("Bearer "+token).getBytes(StandardCharsets.UTF_8),authorization.getBytes(StandardCharsets.UTF_8)))
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
-        return service.save(deviceId,eventId,modelType,objectLabel,image.getBytes(),capturedAt);
+        return service.save(deviceId,eventId,modelType,objectLabel,image.getBytes(),capturedAt,objectInstanceId);
     }
 }

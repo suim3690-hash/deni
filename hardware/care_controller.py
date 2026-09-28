@@ -57,6 +57,7 @@ class CareController:
         self.powered = False
         self.phase = 'OFF'
         self.blocked = set()
+        self.blocked_instances = {}
         self.relocated_labels = set()
         self.action = None
         self.finishing = False
@@ -204,9 +205,23 @@ class CareController:
         if self.action[0] == 'RELOCATE':
             self.relocated_labels.add(self.action[2]['label'])
         self.blocked.discard(self.action[2]['label'])
+        instance = self.action[2].get('objectInstanceId')
+        if instance:
+            self.blocked_instances.pop(instance, None)
+        else:
+            self.blocked_instances = {key: label for key, label in self.blocked_instances.items()
+                                      if label != self.action[2]['label']}
+        self.blocked.update(self.blocked_instances.values())
         self.finishing, self.finished_at = True, now
         self.phase = 'HAZARD_PAUSED' if self.blocked else 'RUNNING'
         self.require_frame_after = now
+
+    def _recheck_target_visible(self, seen):
+        params = self.action[2]
+        instance = params.get('objectInstanceId')
+        return any(obj['label'] == params['label'] and
+                   (not instance or not obj.get('object_instance_id') or obj['object_instance_id'] == instance)
+                   for obj in seen)
 
     def request(self, command, identity, params, now):
         def reject(code):
@@ -241,6 +256,8 @@ class CareController:
         if self.phase not in ('HAZARD_PAUSED', 'PAUSED'):
             reject('DEVICE_NOT_PAUSED'); return
         self.blocked.add(label)
+        if params.get('objectInstanceId'):
+            self.blocked_instances[params['objectInstanceId']] = label
         self.relocated_labels.discard(label)
         self.last_marker_bearing = None
         self.searching = False
@@ -344,12 +361,15 @@ class CareController:
         # must not leave an unremovable block with no corresponding app hazard.
         self.blocked.update(obj['label'] for obj in seen
                             if obj.get('stable') or obj.get('reason') == 'person_and_object')
+        self.blocked_instances.update({obj['object_instance_id']: obj['label'] for obj in seen
+                                      if obj.get('object_instance_id') and
+                                      (obj.get('stable') or obj.get('reason') == 'person_and_object')})
         if self.phase == 'RUNNING' and self.blocked:
             self.phase = 'HAZARD_PAUSED'
         new_frame = observation.get('sequence') != self.last_sequence
         if new_frame:
             self.last_sequence = observation.get('sequence')
-        if self.finishing and self.action[0] == 'RECHECK_HAZARD' and self.action[2]['label'] in labels:
+        if self.finishing and self.action[0] == 'RECHECK_HAZARD' and self._recheck_target_visible(seen):
             # A fresh redetection invalidates absence before completion ACK.
             self.finishing = False
             self.phase = 'RECHECKING'
@@ -367,7 +387,7 @@ class CareController:
             return 'S'
         if self.phase == 'RECHECKING' and new_frame:
             label = self.action[2]['label']
-            if label in labels:
+            if self._recheck_target_visible(seen):
                 self.absent_since = None
                 if self.last_observation is None or stamp-self.last_observation > cfg.max_observation_gap:
                     self.verified_since = None
@@ -385,6 +405,11 @@ class CareController:
                 if self.absent_since is None: self.absent_since = stamp
                 if stamp-self.absent_since >= cfg.removal_absence_seconds:
                     self._finish_motion(now)
+                    # Even unconfirmed remaining candidates keep the robot stopped
+                    # while this selected object's successful result is acknowledged.
+                    if labels:
+                        self.blocked.update(labels)
+                        self.phase = 'HAZARD_PAUSED'
                     self.last_output = 'S'
                     return 'S'
             self.last_observation = stamp

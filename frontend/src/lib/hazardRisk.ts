@@ -61,6 +61,7 @@ export interface CompletedDirectRemoval {
   objectName: string
   completedAt: string
   lastDetectedAt: string
+  knownHazardIds?: string[]
 }
 
 // 직접 제거가 완료된 뒤 같은 라벨이 새 위험 건으로 들어오면 재감지로 본다.
@@ -76,6 +77,7 @@ export function findRedetectedHazard<T extends { hazardId: string; objectName: s
   const baseline = Math.max(completedAt, lastDetectedAt)
   return items
     .filter((item) => item.hazardId !== removal.hazardId
+      && !removal.knownHazardIds?.includes(item.hazardId)
       && item.objectName === removal.objectName
       && Date.parse(item.detectedAt) > baseline)
     .sort((a, b) => Date.parse(b.detectedAt) - Date.parse(a.detectedAt))[0] ?? null
@@ -90,8 +92,8 @@ export function powerOnSafetyNotice(
     .filter((hazard) => classifyHazard(hazard.objectName) === 'SWALLOW')
     .map((hazard) => hazard.objectName))]
   return names.length > 0
-    ? `전원은 켜졌지만 미처리 삼킴 위험물(${names.join('·')}) 때문에 안전 정지 중이에요. 스마트 안심 케어 맵에서 남은 위험물을 처리해 주세요.`
-    : '전원은 켜졌지만 이전 삼킴 위험 차단이 남아 안전 정지 중이에요. 위험을 감지했던 아이 프로필의 스마트 안심 케어 맵에서 처리해 주세요.'
+    ? `삼킴 위험물(${names.join('·')}) 감지로 정지했어요. 스마트 안심 케어 맵에서 감지 사진을 확인해 주세요.`
+    : '삼킴 위험물 감지로 정지했어요. 위험을 감지했던 아이 프로필의 스마트 안심 케어 맵에서 감지 내역을 확인해 주세요.'
 }
 
 function serverRisk(riskLevel: string): RiskLevel | null {

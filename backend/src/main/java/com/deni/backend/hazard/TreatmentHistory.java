@@ -37,16 +37,21 @@ public class TreatmentHistory {
 
     /** A hazard of the same kind whose handling finished after this frame was captured. */
     public UUID handledAfter(String deviceId, UUID childId, String type, String label, OffsetDateTime capturedAt) {
+        return handledAfter(deviceId, childId, type, label, capturedAt, null);
+    }
+
+    public UUID handledAfter(String deviceId, UUID childId, String type, String label, OffsetDateTime capturedAt, UUID objectInstanceId) {
         var rows = jdbc.queryForList("""
             SELECT h.id FROM hazards h WHERE h.device_id=? AND h.child_id=?
               AND h.object_name=? AND h.object_type=?
+              AND (CAST(? AS uuid) IS NULL OR h.object_instance_id=?)
               AND ((h.status='RESOLVED' AND h.updated_at>=?) OR EXISTS (
                 SELECT 1 FROM operation_requests r JOIN device_command_delivery d ON d.command_id=r.id
                 WHERE r.hazard_id=h.id AND r.device_id=h.device_id
                   AND r.kind IN ('DIRECT_REMOVAL_CHECK','RELOCATE')
                   AND d.status='SUCCEEDED' AND d.completed_at>=?))
             ORDER BY h.updated_at DESC LIMIT 1
-            """, UUID.class, deviceId, childId, label, type, capturedAt, capturedAt);
+            """, UUID.class, deviceId, childId, label, type, objectInstanceId, objectInstanceId, capturedAt, capturedAt);
         return rows.isEmpty() ? null : rows.getFirst();
     }
 }

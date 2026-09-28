@@ -28,7 +28,7 @@ public class DeviceCommandDispatcher {
 			ON CONFLICT(command_id) DO NOTHING
 			""");
         jdbc.update("UPDATE device_command_delivery SET status=CASE WHEN status='QUEUED' THEN 'EXPIRED' ELSE 'UNKNOWN' END WHERE status IN ('QUEUED','SENT','DELIVERED') AND expires_at < clock_timestamp()");
-        for(var row:jdbc.queryForList("SELECT d.command_id,d.device_id,d.expires_at,r.kind,r.hazard_id,h.object_name FROM device_command_delivery d JOIN operation_requests r ON r.id=d.command_id LEFT JOIN hazards h ON h.id=r.hazard_id WHERE d.status='QUEUED' ORDER BY d.expires_at LIMIT 50")) {
+        for(var row:jdbc.queryForList("SELECT d.command_id,d.device_id,d.expires_at,r.kind,r.hazard_id,h.object_name,h.object_instance_id FROM device_command_delivery d JOIN operation_requests r ON r.id=d.command_id LEFT JOIN hazards h ON h.id=r.hazard_id WHERE d.status='QUEUED' ORDER BY d.expires_at LIMIT 50")) {
             String id=(String)row.get("device_id");
             if(!channel.connected(id)) continue;
             Object command=row.get("command_id");
@@ -40,6 +40,7 @@ public class DeviceCommandDispatcher {
                 if(row.get("hazard_id")!=null) {
                     parameters.put("hazardId",row.get("hazard_id").toString());
                     parameters.put("objectLabel",row.get("object_name"));
+                if(row.get("object_instance_id")!=null) parameters.put("objectInstanceId",row.get("object_instance_id").toString());
                     // Acceptance expires quickly; treatment may take longer.
                     jdbc.update("UPDATE device_command_delivery SET expires_at=clock_timestamp()+interval '180 seconds' WHERE command_id=?",command);
                 }
@@ -56,7 +57,7 @@ public class DeviceCommandDispatcher {
 
     private void recoverUnknown() {
         var rows=jdbc.queryForList("""
-            SELECT d.command_id,d.device_id,r.hazard_id,h.object_name
+            SELECT d.command_id,d.device_id,r.hazard_id,h.object_name,h.object_instance_id
             FROM device_command_delivery d JOIN operation_requests r ON r.id=d.command_id
             LEFT JOIN hazards h ON h.id=r.hazard_id
             WHERE d.status='UNKNOWN' AND d.sent_at IS NOT NULL ORDER BY d.expires_at
@@ -77,6 +78,7 @@ public class DeviceCommandDispatcher {
             if(row.get("hazard_id")!=null) {
                 parameters.put("hazardId",row.get("hazard_id").toString());
                 parameters.put("objectLabel",row.get("object_name"));
+                if(row.get("object_instance_id")!=null) parameters.put("objectInstanceId",row.get("object_instance_id").toString());
             }
             try {
                 // A status query is deliberately not an executable COMMAND.

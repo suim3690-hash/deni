@@ -6,9 +6,10 @@ test('전원 ON 뒤 안전 정지면 현재 프로필의 미처리 삼킴 위험
   const message = powerOnSafetyNotice('HAZARD_PAUSED', [
     { objectName: '동전' }, { objectName: '전선' }, { objectName: '구슬' }, { objectName: '동전' },
   ])
-  assert.match(message, /전원은 켜졌지만/)
+  assert.match(message, /감지로 정지했어요/)
+  assert.doesNotMatch(message, /재감지|이전|미처리|남은/)
   assert.match(message, /동전·구슬/)
-  assert.match(message, /스마트 안심 케어 맵에서 남은 위험물을 처리/)
+  assert.match(message, /스마트 안심 케어 맵에서 감지 사진을 확인/)
 })
 
 test('다른 프로필에서 생긴 차단과 정상 주행을 구분한다', () => {

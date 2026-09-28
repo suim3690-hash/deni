@@ -20,14 +20,25 @@ after(async () => {
   delete globalThis.window
 })
 
-function render(hazard, status = 'ACTIVE', redetected = false, robotState = readyRobot) {
+function render(hazard, status = 'ACTIVE', redetected = false, robotState = readyRobot, hazards = [swallow, living]) {
   return renderToStaticMarkup(createElement(HazardLocation, {
-    hazard, hazards: [swallow, living], deviceId: 'robot-test', stage: 'TODDLER',
+    hazard, hazards, deviceId: 'robot-test', stage: 'TODDLER',
     operationState: 'PAUSED', detail: { ...hazard, status, captureImageUrl: `/images/${hazard.hazardId}.jpg` },
     error: '', errorStatus: null, isMock: false, redetected, robotState,
     onBack() {}, onRetry() {}, onSelect() {}, onLivingResolved() {}, onRemovalCompleted() {},
   }))
 }
+
+test('같은 라벨 두 물체도 별도 선택 항목과 각자의 사진으로 표시한다', () => {
+  const batteries = ['battery-a', 'battery-b'].map(hazardId => ({ ...swallow, hazardId, objectName: '배터리' }))
+  for (const selected of batteries) {
+    const html = render(selected, 'ACTIVE', false, readyRobot, batteries)
+    assert.match(html, /감지된 위험물 2건/)
+    assert.match(html, /1\. 배터리/)
+    assert.match(html, /2\. 배터리/)
+    assert.ok(html.includes(`/images/${selected.hazardId}.jpg`))
+  }
+})
 
 test('모터가 정지했어도 탐지 준비 중이면 처리 버튼 대신 대기 이유를 표시한다', () => {
   const html = render(swallow, 'ACTIVE', false, { ...readyRobot, taskState: 'RUNNING' })

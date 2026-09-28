@@ -289,7 +289,8 @@ class Runtime:
                     inferenceMs=observation.get('inference_ms'), sequence=observation.get('sequence'),
                     suppressedAlerts=observation.get('suppressed_alert_labels',[]),
                     modelErrors=observation.get('model_errors'), cameraUnavailable=observation.get('camera_unavailable',False),
-                    objects=[dict(label=d.get('label'),confidence=d.get('confidence'),stable=d.get('stable')) for d in observation.get('hazards',[])],
+                    objects=[dict(label=d.get('label'),confidence=d.get('confidence'),stable=d.get('stable'),
+                                  objectInstanceId=d.get('object_instance_id'),trackId=d.get('track_id')) for d in observation.get('hazards',[])],
                     markers=observation.get('markers',[]), recordedAt=time.time())
             if state != previous:
                 LOG.info('Task=%s reason=%s motor=%s detection=%s age=%s blur=%s blocked=%s',

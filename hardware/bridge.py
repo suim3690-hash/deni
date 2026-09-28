@@ -69,7 +69,7 @@ class Bridge:
     def close(self):
         self.db.close()
 
-    def enqueue_detection(self, image_bytes, label, model_type, event_id=None, captured_at=None):
+    def enqueue_detection(self, image_bytes, label, model_type, event_id=None, captured_at=None, object_instance_id=None):
         """Call from the detector with an annotated JPEG/PNG; returns stable UUID.
 
         One writer process/thread owns each Bridge. Run inference separately
@@ -89,6 +89,13 @@ class Bridge:
         if existing is not None and existing != data:
             raise ValueError("Event ID already belongs to different content")
         metadata = {}
+        if object_instance_id is not None:
+            metadata['objectInstanceId'] = str(UUID(str(object_instance_id)))
+        if existing is not None:
+            stored = self.db.execute('SELECT response FROM events WHERE id=?', (event,)).fetchone()[0]
+            previous = json.loads(stored) if stored else {}
+            if previous.get('objectInstanceId') != metadata.get('objectInstanceId'):
+                raise ValueError('Event ID already belongs to a different object instance')
         if captured_at is not None:
             stamp = datetime.fromisoformat(captured_at.replace('Z', '+00:00'))
             if stamp.tzinfo is None:
@@ -112,6 +119,8 @@ class Bridge:
             data = {"eventId": event, "modelType": model, "objectLabel": label}
             if metadata.get('capturedAt'):
                 data['capturedAt'] = metadata['capturedAt']
+            if metadata.get('objectInstanceId'):
+                data['objectInstanceId'] = metadata['objectInstanceId']
             try:
                 response = requests.post(self.http_url + "/api/v1/hardware/detections",
                     headers=self.headers, data=data,
