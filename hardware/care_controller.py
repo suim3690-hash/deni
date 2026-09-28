@@ -283,8 +283,12 @@ class CareController:
         instance = params.get('objectInstanceId')
         if not instance:
             return same
-        return ([obj for obj in same if obj.get('object_instance_id') == instance]
-                + [obj for obj in same if not obj.get('object_instance_id')])
+        known = ([obj for obj in same if obj.get('object_instance_id') == instance]
+                 + [obj for obj in same if not obj.get('object_instance_id')])
+        # A tracking id only lives as long as the run that issued it. A hazard chosen
+        # before a restart can never match one again, so rather than call its object
+        # missing while it sits in plain view, fall back to judging by kind.
+        return known or same
 
     def _recheck_target_visible(self, seen):
         params = self.action[2]

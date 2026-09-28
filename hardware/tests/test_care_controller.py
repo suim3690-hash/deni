@@ -131,6 +131,14 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.tick(['battery','battery'], instance_ids=['a','b']),'S')
         self.assertEqual(self.c.reason,'MULTIPLE TARGETS OF SAME CLASS')
 
+    def test_relocation_falls_back_to_kind_when_the_chosen_id_is_from_an_earlier_run(self):
+        self.start(); self.tick(['battery'], instance_ids=['fresh'])
+        # 재시작 전에 고른 위험의 추적 번호는 지금 세션에 존재하지 않는다.
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='배터리',objectInstanceId='stale'),self.now)
+        self.assertEqual(self.tick(['battery'], instance_ids=['fresh']),'F')
+        self.assertEqual(self.c.phase,'CAPTURING')
+        self.assertNotEqual(self.c.reason,'TARGET NOT VISIBLE')
+
     def test_relocation_stays_ambiguous_while_an_unidentified_object_could_be_the_target(self):
         self.start(); self.tick(['battery','battery'], instance_ids=['b',None])
         self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='배터리',objectInstanceId='b'),self.now)
