@@ -36,7 +36,7 @@ class Settings:
     drop_verify_seconds: float = 1.0
     drop_verify_timeout_seconds: float = 10.0
     drop_verify_radius_ratio: float = .45
-    turnaround_seconds: float = 6.0
+    turnaround_seconds: float = 9.0
     action_timeout_seconds: float = 120.0
     # Backend answers every state report (sent at least once a second) with a RECEIPT.
     backend_timeout_seconds: float = 3.0
