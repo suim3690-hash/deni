@@ -33,6 +33,7 @@ async function requestHazardAction(
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Idempotency-Key': generateId() },
     body: '{}',
+    signal: AbortSignal.timeout(10000),
   })
   if (!response.ok) throw await apiErrorFromResponse(response, errorMessage)
   return response.json() as Promise<ActionReceipt>
@@ -44,7 +45,9 @@ export async function requestRemovalCheck(hazardId: string): Promise<ActionRecei
 }
 
 export async function getSafetyAction(actionId: string): Promise<ActionResult> {
-  const response = await fetch(`${apiBase()}/api/v1/safety-actions/${encodeURIComponent(actionId)}`)
+  const response = await fetch(`${apiBase()}/api/v1/safety-actions/${encodeURIComponent(actionId)}`, {
+    signal: AbortSignal.timeout(10000),
+  })
   if (!response.ok) throw await apiErrorFromResponse(response, '처리 접수 상태를 확인하지 못했어요.')
   return response.json() as Promise<ActionResult>
 }

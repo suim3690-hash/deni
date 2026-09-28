@@ -32,7 +32,7 @@ class Settings:
     drop_verify_seconds: float = 1.0
     drop_verify_timeout_seconds: float = 10.0
     drop_verify_radius_ratio: float = .45
-    turnaround_seconds: float = 3.0
+    turnaround_seconds: float = 6.0
     action_timeout_seconds: float = 120.0
     # Backend answers every state report (sent at least once a second) with a RECEIPT.
     backend_timeout_seconds: float = 3.0
@@ -97,6 +97,7 @@ class CareController:
                 else:
                     result.update(relocationCompleted=True)
             if code: result['errorCode'] = code
+            if code == 'HAZARD_STILL_PRESENT': result['hazardPresent'] = True
             self.results[identity] = result
             self.action = None
         self.finishing = False
@@ -248,6 +249,7 @@ class CareController:
         self.phase_started = now
         self.started = now
         self.absent_since = None
+        self.verified_since = None
         self.last_observation = None
         self.require_frame_after = now
         self.pulse_until = self.settle_until = 0
@@ -367,7 +369,17 @@ class CareController:
             label = self.action[2]['label']
             if label in labels:
                 self.absent_since = None
+                if self.last_observation is None or stamp-self.last_observation > cfg.max_observation_gap:
+                    self.verified_since = None
+                if self.verified_since is None: self.verified_since = stamp
+                if stamp-self.verified_since >= cfg.removal_absence_seconds:
+                    self._complete_action('FAILED', 'HAZARD_STILL_PRESENT')
+                    self.phase = 'HAZARD_PAUSED'
+                    self.reason = 'HAZARD STILL PRESENT'
+                    self.last_output = 'S'
+                    return 'S'
             else:
+                self.verified_since = None
                 if self.last_observation is None or stamp-self.last_observation > cfg.max_observation_gap:
                     self.absent_since = stamp
                 if self.absent_since is None: self.absent_since = stamp

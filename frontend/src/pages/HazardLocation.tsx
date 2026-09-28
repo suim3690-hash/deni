@@ -3,7 +3,8 @@ import { ArrowLeft, CheckCircle2, Loader2, ShieldCheck } from 'lucide-react'
 import floorPlanPreview from '../assets/figma/safety-profile/floor-plan-clean.png'
 import capturePreview from '../assets/figma/hazard/capture.png'
 import robotIcon from '../assets/figma/home/imgVector5.svg'
-import { resolveLivingHazard, sendDeviceCommand, type DashboardHazard, type HazardDetail, type HazardMarker } from '../services/dashboard'
+import { getRobotState, resolveLivingHazard, sendDeviceCommand, type DashboardHazard, type HazardDetail, type HazardMarker, type RobotState } from '../services/dashboard'
+import { treatmentReadinessMessage } from '../lib/treatmentReadiness'
 import { apiErrorMessage } from '../services/apiError'
 import { getSafetyAction, requestRelocation, requestRemovalCheck } from '../services/operations'
 import { categoryLabels, classifyHazard, describeHazard, riskLabels, riskStyles, withTopicParticle, type CompletedDirectRemoval, type HazardCategory } from '../lib/hazardRisk'
@@ -42,6 +43,7 @@ interface Props {
   deviceId: string
   stage: Stage | null
   operationState: string
+  robotState?: RobotState | null
   detail: HazardDetail | null
   error: string
   errorStatus: number | null
@@ -86,7 +88,7 @@ function HazardMapMarker({ category, relocated }: { category: HazardCategory | n
   )
 }
 
-export default function HazardLocation({ hazard, hazards, deviceId, stage, operationState, detail, error, errorStatus, isMock, redetected: initiallyRedetected, onBack, onRetry, onSelect, onLivingResolved, onRemovalCompleted }: Props) {
+export default function HazardLocation({ hazard, hazards, deviceId, stage, operationState, robotState, detail, error, errorStatus, isMock, redetected: initiallyRedetected, onBack, onRetry, onSelect, onLivingResolved, onRemovalCompleted }: Props) {
   // 대시보드가 새 감지 시각을 받았는데 상세 응답은 이전 것이라면 예전 사진을 잠시 숨긴다.
   const currentDetail = !isMock && detail && hazard &&
     (detail.hazardId !== hazard.hazardId || new Date(detail.detectedAt).getTime() < new Date(hazard.detectedAt).getTime()) ? null : detail
@@ -96,10 +98,11 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
     hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Seoul',
   }).format(new Date(detectedAt)) : ''
   const [actionMessage, setActionMessage] = useState('')
+  const [showRedetection, setShowRedetection] = useState(false)
   const [autoTransport, setAutoTransport] = useState(false)
   const [flow, setFlow] = useState<Flow>('idle')
   const [mockRedetected, setRedetected] = useState(false)
-  const redetected = isMock ? mockRedetected : initiallyRedetected
+  const redetected = mockRedetected || (!isMock && initiallyRedetected)
   const [failedCaptureUrl, setFailedCaptureUrl] = useState<string | null>(null)
   const [relocationState, setRelocationState] = useState<RealActionState>('idle')
   const [relocationActionId, setRelocationActionId] = useState<string | null>(null)
@@ -212,6 +215,10 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
     ? 'relocation'
     : removalState === 'pending' && removalActionId ? 'removal' : null
   const pendingActionId = pendingKind === 'relocation' ? relocationActionId : pendingKind === 'removal' ? removalActionId : null
+  const completionContext = useRef({ name, detectedAt, onRemovalCompleted })
+  useEffect(() => {
+    completionContext.current = { name, detectedAt, onRemovalCompleted }
+  }, [name, detectedAt, onRemovalCompleted])
 
   // 실제 모드: 요청 접수 후 처리 결과를 주기적으로 조회한다. 서버가 완료를 알려줄 때만 완료로 표시한다.
   // 전달 결과가 UNKNOWN인 동안에는 기기가 늦게 보고할 수 있으므로 조회를 멈추지 않는다.
@@ -222,7 +229,10 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
     const setActionId = relocation ? setRelocationActionId : setRemovalActionId
     const completed = relocation ? 'TEMPORARY_COMPLETED' : 'COMPLETED'
     let active = true
+    let checking = false
     async function check(actionId: string) {
+      if (checking) return
+      checking = true
       try {
         const result = await getSafetyAction(actionId)
         if (!active) return
@@ -230,6 +240,7 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
           setState('done')
           if (relocation) setRelocationCompletedAt(result.completedAt)
           if (!relocation && result.completedAt) {
+            const { name, detectedAt, onRemovalCompleted } = completionContext.current
             onRemovalCompleted({
               hazardId: result.hazardId,
               objectName: name,
@@ -240,12 +251,24 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
         } else if (result.status === 'FAILED' || result.status === 'EXPIRED') {
           setState('idle')
           setActionId(null)
+          if (!relocation && result.hazardPresent === true) {
+            setRedetected(true)
+            setShowRedetection(true)
+            setFlow('idle')
+            setActionMessage('')
+            return
+          }
           setActionMessage(relocation
             ? '위험 물체 이송에 실패했어요. 위험 물체를 직접 치워 주세요.'
             : '기기가 위험 물체 제거를 확인하지 못했어요. 남아 있는지 확인한 뒤 다시 시도해 주세요.')
         }
+        else if (result.status === 'UNKNOWN') {
+          setActionMessage('기기 응답이 지연되고 있어요. 로봇 연결을 확인해 주세요. 결과를 계속 확인하고 있어요.')
+        }
       } catch {
-        // 조회에 실패해도 처리 결과를 알 수 없을 뿐이므로 다음 주기에 다시 조회한다.
+        if (active) setActionMessage('처리 결과를 불러오지 못했어요. 연결을 확인해 주세요. 자동으로 다시 확인합니다.')
+      } finally {
+        checking = false
       }
     }
     void check(pendingActionId)
@@ -254,7 +277,7 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
       active = false
       window.clearInterval(timer)
     }
-  }, [detectedAt, isMock, name, onRemovalCompleted, pendingActionId, pendingKind])
+  }, [isMock, pendingActionId, pendingKind])
 
   function toggleAutoTransport() {
     if (!isMock) {
@@ -277,7 +300,10 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
     }
     if (relocationState !== 'idle') return
     setRelocationState('submitting')
+    setActionMessage('')
     try {
+      const readiness = treatmentReadinessMessage(await getRobotState(deviceId))
+      if (readiness) throw new Error(readiness)
       const receipt = await requestRelocation(hazard?.hazardId ?? '')
       setRelocationActionId(receipt.actionId)
       setRelocationState('pending')
@@ -293,6 +319,7 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
   }
 
   async function confirmRemoval() {
+    setActionMessage('')
     if (isMock) {
       setFlow('checking')
       return
@@ -301,6 +328,8 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
     setRedetected(false)
     setRemovalState('submitting')
     try {
+      const readiness = treatmentReadinessMessage(await getRobotState(deviceId))
+      if (readiness) throw new Error(readiness)
       const receipt = await requestRemovalCheck(hazard?.hazardId ?? '')
       setRemovalActionId(receipt.actionId)
       setRemovalState('pending')
@@ -353,6 +382,8 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
     if (flow === 'relocating') return <div role="status" className={greenBox}><Loader2 size={18} className="animate-spin" aria-hidden="true" /><strong className="text-[15px] font-bold">위험 물체 이송 중</strong></div>
     if (flow === 'checking') return <div role="status" className={greenBox}><Loader2 size={18} className="animate-spin" aria-hidden="true" /><strong className="text-[15px] font-bold">위험 물체 확인 중</strong></div>
     if (flow === 'checked') return <div role="status" className={greenBox}><CheckCircle2 size={18} aria-hidden="true" /><strong className="text-[15px] font-bold">위험 물체 확인 완료</strong></div>
+    const readiness = isMock || isLiving ? '' : treatmentReadinessMessage(robotState)
+    if (readiness) return <div role="status" className={`${grayBox} px-3 text-[12px] leading-5`}>{readiness}</div>
     if (flow === 'removal-guide') return <button type="button" onClick={() => void confirmRemoval()} className={primaryButton}>위험 물체 제거 완료</button>
 
     if (isLiving) return <button type="button" disabled={acknowledgingLiving} onClick={() => void confirmLivingHazard()} className={primaryButton}>{acknowledgingLiving ? '처리 중' : '위험 요소 확인 완료'}</button>
@@ -477,6 +508,15 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
         </footer>
       )}
       {actionMessage && <div role="alert" className="fixed bottom-[85px] left-1/2 z-20 w-[calc(100%-32px)] max-w-[370px] -translate-x-1/2 rounded-xl bg-[#25252b] p-3 text-[12px] text-white shadow-lg" onClick={() => setActionMessage('')}>{actionMessage}</div>}
+      {showRedetection && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 px-6">
+          <section role="alertdialog" aria-modal="true" aria-labelledby="redetection-title" aria-describedby="redetection-description" className="w-full max-w-[350px] rounded-2xl bg-white p-6 shadow-xl">
+            <h2 id="redetection-title" className="text-lg font-bold text-[#b9003d]">위험 물체가 다시 감지되었어요</h2>
+            <p id="redetection-description" className="mt-3 text-sm">{name}이 아직 보여요. 물체를 치운 뒤 다시 제거 확인을 진행해 주세요. 로봇은 정지 상태를 유지합니다.</p>
+            <button autoFocus type="button" className={`${primaryButton} mt-5 w-full`} onClick={() => setShowRedetection(false)}>확인</button>
+          </section>
+        </div>
+      )}
     </div>
   )
 }

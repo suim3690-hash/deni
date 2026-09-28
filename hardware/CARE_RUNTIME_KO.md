@@ -87,14 +87,14 @@ PC–Pi 연결이 끊기면 정지한 뒤 자동으로 다시 접속하고, 새 
 | `drop_verify_seconds` | 1.0 | 후진 후 물체와 마커 근접을 연속 확인하는 시간. |
 | `drop_verify_timeout_seconds` | 10.0 | 안전 구역 배치 확인 제한 시간. |
 | `drop_verify_radius_ratio` | 0.45 | 화면 너비·높이로 정규화한 물체–마커 중심 거리 허용값. 2026-09-23 실물 배치에서 측정한 중심 거리 약 0.42를 포함한다. |
-| `turnaround_seconds` | 3.0 | 이송 후 회전 시간. |
+| `turnaround_seconds` | 6.0 | 이송 후 회전 시간. |
 | `action_timeout_seconds` | 120.0 | 처리 요청 제한 시간. 넘기면 실패로 보고한다. |
 
 바꾼 값은 다음 실행부터 적용된다. `--config` 로 다른 파일을 지정할 수도 있다.
 
 ## 4. 아직 확정·검증되지 않은 것
 
-- **확보·후진·회전은 시간 제어다.** 각각 0.8초·3초·3초의 설정값이며 측정한 거리나 180도 각도가 아니다.
+- **확보·후진·회전은 시간 제어다.** 각각 0.8초·3초·6초의 설정값이며 측정한 거리나 180도 각도가 아니다.
   실물에서 `capture_seconds`·`reverse_seconds`·`turnaround_seconds`를 조정해야 한다.
 - **주사위는 아직 탐지되지 않는다.** 코드 경로(탐지·백엔드 라벨·이송 대상)는 연결했지만 현재 가중치의
   클래스는 `object.pt`가 battery·coin·marble, `hazard.pt`가 socket·wire다. `dice` 클래스를 학습한

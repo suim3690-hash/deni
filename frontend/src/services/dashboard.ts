@@ -246,7 +246,9 @@ export async function resolveLivingHazard(hazard: DashboardHazard): Promise<Haza
 export async function getRobotState(deviceId: string): Promise<RobotState> {
   const baseUrl = apiBaseUrl
   if (!baseUrl) throw new Error('API URL is missing')
-  const response = await fetch(`${baseUrl}/api/v1/devices/${encodeURIComponent(deviceId)}/robot-state`)
+  const response = await fetch(`${baseUrl}/api/v1/devices/${encodeURIComponent(deviceId)}/robot-state`, {
+    signal: AbortSignal.timeout(10000),
+  })
   if (!response.ok) throw await apiErrorFromResponse(response, '로봇 동작 정보를 불러오지 못했어요.')
   return response.json() as Promise<RobotState>
 }

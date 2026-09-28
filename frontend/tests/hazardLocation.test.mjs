@@ -8,6 +8,7 @@ let server
 let HazardLocation
 const living = { hazardId: 'living', objectName: '전선', riskLevel: 'HIGH', detectedAt: '2026-09-23T01:00:00Z' }
 const swallow = { ...living, hazardId: 'swallow', objectName: '동전' }
+const readyRobot = { stale: false, powerEnabled: true, operationState: 'PAUSED', movementState: 'STOPPED', taskState: 'HAZARD_PAUSED' }
 
 before(async () => {
   globalThis.window = { location: { search: '' } }
@@ -19,14 +20,30 @@ after(async () => {
   delete globalThis.window
 })
 
-function render(hazard, status = 'ACTIVE', redetected = false) {
+function render(hazard, status = 'ACTIVE', redetected = false, robotState = readyRobot) {
   return renderToStaticMarkup(createElement(HazardLocation, {
     hazard, hazards: [swallow, living], deviceId: 'robot-test', stage: 'TODDLER',
     operationState: 'PAUSED', detail: { ...hazard, status, captureImageUrl: `/images/${hazard.hazardId}.jpg` },
-    error: '', errorStatus: null, isMock: false, redetected,
+    error: '', errorStatus: null, isMock: false, redetected, robotState,
     onBack() {}, onRetry() {}, onSelect() {}, onLivingResolved() {}, onRemovalCompleted() {},
   }))
 }
+
+test('모터가 정지했어도 탐지 준비 중이면 처리 버튼 대신 대기 이유를 표시한다', () => {
+  const html = render(swallow, 'ACTIVE', false, { ...readyRobot, taskState: 'RUNNING' })
+  assert.match(html, /로봇의 정지 확인을 기다리고 있어요/)
+  assert.doesNotMatch(html, /사용자 직접 제거|위험 물체 안전 이송/)
+})
+
+test('전원 OFF와 오래된 상태에서는 처리 요청을 열지 않는다', () => {
+  for (const state of [{ ...readyRobot, powerEnabled: false }, { ...readyRobot, stale: true }, null]) {
+    assert.doesNotMatch(render(swallow, 'ACTIVE', false, state), /사용자 직접 제거|위험 물체 안전 이송/)
+  }
+})
+
+test('로봇이 준비되지 않아도 생활공간 위험 확인은 가능하다', () => {
+  assert.match(render(living, 'ACTIVE', false, null), /위험 요소 확인 완료/)
+})
 
 test('생활공간 위험은 삼킴 위험과 함께 있어도 해당 사진과 확인 버튼을 표시한다', () => {
   const html = render(living)

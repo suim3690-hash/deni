@@ -114,7 +114,7 @@ class CareTests(unittest.TestCase):
         self.assertEqual(output, 'S')
         self.assertEqual(self.c.blocked, {'coin'})
 
-    def test_pending_treatment_waits_while_target_is_visible(self):
+    def test_recheck_reports_present_instead_of_waiting_for_action_timeout(self):
         self.start()
         self.tick(['coin'])
         self.c.request('RECHECK_HAZARD','r1',{'hazardId':'h1','objectLabel':'동전'},self.now)
@@ -122,8 +122,24 @@ class CareTests(unittest.TestCase):
         deadline = self.now + Settings().removal_absence_seconds * 3
         while self.now < deadline: self.tick(['coin'])
         # 요청 중에도 물체가 보이면 제거 성공으로 처리하지 않는다.
-        self.assertEqual(self.c.phase,'RECHECKING')
+        self.assertEqual(self.c.phase,'HAZARD_PAUSED')
+        self.assertEqual(self.c.results['r1']['status'], 'FAILED')
+        self.assertTrue(self.c.results['r1']['hazardPresent'])
+        self.assertEqual(self.c.results['r1']['errorCode'], 'HAZARD_STILL_PRESENT')
+        self.assertEqual(self.c.blocked, {'coin'})
+
+    def test_recheck_presence_window_resets_after_blur_and_absence(self):
+        self.start(); self.tick(['coin'])
+        self.c.request('RECHECK_HAZARD', 'r1', dict(hazardId='h1', objectLabel='동전'), self.now)
+        for _ in range(15): self.tick(['coin'])
+        self.tick(valid=False)
+        for _ in range(15): self.tick(['coin'])
         self.assertNotIn('r1', self.c.results)
+        self.tick()
+        for _ in range(15): self.tick(['coin'])
+        self.assertNotIn('r1', self.c.results)
+        for _ in range(10): self.tick(['coin'])
+        self.assertTrue(self.c.results['r1']['hazardPresent'])
 
     def test_removal_redetection_before_completion_keeps_request_pending(self):
         self.start(); self.tick(['battery'])
