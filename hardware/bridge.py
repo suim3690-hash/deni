@@ -22,7 +22,11 @@ MOVEMENT_STATES = {"FORWARD", "TURNING", "BACKWARD", "STOPPED", "UNKNOWN"}
 # Unmeasured fields stay null; the backend stores them as-is and must not receive estimates.
 UNOBSERVED_STATE = {"operationState": "UNKNOWN", "movementState": "UNKNOWN",
                     "batteryPercent": None, "movementDurationMs": None,
-                    "movementDistanceM": None, "powerEnabled": None, "taskState": None}
+                    "movementDistanceM": None, "powerEnabled": None, "taskState": None,
+                    # Hazards live detection stopped seeing. Repeated in every report until
+                    # they are seen again, so a dropped message cannot strand them as active.
+                    "clearedObjectInstanceIds": [], "clearedObjectLabels": []}
+CLEARED_LIMIT = 32
 STATE_PERIOD = 1.0
 
 
@@ -160,6 +164,12 @@ class Bridge:
         state = dict(UNOBSERVED_STATE, **observed)
         if state["operationState"] not in OPERATION_STATES or state["movementState"] not in MOVEMENT_STATES:
             raise ValueError("State provider returned a state the backend rejects")
+        for key in ("clearedObjectInstanceIds", "clearedObjectLabels"):
+            values = state[key]
+            if (not isinstance(values, list) or len(values) > CLEARED_LIMIT
+                    or not all(isinstance(value, str) and 0 < len(value) <= 100 for value in values)):
+                raise ValueError("State provider returned an unusable " + key)
+        state["clearedObjectInstanceIds"] = [str(UUID(value)) for value in state["clearedObjectInstanceIds"]]
         # sampledAt is set after reading, so it describes this observation.
         return dict(state, sampledAt=now())
 

@@ -15,6 +15,37 @@ public class DeviceMessageService {
     @org.springframework.beans.factory.annotation.Autowired
     private com.deni.backend.common.IdempotencyGuard guard;
     public DeviceMessageService(JdbcTemplate jdbc, DeviceService devices) { this.jdbc=jdbc; this.devices=devices; }
+    private static final int CLEARED_LIMIT=32;
+    /** 로봇이 더는 보지 못하는 위험은 사용자 확인 없이 종료한다. 로봇이 다시 보면 새 건으로 올라온다. */
+    private void resolveAbsent(String id, JsonNode instances, JsonNode labels) {
+        var ids=new java.util.ArrayList<UUID>();
+        if(instances.isArray()) for(JsonNode node:instances) ids.add(UUID.fromString(node.asText()));
+        var names=new java.util.ArrayList<String>();
+        if(labels.isArray()) for(JsonNode node:labels) names.add(node.asText());
+        if(ids.size()>CLEARED_LIMIT || names.size()>CLEARED_LIMIT) throw new IllegalArgumentException();
+        if(ids.isEmpty() && names.isEmpty()) return;
+        guard.lock("device",id);
+        // 아직 결과가 오지 않은 처리 요청의 대상은 그 요청이 끝낸다.
+        String pending=" AND NOT EXISTS (SELECT 1 FROM operation_requests r JOIN device_command_delivery d"
+            +" ON d.command_id=r.id WHERE r.hazard_id=h.id AND d.status IN ('QUEUED','SENT','DELIVERED','UNKNOWN'))";
+        String resolve="UPDATE hazards h SET status='RESOLVED',updated_at=clock_timestamp(),version=h.version+1"
+            +" WHERE h.device_id=? AND h.status='ACTIVE'";
+        if(!ids.isEmpty()) {
+            var arguments=new java.util.ArrayList<Object>(); arguments.add(id); arguments.addAll(ids);
+            jdbc.update(resolve+" AND h.object_instance_id IN ("+placeholders(ids.size())+")"+pending,arguments.toArray());
+        }
+        // 개체 식별자가 없는 과거 기록은 종류로만 정리할 수 있다. 식별된 건은 위에서 이미 처리했다.
+        if(!names.isEmpty()) {
+            var arguments=new java.util.ArrayList<Object>(); arguments.add(id); arguments.addAll(names);
+            jdbc.update(resolve+" AND h.object_instance_id IS NULL AND h.object_name IN ("
+                +placeholders(names.size())+")"+pending,arguments.toArray());
+        }
+    }
+
+    private static String placeholders(int count) {
+        return String.join(",",java.util.Collections.nCopies(count,"?"));
+    }
+
     @Transactional public void receive(String id, String type, JsonNode payload) {
         if ("ROBOT_STATE".equals(type)) {
             String operation=payload.path("operationState").asText();
@@ -32,6 +63,7 @@ public class DeviceMessageService {
             Boolean power=payload.path("powerEnabled").isBoolean()?payload.path("powerEnabled").asBoolean():null;
             String task=payload.path("taskState").isTextual()?payload.path("taskState").asText():null;
             if(task!=null && task.length()>40) throw new IllegalArgumentException();
+            resolveAbsent(id,payload.path("clearedObjectInstanceIds"),payload.path("clearedObjectLabels"));
             devices.recordStatus(new DeviceService.StatusInput(id,"ONLINE",operation.equals("RELOCATING")?"UNKNOWN":operation,battery,sampled));
             jdbc.update("""
                 INSERT INTO robot_live_state(device_id,operation_state,movement_state,sampled_at,movement_duration_ms,movement_distance_m,power_enabled,task_state)

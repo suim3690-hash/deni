@@ -95,7 +95,7 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.c.phase,'RUNNING')
         self.assertEqual(self.tick(),'F')
 
-    def test_hazard_pause_waits_for_explicit_removal_check(self):
+    def test_hazard_pause_clears_itself_once_detection_stops_seeing_the_object(self):
         self.start()
         self.tick(['coin'])
         self.assertEqual(self.c.phase,'HAZARD_PAUSED')
@@ -105,18 +105,40 @@ class CareTests(unittest.TestCase):
         for _ in range(40): self.assertEqual(self.tick(['coin']),'S')
         self.assertEqual(self.c.phase,'HAZARD_PAUSED')
 
-        # 물체가 사라져도 사용자 요청 없이 재개하거나 차단 이력을 지우지 않는다.
-        deadline = self.now + Settings().removal_absence_seconds * 3
-        while self.now < deadline: self.tick()
-        self.assertEqual(self.c.phase,'HAZARD_PAUSED')
+        # 사라진 직후에는 유지한다. 순간적인 가림으로 목록이 비면 안 된다.
+        for _ in range(int(Settings().absent_clear_seconds / .1) - 5):
+            self.assertEqual(self.tick(),'S')
         self.assertEqual(self.c.blocked,{'coin'})
-        self.assertEqual(self.tick(),'S')
+        self.assertEqual(self.c.phase,'HAZARD_PAUSED')
 
-        self.c.request('RECHECK_HAZARD','remove',dict(hazardId='h1',objectLabel='동전'),self.now)
-        for _ in range(30): self.tick()
-        self.assertEqual(self.c.results['remove']['status'],'SUCCEEDED')
-        self.assertEqual(self.c.phase,'RUNNING')
+        # 실시간 인식이 계속 못 보면 사용자 확인 없이 차단과 목록에서 스스로 빠진다.
+        for _ in range(10): self.tick()
         self.assertEqual(self.c.blocked,set())
+        self.assertEqual(self.c.phase,'RUNNING')
+        self.assertEqual(self.tick(),'F')
+
+    def test_absent_instance_clears_itself_while_the_visible_one_stays_blocked(self):
+        self.start()
+        self.tick(['coin','coin'], instance_ids=['a','b'])
+        self.assertEqual(self.c.blocked_instances,{'a':'coin','b':'coin'})
+        for _ in range(int(Settings().absent_clear_seconds / .1) + 5):
+            self.assertEqual(self.tick(['coin'], instance_ids=['b']),'S')
+        self.assertEqual(self.c.blocked_instances,{'b':'coin'})
+        self.assertEqual(self.c.cleared_instances,['a'])
+        # 같은 종류가 아직 보이므로 라벨 차단과 정지는 유지한다.
+        self.assertEqual(self.c.blocked,{'coin'})
+        self.assertEqual(self.c.phase,'HAZARD_PAUSED')
+
+    def test_observation_gap_is_not_evidence_of_absence(self):
+        self.start()
+        self.tick(['coin'])
+        for _ in range(int(Settings().absent_clear_seconds / .1) + 5):
+            self.assertEqual(self.tick(valid=False),'S')
+        self.assertEqual(self.c.blocked,{'coin'})
+        # 공백 뒤 첫 유효 프레임은 그동안 못 본 시간을 미검출로 세지 않는다.
+        self.tick()
+        self.assertEqual(self.c.blocked,{'coin'})
+        self.assertEqual(self.c.phase,'HAZARD_PAUSED')
 
     def test_relocated_object_is_exempt_only_while_marker_proves_its_safe_position(self):
         self.start()

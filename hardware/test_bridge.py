@@ -218,6 +218,17 @@ class Contracts(unittest.TestCase):
                     await bridge_with(provider=lambda: {"movementState": "SPINNING"}).robot_state()
                 with self.assertRaises(ValueError):
                     await bridge_with(provider=lambda: {"batteryPercent": 50, "speed": 1}).robot_state()
+                # Cleared hazards end a hazard on the server, so a malformed list is refused.
+                for cleared in ({"clearedObjectInstanceIds": "not-a-list"},
+                                {"clearedObjectInstanceIds": ["not-a-uuid"]},
+                                {"clearedObjectLabels": [str(index) for index in range(33)]}):
+                    with self.assertRaises(ValueError):
+                        await bridge_with(provider=lambda cleared=cleared: dict(
+                            operationState="PAUSED", movementState="STOPPED", **cleared)).robot_state()
+                state = await bridge_with(provider=lambda: dict(
+                    operationState="PAUSED", movementState="STOPPED",
+                    clearedObjectLabels=["동전"])).robot_state()
+                self.assertEqual((state["clearedObjectLabels"], state["clearedObjectInstanceIds"]), (["동전"], []))
 
                 # The backend stores SUCCEEDED only with PAUSED, so never send that pair.
                 # handle() keeps a rejected result to itself instead of raising: nothing is

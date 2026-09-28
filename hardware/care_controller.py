@@ -3,6 +3,8 @@ from dataclasses import dataclass
 import math
 from detection.safe_zone import safe_labels
 
+# Cleared hazards ride along in every state report, so the list is capped rather than drained.
+CLEARED_HISTORY = 32
 SWALLOW = {'coin', 'marble', 'battery', 'dice', 'die'}
 LABELS = {'동전': 'coin', '구슬': 'marble', '배터리': 'battery', '주사위': 'dice'}
 RELOCATION_PHASES = {'ALIGNING_TARGET', 'CAPTURING', 'SEEKING_MARKER', 'PUSHING_TO_MARKER',
@@ -12,6 +14,10 @@ RELOCATION_PHASES = {'ALIGNING_TARGET', 'CAPTURING', 'SEEKING_MARKER', 'PUSHING_
 @dataclass(frozen=True)
 class Settings:
     removal_absence_seconds: float = 2.0
+    # A hazard that live detection stops seeing for this long is dropped from the
+    # blocked set and reported as cleared, without waiting for a user's check.
+    # Longer than removal_absence_seconds so an ongoing check still finishes first.
+    absent_clear_seconds: float = 5.0
     observation_ttl: float = 3.0
     max_observation_gap: float = 1.0
     marker_id: int = 0
@@ -43,6 +49,8 @@ class Settings:
                 if type(value) is not int or not 0 <= value < 50: raise ValueError('Invalid marker ID')
             elif not math.isfinite(value) or value <= 0:
                 raise ValueError(name + ' must be positive and finite')
+        if self.absent_clear_seconds <= self.removal_absence_seconds:
+            raise ValueError('Automatic clearing must outlast a removal check')
         if (self.removal_absence_seconds < 2 or self.marker_stop_fill >= 1 or self.bearing_deadband >= 1
                 or self.drop_verify_radius_ratio >= 1
                 or not self.bearing_deadband < self.coarse_bearing < 1):
@@ -58,6 +66,13 @@ class CareController:
         self.phase = 'OFF'
         self.blocked = set()
         self.blocked_instances = {}
+        # Frame stamp of the last sighting, keyed by label and by object instance.
+        self.last_seen = {}
+        self.last_valid_stamp = None
+        # Dropped by absence. Resent with every state report rather than drained on send,
+        # because a state report carries no receipt this side can wait for.
+        self.cleared_instances = []
+        self.cleared_labels = []
         self.relocated_labels = set()
         self.action = None
         self.finishing = False
@@ -184,6 +199,46 @@ class CareController:
             return distance <= self.settings.drop_verify_radius_ratio
         except (KeyError, TypeError, ValueError, ZeroDivisionError):
             return False
+
+    def _clear_absent(self, seen, stamp, cfg):
+        """Drop hazards that live detection no longer sees, without a user's check.
+
+        A gap in observation is not evidence of absence, so a pause longer than
+        max_observation_gap restarts every timer. The target of a running action is
+        left alone: that action reports its own result, which the backend expects.
+        """
+        if self.last_valid_stamp is None or stamp-self.last_valid_stamp > cfg.max_observation_gap:
+            self.last_seen = dict.fromkeys(self.last_seen, stamp)
+        self.last_valid_stamp = stamp
+        visible = set()
+        for obj in seen:
+            visible.add(obj['label'])
+            self.last_seen[obj['label']] = stamp
+            if obj.get('object_instance_id'):
+                visible.add(obj['object_instance_id'])
+                self.last_seen[obj['object_instance_id']] = stamp
+        # A hazard that came back must stop being reported as cleared, or the backend
+        # would keep resolving the new sighting it is meant to show.
+        self.cleared_instances = [key for key in self.cleared_instances if key not in visible]
+        self.cleared_labels = [label for label in self.cleared_labels if label not in visible]
+        busy = self.action[2]['label'] if self.action else None
+
+        def absent(key):
+            return stamp-self.last_seen.setdefault(key, stamp) >= cfg.absent_clear_seconds
+        for key in [key for key, label in self.blocked_instances.items()
+                    if label != busy and absent(key)]:
+            self.blocked_instances.pop(key)
+            self.cleared_instances.append(key)
+        gone = {label for label in self.blocked if label != busy
+                and label not in self.blocked_instances.values() and absent(label)}
+        self.blocked.difference_update(gone)
+        self.cleared_labels.extend(sorted(gone - set(self.cleared_labels)))
+        del self.cleared_instances[:-CLEARED_HISTORY]
+        del self.cleared_labels[:-CLEARED_HISTORY]
+        self.last_seen = {key: value for key, value in self.last_seen.items()
+                          if key in self.blocked or key in self.blocked_instances}
+        if self.phase == 'HAZARD_PAUSED' and not self.blocked and not self.action and not self.finishing:
+            self.phase = 'RUNNING'
 
     def _stop_after_link_loss(self, code, keep_recheck):
         """A restored link must never restart driving by itself; only a user RESUME does.
@@ -369,6 +424,7 @@ class CareController:
         new_frame = observation.get('sequence') != self.last_sequence
         if new_frame:
             self.last_sequence = observation.get('sequence')
+            self._clear_absent(seen, stamp, cfg)
         if self.finishing and self.action[0] == 'RECHECK_HAZARD' and self._recheck_target_visible(seen):
             # A fresh redetection invalidates absence before completion ACK.
             self.finishing = False
