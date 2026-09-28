@@ -307,6 +307,12 @@ class Runtime:
                 LOG.info('Task=%s reason=%s motor=%s detection=%s age=%s blur=%s blocked=%s',
                          *state, diagnostic['detectionStatus'], diagnostic['resultAge'],
                          diagnostic['blurScore'], diagnostic['blocked'])
+                # 하역 확인이 흔들리면 그 프레임에 무엇이 있었는지가 곧 원인이다. 대상이 사라진
+                # 것인지, 다른 개체로 잡힌 것인지, 마커가 없는 것인지는 이 한 줄로 갈린다.
+                if self.controller.phase == 'VERIFYING_DROP':
+                    LOG.info('  drop frame: objects=%s markers=%s',
+                             [(o['label'], o['confidence'], o['objectInstanceId']) for o in diagnostic['objects']],
+                             [(m.get('id'), m.get('fill'), m.get('centre')) for m in diagnostic['markers']])
                 previous = state
             if snapshot is not None and time.monotonic() >= next_snapshot:
                 try:
