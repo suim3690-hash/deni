@@ -3,6 +3,7 @@ import unittest
 import time
 
 from care_runtime import FocusSwitch, Runtime
+from detection import config as C
 
 
 class Detector:
@@ -79,19 +80,29 @@ class RuntimeAlertTests(unittest.TestCase):
         self.assertEqual(self.runtime.state()['taskState'], 'CONTROL_FAULT')
         self.assertEqual(self.runtime.command('RESUME', 'resume')['status'], 'FAILED')
 
-    def test_only_relocation_target_is_suppressed_until_action_ends(self):
+    def test_relocation_suppresses_every_kind_until_the_action_ends(self):
         controller = self.runtime.controller
         controller.request('RELOCATE', 'move',
                            {'hazardId': 'h1', 'objectLabel': '배터리'}, 10.0)
         self.runtime._sync_alert_suppression()
-        self.assertEqual(self.detector.suppressed, {'battery'})
+        # 대상뿐 아니라 다른 종류도 처리가 끝날 때까지 새 위험으로 기록하지 않는다.
+        self.assertEqual(self.detector.suppressed, set(C.ALERT_LABEL_BITS))
         controller._complete_action('FAILED', 'TEST_END')
         self.runtime._sync_alert_suppression()
         self.assertEqual(self.detector.suppressed, set())
 
-    def test_direct_removal_does_not_suppress_alerts(self):
-        self.runtime.controller.request('RECHECK_HAZARD', 'remove',
-                                        {'hazardId': 'h1', 'objectLabel': '배터리'}, 10.0)
+    def test_direct_removal_suppresses_alerts_for_its_whole_run(self):
+        controller = self.runtime.controller
+        controller.request('RECHECK_HAZARD', 'remove',
+                           {'hazardId': 'h1', 'objectLabel': '배터리'}, 10.0)
+        self.runtime._sync_alert_suppression()
+        self.assertEqual(self.detector.suppressed, set(C.ALERT_LABEL_BITS))
+        # 결과 확정 전 정리 구간에도 기록을 열지 않는다.
+        controller.action = None
+        controller.finishing = True
+        self.runtime._sync_alert_suppression()
+        self.assertEqual(self.detector.suppressed, set(C.ALERT_LABEL_BITS))
+        controller.finishing = False
         self.runtime._sync_alert_suppression()
         self.assertEqual(self.detector.suppressed, set())
 

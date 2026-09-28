@@ -13,6 +13,7 @@ import urllib.request
 from pathlib import Path
 
 from care_controller import CareController, Settings, LABELS
+from detection import config as C
 from detection.service import DetectionService
 from motor_output import MotorOutput, DRIVE_REVERSED
 from pc_dashboard import CameraFeed, read_mjpeg
@@ -144,9 +145,12 @@ class Runtime:
         return contact is not None and now-contact <= self.controller.settings.backend_timeout_seconds
 
     def _sync_alert_suppression(self):
-        action = self.controller.action
-        labels = {action[2]['label']} if action and action[0] == 'RELOCATE' else set()
-        self.detector.set_suppressed_alert_labels(labels)
+        # From the moment a treatment starts until its result is settled, no new hazard
+        # is recorded, for any kind and for both relocation and a removal check. Only
+        # the server-side record pauses: alignment, drop verification and the absence
+        # check all read live detection, so inference itself has to keep running.
+        busy = self.controller.action is not None or self.controller.finishing
+        self.detector.set_suppressed_alert_labels(set(C.ALERT_LABEL_BITS) if busy else set())
         if hasattr(self.detector, 'set_relocated_labels'):
             self.detector.set_relocated_labels(self.controller.relocated_labels)
 
