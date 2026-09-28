@@ -3,7 +3,7 @@ import { ArrowLeft, CheckCircle2, Loader2, ShieldCheck } from 'lucide-react'
 import floorPlanPreview from '../assets/figma/safety-profile/floor-plan-clean.png'
 import capturePreview from '../assets/figma/hazard/capture.png'
 import robotIcon from '../assets/figma/home/imgVector5.svg'
-import { getRobotState, resolveLivingHazard, sendDeviceCommand, type DashboardHazard, type HazardDetail, type HazardMarker, type RobotState } from '../services/dashboard'
+import { getDeviceSettings, getRobotState, resolveLivingHazard, sendDeviceCommand, setAutoRelocation, type DashboardHazard, type HazardDetail, type HazardMarker, type RobotState } from '../services/dashboard'
 import { treatmentReadinessMessage } from '../lib/treatmentReadiness'
 import { apiErrorMessage } from '../services/apiError'
 import { getSafetyAction, requestRelocation, requestRemovalCheck } from '../services/operations'
@@ -280,12 +280,33 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
     }
   }, [isMock, pendingActionId, pendingKind])
 
-  function toggleAutoTransport() {
+  // 실제 모드의 자동 이송은 서버가 기기에 요청을 발행한다. 화면은 토글만 저장한다.
+  useEffect(() => {
+    if (isMock || !deviceId) return
+    let active = true
+    getDeviceSettings(deviceId)
+      .then((settings) => { if (active) setAutoTransport(settings.autoRelocation) })
+      .catch(() => { if (active) setActionMessage('자동 이송 설정을 불러오지 못했어요. 연결을 확인해 주세요.') })
+    return () => { active = false }
+  }, [deviceId, isMock])
+
+  async function toggleAutoTransport() {
+    const enabled = !autoTransport
     if (!isMock) {
-      setActionMessage('자동 이송 모드는 아직 지원되지 않아요. 위험 물체 안전 이송 또는 직접 제거를 이용해 주세요.')
+      if (!deviceId) return
+      setAutoTransport(enabled)
+      try {
+        const settings = await setAutoRelocation(deviceId, enabled)
+        setAutoTransport(settings.autoRelocation)
+        setActionMessage(settings.autoRelocation
+          ? '자동 이송을 켰어요. 로봇이 정지한 상태에서 남은 삼킴 위험물을 하나씩 이송해요.'
+          : '자동 이송을 껐어요.')
+      } catch (error) {
+        setAutoTransport(!enabled)
+        setActionMessage(apiErrorMessage(error, '자동 이송 설정을 바꾸지 못했어요.'))
+      }
       return
     }
-    const enabled = !autoTransport
     setAutoTransport(enabled)
     if (enabled && flow === 'idle') {
       setRedetected(false)

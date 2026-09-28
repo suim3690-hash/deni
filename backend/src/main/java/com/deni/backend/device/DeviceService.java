@@ -115,6 +115,29 @@ public class DeviceService {
 	}
 
 	@Transactional(readOnly = true)
+	public DeviceSettings getSettings(String deviceId) {
+		String id = deviceId(deviceId);
+		findDevice(id);
+		if (jdbc == null) return new DeviceSettings(id, false);
+		return new DeviceSettings(id, Boolean.TRUE.equals(
+				jdbc.queryForObject("SELECT auto_relocation FROM devices WHERE id=?", Boolean.class, id)));
+	}
+
+	/** 자동 이송 토글. 켜는 것만으로 기기가 움직이지는 않고, 정지 상태에서 요청이 발행된다. */
+	@Transactional
+	public DeviceSettings setAutoRelocation(String deviceId, Boolean enabled) {
+		if (enabled == null) {
+			throw ApiException.validation("자동 이송 설정을 입력해 주세요.", Map.of("autoRelocation", "필수입니다."));
+		}
+		String id = deviceId(deviceId);
+		findDevice(id);
+		if (jdbc == null) return new DeviceSettings(id, enabled);
+		jdbc.update("UPDATE devices SET auto_relocation=?, updated_at=clock_timestamp(), version=version+1"
+				+ " WHERE id=?", enabled, id);
+		return new DeviceSettings(id, enabled);
+	}
+
+	@Transactional(readOnly = true)
 	public DeviceStatus findStatusForChild(UUID childId) {
 		if (jdbc == null) return devices.findByChildId(childId).map(this::status).orElse(null);
 		return jdbc.queryForList("SELECT device_id FROM device_children WHERE child_id=? ORDER BY linked_at LIMIT 1",
@@ -250,6 +273,7 @@ public class DeviceService {
 		return ApiException.validation("기기 입력값을 확인해 주세요.", Map.of(field, message));
 	}
 
+	public record DeviceSettings(String deviceId, boolean autoRelocation) { }
 	public record RegisteredDevice(UUID childId, String deviceId, String name, DeviceStatus status) { }
 	public record DeviceStatus(String deviceId, String name, String connectionState, String operationState,
 			Integer batteryPercent, OffsetDateTime lastSeenAt, boolean commandsAvailable) { }

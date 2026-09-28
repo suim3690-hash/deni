@@ -1,0 +1,1 @@
+ALTER TABLE devices ADD COLUMN auto_relocation BOOLEAN NOT NULL DEFAULT false;
