@@ -188,9 +188,17 @@ class DeviceServiceTests {
 		assertThrows(ApiException.class, () -> service.recordStatus(input("ONLINE", "RUNNING", -1, NOW)));
 		assertThrows(ApiException.class, () -> service.recordStatus(input("ONLINE", "RUNNING", 101, NOW)));
 		assertThrows(ApiException.class, () -> service.recordStatus(input("ONLINE", "RUNNING", null, null)));
-		assertThrows(ApiException.class, () -> service.recordStatus(input("ONLINE", "RUNNING", null, NOW.plusSeconds(1))));
+		assertThrows(ApiException.class, () -> service.recordStatus(input("ONLINE", "RUNNING", null, NOW.plusSeconds(3))));
 		assertThrows(IllegalArgumentException.class, () -> new DeviceService(devices, children, guard, 0, Clock.systemUTC()));
 		verifyNoInteractions(devices, guard, children);
+	}
+
+	@Test
+	void slightlyFastDeviceClockIsAcceptedAtServerTime() {
+		Device device = device();
+		service.recordStatus(input("ONLINE", "PAUSED", null, NOW.plusNanos(230_000_000)));
+		assertEquals(NOW.toInstant(), device.getLastReportedAt().toInstant());
+		assertEquals(NOW.toInstant(), service.alignReportTime(NOW.plusSeconds(2)).toInstant());
 	}
 
 	private Device device() {

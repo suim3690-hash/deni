@@ -25,9 +25,10 @@ public class DeviceService {
 	private DeviceChannel channel;
 	@Autowired(required = false)
 	private JdbcTemplate jdbc;
-	// 기기 시계와 서버 시계는 정확히 같을 수 없다. 관측된 어긋남은 밀리초 미만이므로 그만큼만
-	// 흡수하고, 실제로 어긋난 시계는 그대로 거부해 드러낸다.
-	private static final Duration CLOCK_SKEW_ALLOWANCE = Duration.ofMillis(200);
+	// 기기 시계와 서버 시계는 정확히 같을 수 없다. 2026-09-29 시연 PC는 배포 서버보다 약 0.23초
+	// 빨라 200ms 허용치에서 상태 보고가 전부 거부됐다. 허용치 안의 앞선 시각은 서버 시각으로
+	// 맞춰 저장하므로 넉넉히 두고, 몇 초 넘게 어긋난 시계만 거부해 드러낸다.
+	private static final Duration CLOCK_SKEW_ALLOWANCE = Duration.ofSeconds(2);
 	private static final Set<String> CONNECTIONS = Set.of("ONLINE", "OFFLINE", "UNKNOWN");
 	private static final Set<String> OPERATIONS = Set.of("RUNNING", "PAUSED", "STOPPING", "RESUMING", "READY_TO_RESUME", "UNKNOWN");
 	private final DeviceRepository devices;

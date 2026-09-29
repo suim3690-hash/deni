@@ -119,8 +119,9 @@ public class DeviceMessageService {
         if (!"COMMAND_RESULT".equals(type)) throw new IllegalArgumentException();
         String status=payload.path("status").asText();
         if (!Set.of("SUCCEEDED","FAILED").contains(status)) throw new IllegalArgumentException();
-        OffsetDateTime completed=OffsetDateTime.parse(payload.path("completedAt").asText()).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
-        if(completed.isAfter(OffsetDateTime.now())) throw new IllegalArgumentException();
+        // 상태 보고와 같은 허용치로 앞선 기기 시계를 서버 시각에 맞춘다.
+        OffsetDateTime completed=devices.alignReportTime(OffsetDateTime.parse(payload.path("completedAt").asText()))
+            .truncatedTo(java.time.temporal.ChronoUnit.MICROS);
         guard.lock("device",id);
         var rows=jdbc.queryForList("SELECT d.status,d.sent_at,d.completed_at,d.result_payload,r.kind,r.hazard_id FROM device_command_delivery d JOIN operation_requests r ON r.id=d.command_id WHERE d.command_id=? AND d.device_id=? FOR UPDATE OF d",command,id);
         if(rows.isEmpty()) throw new IllegalArgumentException();
@@ -129,7 +130,9 @@ public class DeviceMessageService {
         String previous=(String)rows.getFirst().get("status");
         if(previous.equals(status)) {
             OffsetDateTime original=jdbc.queryForObject("SELECT completed_at FROM device_command_delivery WHERE command_id=?",OffsetDateTime.class,command);
-            if(!original.toInstant().equals(completed.truncatedTo(java.time.temporal.ChronoUnit.MICROS).toInstant())) throw new IllegalArgumentException();
+            // 처음 받을 때 서버 시각으로 맞춰 저장했다면 재전송의 시각은 저장값보다 늦을 수 있다.
+            // 같은 결과인지는 아래 본문 비교가 가린다.
+            if(completed.toInstant().isBefore(original.toInstant())) throw new IllegalArgumentException();
             if(rows.getFirst().get("result_payload")!=null && !rows.getFirst().get("result_payload").equals(payload.toString())) throw new IllegalArgumentException();
             return;
         }
