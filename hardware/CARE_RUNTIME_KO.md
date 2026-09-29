@@ -83,11 +83,12 @@ PC–Pi 연결이 끊기면 정지한 뒤 자동으로 다시 접속하고, 새 
 | `search_sweep_degrees` | 90.0 | 마커 탐색 시 먼저 훑는 한쪽 각도. 180 미만. |
 | `search_pulse_seconds` | 0.25 | 탐색 회전 펄스 길이. 한 번에 약 15°(한 바퀴 6초 기준). |
 | `search_turns` | 2.0 | 이 바퀴 수만큼 돌아도 마커가 없으면 `MARKER_NOT_FOUND`. 펄스 회전은 연속 회전보다 덜 돌기 때문에 여유를 둔다. 탐색 중 전진하지 않는다. |
-| `reverse_seconds` | 3.0 | 이송 후 후진 시간. |
+| `reverse_seconds` | 3.0 | 이송 후 후진 시간의 상한. 밀어 둔 물체가 다시 보이면 먼저 멈춘다. |
+| `min_reverse_seconds` | 1.0 | 물체가 보여도 최소한 물러나는 시간. 상한을 넘을 수 없다. |
 | `drop_verify_seconds` | 1.0 | 후진 후 물체와 마커 근접을 연속 확인하는 시간. |
 | `drop_verify_timeout_seconds` | 10.0 | 안전 구역 배치 확인 제한 시간. |
 | `drop_verify_radius_ratio` | 0.45 | 화면 너비·높이로 정규화한 물체–마커 중심 거리 허용값. 2026-09-23 실물 배치에서 측정한 중심 거리 약 0.42를 포함한다. |
-| `turnaround_seconds` | 9.0 | 이송 후 회전 시간. |
+| `turnaround_seconds` | 7.0 | 이송 후 회전 시간. |
 | `action_timeout_seconds` | 120.0 | 처리 요청 제한 시간. 넘기면 실패로 보고한다. |
 
 바꾼 값은 다음 실행부터 적용된다. `--config` 로 다른 파일을 지정할 수도 있다.

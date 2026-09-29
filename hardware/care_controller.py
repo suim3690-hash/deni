@@ -33,10 +33,13 @@ class Settings:
     search_pulse_seconds: float = .25
     search_turns: float = 2.0
     reverse_seconds: float = 3.0
+    # 물체가 다시 보여도 이만큼은 물러난다. 팔 끝에 걸친 물체가 보이기 시작하는 순간
+    # 멈추면 아직 팔 안이라, 내려놓았다고 보기 이르다.
+    min_reverse_seconds: float = 1.0
     drop_verify_seconds: float = 1.0
     drop_verify_timeout_seconds: float = 10.0
     drop_verify_radius_ratio: float = .45
-    turnaround_seconds: float = 9.0
+    turnaround_seconds: float = 7.0
     action_timeout_seconds: float = 120.0
     # Backend answers every state report (sent at least once a second) with a RECEIPT.
     backend_timeout_seconds: float = 3.0
@@ -47,6 +50,8 @@ class Settings:
                 if type(value) is not int or not 0 <= value < 50: raise ValueError('Invalid marker ID')
             elif not math.isfinite(value) or value <= 0:
                 raise ValueError(name + ' must be positive and finite')
+        if self.min_reverse_seconds > self.reverse_seconds:
+            raise ValueError('Minimum reverse cannot exceed the reverse limit')
         if self.absent_clear_seconds <= self.removal_absence_seconds:
             raise ValueError('Automatic clearing must outlast a removal check')
         if (self.removal_absence_seconds < 2 or self.marker_stop_fill >= 1 or self.bearing_deadband >= 1
@@ -540,6 +545,7 @@ class CareController:
             # 이제 상한일 뿐이다. 끝까지 물러나면 물체가 너무 작아져 검출되지 않고, 그러면
             # 제자리에 옮겨 놓고도 하역 확인에 실패한다.
             if (self.phase == 'BACKING' and new_frame
+                    and cfg.reverse_seconds-self.timed_remaining >= cfg.min_reverse_seconds
                     and any(obj['label'] == self.action[2]['label'] for obj in seen)):
                 self.timed_remaining = 0
             if self.timed_remaining <= 0:

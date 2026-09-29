@@ -14,9 +14,10 @@
   "search_pulse_seconds": 0.25,
   "search_turns": 2.0,
   "reverse_seconds": 3.0,
+  "min_reverse_seconds": 1.0,
   "drop_verify_seconds": 1.0,
   "drop_verify_timeout_seconds": 10.0,
   "drop_verify_radius_ratio": 0.45,
-  "turnaround_seconds": 9.0,
+  "turnaround_seconds": 7.0,
   "action_timeout_seconds": 120.0
 }

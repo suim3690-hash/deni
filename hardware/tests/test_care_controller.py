@@ -446,19 +446,32 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.c.results['move']['errorCode'],'DROP_NOT_VERIFIED')
         self.assertEqual(self.c.phase,'HAZARD_PAUSED')
 
-    def test_backing_stops_as_soon_as_the_pushed_object_is_visible_again(self):
+    def test_backing_holds_a_minimum_then_stops_when_the_object_reappears(self):
         self.capture('battery', '배터리')
         self.tick([], marker=drop_marker())
         self.tick([], marker=drop_marker(fill=.14))
         self.assertEqual(self.c.phase, 'BACKING')
-        # 팔에 가려 보이지 않는 동안에는 계속 물러난다.
-        for _ in range(5): self.tick([])
-        self.assertEqual(self.c.phase, 'BACKING')
-        remaining = self.c.timed_remaining
-        self.assertGreater(remaining, 0)
-        # 다시 보이면 남은 시간을 버리고 그 자리에서 확인에 들어간다.
-        self.tick(['battery'])
+        ticks = 0
+        for _ in range(40):
+            self.tick(['battery'])
+            ticks += 1
+            if self.c.phase != 'BACKING': break
         self.assertEqual(self.c.phase, 'VERIFYING_DROP')
+        # 물체가 내내 보여도 최소 후진은 채우고, 상한은 다 쓰지 않는다.
+        self.assertGreaterEqual(ticks, int(self.c.settings.min_reverse_seconds / .1))
+        self.assertLess(ticks, int(self.c.settings.reverse_seconds / .1))
+
+    def test_backing_runs_to_the_limit_while_the_object_stays_hidden(self):
+        self.capture('battery', '배터리')
+        self.tick([], marker=drop_marker())
+        self.tick([], marker=drop_marker(fill=.14))
+        ticks = 0
+        for _ in range(60):
+            self.tick([])
+            ticks += 1
+            if self.c.phase != 'BACKING': break
+        self.assertEqual(self.c.phase, 'VERIFYING_DROP')
+        self.assertGreaterEqual(ticks, int(self.c.settings.reverse_seconds / .1))
 
     def test_drop_accepts_same_label_with_changed_ids_and_multiple_candidates(self):
         self.capture('battery', '배터리')
