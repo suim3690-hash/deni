@@ -13,7 +13,7 @@
   "search_sweep_degrees": 90.0,
   "search_pulse_seconds": 0.25,
   "search_turns": 2.0,
-  "reverse_seconds": 3.0,
+  "reverse_seconds": 2.0,
   "min_reverse_seconds": 1.0,
   "drop_verify_seconds": 1.0,
   "drop_verify_timeout_seconds": 10.0,

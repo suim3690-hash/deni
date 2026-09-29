@@ -32,7 +32,7 @@ class Settings:
     search_sweep_degrees: float = 90.0
     search_pulse_seconds: float = .25
     search_turns: float = 2.0
-    reverse_seconds: float = 3.0
+    reverse_seconds: float = 2.0
     # 물체가 다시 보여도 이만큼은 물러난다. 팔 끝에 걸친 물체가 보이기 시작하는 순간
     # 멈추면 아직 팔 안이라, 내려놓았다고 보기 이르다.
     min_reverse_seconds: float = 1.0

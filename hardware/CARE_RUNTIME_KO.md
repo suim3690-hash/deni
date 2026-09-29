@@ -83,7 +83,7 @@ PC–Pi 연결이 끊기면 정지한 뒤 자동으로 다시 접속하고, 새 
 | `search_sweep_degrees` | 90.0 | 마커 탐색 시 먼저 훑는 한쪽 각도. 180 미만. |
 | `search_pulse_seconds` | 0.25 | 탐색 회전 펄스 길이. 한 번에 약 15°(한 바퀴 6초 기준). |
 | `search_turns` | 2.0 | 이 바퀴 수만큼 돌아도 마커가 없으면 `MARKER_NOT_FOUND`. 펄스 회전은 연속 회전보다 덜 돌기 때문에 여유를 둔다. 탐색 중 전진하지 않는다. |
-| `reverse_seconds` | 3.0 | 이송 후 후진 시간. 물체 옆에서 돌지 않도록 끝까지 물러난다. |
+| `reverse_seconds` | 2.0 | 이송 후 후진 시간. 물체 옆에서 돌지 않도록 끝까지 물러난다. |
 | `min_reverse_seconds` | 1.0 | 이 시간 전의 목격은 하역으로 치지 않는다. 팔 안에 걸친 물체일 수 있다. |
 | `drop_verify_seconds` | 1.0 | 후진 후 물체와 마커 근접을 연속 확인하는 시간. |
 | `drop_verify_timeout_seconds` | 10.0 | 안전 구역 배치 확인 제한 시간. |
