@@ -39,7 +39,8 @@ class EventStore:
             self.db.execute('DELETE FROM events WHERE id=?', (key,))
         self.db.commit()
         if self.transport is not None:
-            enqueue_frame(self.transport, event_id, jpeg, payload['detections'], payload['mode'])
+            enqueue_frame(self.transport, event_id, jpeg, payload['detections'], payload['mode'],
+                          captured_at=record['time'])
         return record
 
     def close(self):

@@ -11,6 +11,13 @@ import java.util.UUID;
 
 interface HazardRepository extends JpaRepository<Hazard, UUID> {
 
+	Optional<Hazard> findFirstByDeviceIdAndChildIdAndObjectTypeAndObjectNameAndObjectInstanceIdAndStatusOrderByDetectedAtDesc(
+			String deviceId, UUID childId, String objectType, String objectName, UUID objectInstanceId, HazardStatus status);
+
+	Optional<Hazard> findFirstByDeviceIdAndChildIdAndObjectTypeAndObjectNameAndObjectInstanceIdAndStatusAndAcknowledgedAtIsNotNullAndUpdatedAtGreaterThanEqualOrderByUpdatedAtDesc(
+			String deviceId, UUID childId, String objectType, String objectName, UUID objectInstanceId, HazardStatus status,
+			OffsetDateTime cutoff);
+
 	Optional<Hazard> findByDeviceIdAndSourceEventId(String deviceId, String sourceEventId);
 
 	/** 미해결 상태의 같은 물체 건. 탐지 중복 병합에 사용한다. */

@@ -19,6 +19,7 @@ import java.time.ZoneId;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE,
 		properties = "safety.profile-refresh.enabled=false")
@@ -32,6 +33,9 @@ class OperationDatabaseTests {
 	@Autowired private OperationService operations;
 	@Autowired private EntityManager entityManager;
 	@Autowired private JdbcTemplate jdbc;
+	@Autowired private com.deni.backend.device.DeviceChannel channel;
+	private final java.util.Map<String, org.springframework.web.socket.WebSocketSession> sessions = new java.util.HashMap<>();
+	@org.junit.jupiter.api.AfterEach void closeSessions() { sessions.forEach(channel::remove); }
 
 	@Test
 	void pausePersistsAndReplaySurvivesReloadWithoutInventingConfirmedResult() {
@@ -46,7 +50,7 @@ class OperationDatabaseTests {
 		assertEquals("REQUESTED", result.status());
 		assertNull(result.confirmedAt());
 		assertEquals("UNKNOWN", result.deviceOperationState());
-		assertEquals("NOT_CONNECTED", result.deliveryState());
+		assertEquals("QUEUED", result.deliveryState());
 		assertEquals("PAUSED", devices.findStatusForChild(child).operationState());
 		assertEquals(1L, jdbc.queryForObject("SELECT COUNT(*) FROM operation_requests WHERE device_id = ?", Long.class, device));
 	}
@@ -63,7 +67,7 @@ class OperationDatabaseTests {
 		entityManager.clear();
 		assertEquals(receipt.actionId(), operations.requestRemovalCheck(hazard, key).actionId());
 		var result = operations.getAction(receipt.actionId());
-		assertEquals("UNKNOWN", result.status());
+		assertEquals("REQUESTED", result.status());
 		assertEquals("PENDING", result.treatmentStatus());
 		assertNull(result.hazardPresent());
 		assertNull(result.completedAt());
@@ -87,6 +91,10 @@ class OperationDatabaseTests {
 	private UUID setup(String device) {
 		UUID child = children.register("OPERATION_DATABASE_TEST", LocalDate.now(ZONE).minusMonths(20), UUID.randomUUID()).childId();
 		devices.register(child, device, "요청 저장 테스트");
+		var session = mock(org.springframework.web.socket.WebSocketSession.class);
+		when(session.isOpen()).thenReturn(true);
+		channel.register(device, session);
+		sessions.put(device, session);
 		devices.recordStatus(new DeviceService.StatusInput(device, "ONLINE", "PAUSED", 82, OffsetDateTime.now(ZONE).minusSeconds(1)));
 		// 제거 재확인은 기기가 보고한 최신 전원·정지 상태를 요구한다.
 		jdbc.update("""

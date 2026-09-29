@@ -22,7 +22,11 @@ MOVEMENT_STATES = {"FORWARD", "TURNING", "BACKWARD", "STOPPED", "UNKNOWN"}
 # Unmeasured fields stay null; the backend stores them as-is and must not receive estimates.
 UNOBSERVED_STATE = {"operationState": "UNKNOWN", "movementState": "UNKNOWN",
                     "batteryPercent": None, "movementDurationMs": None,
-                    "movementDistanceM": None, "powerEnabled": None, "taskState": None}
+                    "movementDistanceM": None, "powerEnabled": None, "taskState": None,
+                    # What live detection sees right now. detectionLive false means the lists
+                    # carry no information, so an empty list is never read as "all gone".
+                    "detectionLive": False, "visibleObjectInstanceIds": [], "visibleObjectLabels": []}
+VISIBLE_LIMIT = 64
 STATE_PERIOD = 1.0
 
 
@@ -32,16 +36,19 @@ def now():
 
 class Bridge:
     def __init__(self, device, token, http_url, ws_url, store,
-                 state_provider=None, command_handler=None):
+                 state_provider=None, command_handler=None, contact_handler=None):
         """state_provider/command_handler are synchronous; they run off the socket loop.
 
         Without them the socket still runs, reporting UNKNOWN and failing every
         command, which is what an unattached transport can honestly claim.
+        contact_handler is called on the socket loop for every backend message,
+        so it must be cheap; the robot uses it to stop when the backend goes silent.
         """
         if not device or len(token) < 32:
             raise ValueError("Registered device ID and token of at least 32 characters required")
         self.device, self.ws_url = device, ws_url
         self.state_provider, self.command_handler = state_provider, command_handler
+        self.contact_handler = contact_handler
         self.http_url = http_url.rstrip("/")
         self.headers = {"Authorization": "Bearer " + token, "X-Device-Id": device}
         Path(store).parent.mkdir(parents=True, exist_ok=True)
@@ -66,7 +73,7 @@ class Bridge:
     def close(self):
         self.db.close()
 
-    def enqueue_detection(self, image_bytes, label, model_type, event_id=None):
+    def enqueue_detection(self, image_bytes, label, model_type, event_id=None, captured_at=None, object_instance_id=None):
         """Call from the detector with an annotated JPEG/PNG; returns stable UUID.
 
         One writer process/thread owns each Bridge. Run inference separately
@@ -85,9 +92,23 @@ class Bridge:
         data = (self.device, model_type, label, image_bytes, mime)
         if existing is not None and existing != data:
             raise ValueError("Event ID already belongs to different content")
+        metadata = {}
+        if object_instance_id is not None:
+            metadata['objectInstanceId'] = str(UUID(str(object_instance_id)))
+        if existing is not None:
+            stored = self.db.execute('SELECT response FROM events WHERE id=?', (event,)).fetchone()[0]
+            previous = json.loads(stored) if stored else {}
+            if previous.get('objectInstanceId') != metadata.get('objectInstanceId'):
+                raise ValueError('Event ID already belongs to a different object instance')
+        if captured_at is not None:
+            stamp = datetime.fromisoformat(captured_at.replace('Z', '+00:00'))
+            if stamp.tzinfo is None:
+                raise ValueError('capturedAt requires a timezone')
+            metadata['capturedAt'] = stamp.isoformat()
+        # Reuse the existing TEXT field; retain capture metadata across retries/restarts.
         with self.db:
             self.db.execute("INSERT OR IGNORE INTO events VALUES (?,?,?,?,?,?,?,?)",
-                            (event, *data, "pending", None))
+                            (event, *data, "pending", json.dumps(metadata)))
         return event
 
     def flush_once(self):
@@ -96,11 +117,17 @@ class Bridge:
         Other HTTP failures and unexpected responses remain in the store as
         rejected for inspection; never create a replacement event automatically.
         """
-        rows = self.db.execute("SELECT id,model,label,image,mime FROM events WHERE status='pending' AND device=? ORDER BY rowid LIMIT 20", (self.device,)).fetchall()
-        for event, model, label, frame, mime in rows:
+        rows = self.db.execute("SELECT id,model,label,image,mime,response FROM events WHERE status='pending' AND device=? ORDER BY rowid LIMIT 20", (self.device,)).fetchall()
+        for event, model, label, frame, mime, stored in rows:
+            metadata = json.loads(stored) if stored else {}
+            data = {"eventId": event, "modelType": model, "objectLabel": label}
+            if metadata.get('capturedAt'):
+                data['capturedAt'] = metadata['capturedAt']
+            if metadata.get('objectInstanceId'):
+                data['objectInstanceId'] = metadata['objectInstanceId']
             try:
                 response = requests.post(self.http_url + "/api/v1/hardware/detections",
-                    headers=self.headers, data={"eventId": event, "modelType": model, "objectLabel": label},
+                    headers=self.headers, data=data,
                     files={"image": ("annotated.png" if mime == "image/png" else "annotated.jpg", frame, mime)},
                     timeout=(5, 20), allow_redirects=False)
             except requests.RequestException:
@@ -117,7 +144,7 @@ class Bridge:
             status = "sent" if accepted else "rejected"
             with self.db:
                 self.db.execute("UPDATE events SET status=?,response=? WHERE id=?",
-                    (status, json.dumps({"httpStatus": response.status_code, "body": body}, ensure_ascii=False), event))
+                    (status, json.dumps(dict(metadata, httpStatus=response.status_code, body=body), ensure_ascii=False), event))
             LOG.info("Event %s: %s (HTTP %s)", event, status, response.status_code)
 
     async def send(self, socket, kind, payload):
@@ -137,6 +164,14 @@ class Bridge:
         state = dict(UNOBSERVED_STATE, **observed)
         if state["operationState"] not in OPERATION_STATES or state["movementState"] not in MOVEMENT_STATES:
             raise ValueError("State provider returned a state the backend rejects")
+        if not isinstance(state["detectionLive"], bool):
+            raise ValueError("State provider returned a non-boolean detectionLive")
+        for key in ("visibleObjectInstanceIds", "visibleObjectLabels"):
+            values = state[key]
+            if (not isinstance(values, list) or len(values) > VISIBLE_LIMIT
+                    or not all(isinstance(value, str) and 0 < len(value) <= 100 for value in values)):
+                raise ValueError("State provider returned an unusable " + key)
+        state["visibleObjectInstanceIds"] = [str(UUID(value)) for value in state["visibleObjectInstanceIds"]]
         # sampledAt is set after reading, so it describes this observation.
         return dict(state, sampledAt=now())
 
@@ -193,6 +228,9 @@ class Bridge:
         if message.get("type") == "ERROR":
             LOG.error("Backend rejected a message: %s", message.get("code"))
             return
+        if message.get("type") == "COMMAND_STATUS":
+            await self.recover_result(socket, message['payload'])
+            return
         if message.get("type") != "COMMAND":
             return
         payload = message["payload"]
@@ -201,6 +239,11 @@ class Bridge:
         cached = self.db.execute("SELECT result FROM commands WHERE id=? AND device=?", (command_id, self.device)).fetchone()
         if cached:
             await self.send(socket, "COMMAND_RESULT", json.loads(cached[0]))
+            return
+        started = self.db.execute('SELECT 1 FROM started_commands WHERE id=? AND device=?',
+                                  (command_id, self.device)).fetchone()
+        if started:
+            await self.recover_result(socket, payload)
             return
         expires = datetime.fromisoformat(payload["expiresAt"].replace("Z", "+00:00"))
         if expires.tzinfo is None:
@@ -213,7 +256,13 @@ class Bridge:
             await self.send(socket, "COMMAND_ACK", {"commandId": command_id, "status": "DELIVERED"})
             with self.db:
                 self.db.execute('INSERT OR IGNORE INTO started_commands VALUES (?,?)', (command_id,self.device))
-            result = await self.execute(command_id, payload["command"], payload.get('parameters', {}))
+            try:
+                result = await self.execute(command_id, payload["command"], payload.get('parameters', {}))
+            except Exception:
+                # Leave started_commands durable. A status query reconciles with the
+                # controller and its motor ACK, rather than re-running a physical task.
+                LOG.exception('Command execution/result validation failed; recovery required: %s', command_id)
+                return
             with self.db:
                 self.db.execute("INSERT INTO commands VALUES (?,?,?)", (command_id, self.device, json.dumps(result)))
                 self.db.execute('INSERT OR IGNORE INTO pending_results VALUES (?,?)', (command_id,self.device))
@@ -225,6 +274,36 @@ class Bridge:
         finally:
             self.inflight.discard(command_id)
 
+    async def recover_result(self, socket, payload):
+        command_id = str(UUID(payload['commandId']))
+        if command_id in self.inflight:
+            return
+        cached = self.db.execute('SELECT result FROM commands WHERE id=? AND device=?',
+                                 (command_id, self.device)).fetchone()
+        if cached:
+            await self.send(socket, 'COMMAND_RESULT', json.loads(cached[0]))
+            return
+        if self.command_handler is None:
+            return
+        # Reserve the identity while reconciling so a delayed COMMAND cannot execute it.
+        self.inflight.add(command_id)
+        try:
+            outcome = await asyncio.to_thread(self.command_handler, 'RECOVER_COMMAND', command_id,
+                                              payload.get('parameters', {}))
+            if outcome is None:
+                return
+            if outcome.get('status') not in {'SUCCEEDED', 'FAILED'}:
+                raise ValueError('Invalid recovery outcome')
+            result = dict(outcome, commandId=command_id, completedAt=now())
+            with self.db:
+                self.db.execute('INSERT INTO commands VALUES (?,?,?)',
+                                (command_id, self.device, json.dumps(result)))
+                self.db.execute('INSERT OR IGNORE INTO pending_results VALUES (?,?)', (command_id,self.device))
+                self.db.execute('DELETE FROM started_commands WHERE id=? AND device=?', (command_id,self.device))
+            await self.send(socket, 'COMMAND_RESULT', result)
+        finally:
+            self.inflight.discard(command_id)
+
     async def session(self):
         async with connect(self.ws_url, additional_headers=self.headers,
                            open_timeout=10, ping_interval=20, ping_timeout=20, max_size=16384) as socket:
@@ -233,9 +312,11 @@ class Bridge:
             reporter = asyncio.create_task(self.report(socket))
             async def receive():
                 async for raw in socket:
+                    if self.contact_handler is not None:
+                        self.contact_handler()
                     try:
                         message = json.loads(raw)
-                        if message.get('type') == 'COMMAND':
+                        if message.get('type') in {'COMMAND', 'COMMAND_STATUS'}:
                             async def process(message=message):
                                 try: await self.handle(socket, message)
                                 except Exception: LOG.exception('Command processing failed')

@@ -41,6 +41,12 @@ class Hazard {
 	@Column(name = "object_name", nullable = false, length = 100)
 	private String objectName;
 
+	@Column(name = "object_instance_id")
+	private UUID objectInstanceId;
+
+	UUID getObjectInstanceId() { return objectInstanceId; }
+	void setObjectInstanceId(UUID value) { objectInstanceId = value; }
+
 	@Enumerated(EnumType.STRING)
 	@Column(name = "risk_level", nullable = false, length = 20)
 	private RiskLevel riskLevel;

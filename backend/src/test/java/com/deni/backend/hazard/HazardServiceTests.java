@@ -23,6 +23,30 @@ import static org.mockito.Mockito.verifyNoInteractions;
 
 class HazardServiceTests {
 
+	@Test
+	void sameLabelInstancesStaySeparateAndOnlyTheirOwnPhotoRefreshes() {
+		HazardRepository repository = mock(HazardRepository.class);
+		var stored = new java.util.HashMap<UUID, Hazard>();
+		when(repository.save(any(Hazard.class))).thenAnswer(call -> {
+			Hazard h = call.getArgument(0); stored.put(h.getObjectInstanceId(), h); return h;
+		});
+		when(repository.findFirstByDeviceIdAndChildIdAndObjectTypeAndObjectNameAndObjectInstanceIdAndStatusOrderByDetectedAtDesc(
+				any(), any(), any(), any(), any(), any())).thenAnswer(call -> Optional.ofNullable(stored.get(call.getArgument(4))));
+		var service = new HazardService(repository, mock(IdempotencyGuard.class));
+		UUID child = UUID.randomUUID(), a = UUID.randomUUID(), b = UUID.randomUUID();
+		var one = service.recordDetection(new HazardService.DetectionInput(child, "robot-1", "SWALLOW", "배터리", "HIGH",
+				null, DETECTED_AT, null, null, null, null, "/a", "PAUSED", "a1"), a);
+		var two = service.recordDetection(new HazardService.DetectionInput(child, "robot-1", "SWALLOW", "배터리", "HIGH",
+				null, DETECTED_AT, null, null, null, null, "/b", "PAUSED", "b1"), b);
+		org.junit.jupiter.api.Assertions.assertNotEquals(one.hazardId(), two.hazardId());
+		var again = service.recordDetection(new HazardService.DetectionInput(child, "robot-1", "SWALLOW", "배터리", "HIGH",
+				null, DETECTED_AT.plusSeconds(10), null, null, null, null, "/a-new", "PAUSED", "a2"), a);
+		assertEquals(one.hazardId(), again.hazardId());
+		assertEquals("/a-new", again.captureImageUrl());
+		assertEquals("/b", stored.get(b).getCaptureImageUrl());
+		assertEquals(2, stored.size());
+	}
+
 	private final IdempotencyGuard guard = mock(IdempotencyGuard.class);
 
 	private static final OffsetDateTime DETECTED_AT = OffsetDateTime.parse("2026-09-17T10:14:00+09:00");

@@ -22,6 +22,8 @@ public class HazardService {
 
 	private final HazardRepository hazardRepository;
 	private final IdempotencyGuard idempotencyGuard;
+	@org.springframework.beans.factory.annotation.Autowired
+	private TreatmentHistory treatments;
 
 	public HazardService(HazardRepository hazardRepository, IdempotencyGuard idempotencyGuard) {
 		this.hazardRepository = hazardRepository;
@@ -31,7 +33,9 @@ public class HazardService {
 	@Transactional(readOnly = true)
 	public List<HazardListItem> findHazards(String deviceId, HazardStatus status) {
 		String normalizedDeviceId = requireText(deviceId, "deviceId", 100);
+		var handled = treatments == null ? java.util.Set.<UUID>of() : treatments.relocated(normalizedDeviceId, null);
 		return hazardRepository.findByDeviceIdAndStatusOrderByDetectedAtDesc(normalizedDeviceId, status).stream()
+				.filter(hazard -> !handled.contains(hazard.getId()))
 				.map(this::toListItem)
 				.toList();
 	}
@@ -45,7 +49,9 @@ public class HazardService {
 		if (childId == null) {
 			throw ApiException.validation("아이 ID를 입력해 주세요.", Map.of("childId", "아이 ID는 필수입니다."));
 		}
+		var handled = treatments == null ? java.util.Set.<UUID>of() : treatments.relocated(null, childId);
 		return hazardRepository.findByChildIdAndStatusOrderByDetectedAtDesc(childId, HazardStatus.ACTIVE).stream()
+				.filter(hazard -> !handled.contains(hazard.getId()))
 				.map(hazard -> new ActiveHazardSummary(hazard.getId(), hazard.getObjectName(),
 						hazard.getRiskLevel().name(), hazard.getLocationLabel(), hazard.getDetectedAt(),
 						hazard.getAcknowledgedAt()))
@@ -109,10 +115,18 @@ public class HazardService {
 		if (hazard.getStatus() != HazardStatus.ACTIVE) {
 			throw ApiException.conflict("HAZARD_ALREADY_RESOLVED", "이미 해결된 위험 건은 재확인을 요청할 수 없습니다.");
 		}
+		if (treatments != null && treatments.relocated(hazardId)) {
+			throw ApiException.conflict("HAZARD_ALREADY_RESOLVED", "이미 이송 처리가 완료된 위험 건입니다.");
+		}
 	}
 
 	@Transactional
 	public HazardDetailResult recordDetection(DetectionInput input) {
+		return recordDetection(input, null);
+	}
+
+	@Transactional
+	public HazardDetailResult recordDetection(DetectionInput input, UUID objectInstanceId) {
 		if (input == null) {
 			throw ApiException.validation("탐지 데이터를 입력해 주세요.", Map.of("detection", "필수입니다."));
 		}
@@ -140,17 +154,26 @@ public class HazardService {
 				objectType, objectName, riskLevel, normalizeOptional(input.riskReason()), input.detectedAt(),
 				normalizeOptional(input.locationLabel(), "locationLabel", 200), normalizeOptional(input.mapImageUrl()),
 				markerX, markerY, normalizeOptional(input.captureImageUrl()), operationState, eventId, now);
+		hazard.setObjectInstanceId(objectInstanceId);
 		idempotencyGuard.lock("hazard-detection", IdempotencyGuard.fingerprint(deviceId, eventId));
 		Hazard existing = hazardRepository.findByDeviceIdAndSourceEventId(deviceId, eventId).orElse(null);
 		if (existing != null) {
-			if (!hazard.getDetectionInputHash().equals(existing.getDetectionInputHash())) {
+			if (!hazard.getDetectionInputHash().equals(existing.getDetectionInputHash())
+					|| !java.util.Objects.equals(objectInstanceId, existing.getObjectInstanceId())) {
 				throw ApiException.conflict("DETECTION_EVENT_REUSED", "동일한 탐지 이벤트 ID에 다른 내용을 저장할 수 없습니다.");
 			}
 			return toDetail(existing);
 		}
 		// 같은 물체가 아직 미해결이면 새 건을 만들지 않고 최신 탐지로 갱신한다.
+		// 처리(제거 확인·이송·생활 위험 확인)가 끝나기 전에 찍힌 사진이 늦게 도착해도 새 위험으로 올리지 않는다.
+		if (treatments != null) {
+			UUID handled = treatments.handledAfter(deviceId, input.childId(), objectType, objectName, input.detectedAt(), objectInstanceId);
+			if (handled != null) return toDetail(hazardRepository.findById(handled).orElseThrow());
+		}
 		// 탐지 1프레임마다 알림이 쌓여 실제 물체 수와 어긋나는 문제를 막는다.
-		Hazard sameObject = hazardRepository
+		Hazard sameObject = objectInstanceId != null ? hazardRepository
+				.findFirstByDeviceIdAndChildIdAndObjectTypeAndObjectNameAndObjectInstanceIdAndStatusOrderByDetectedAtDesc(
+						deviceId, input.childId(), objectType, objectName, objectInstanceId, HazardStatus.ACTIVE).orElse(null) : hazardRepository
 				.findFirstByDeviceIdAndChildIdAndObjectTypeAndObjectNameAndStatusOrderByDetectedAtDesc(
 						deviceId, input.childId(), objectType, objectName, HazardStatus.ACTIVE)
 				.orElse(null);
@@ -160,7 +183,10 @@ public class HazardService {
 			return toDetail(sameObject);
 		}
 		if ("LIVING".equals(objectType)) {
-			Hazard recentlyAcknowledged = hazardRepository
+			Hazard recentlyAcknowledged = objectInstanceId != null ? hazardRepository
+					.findFirstByDeviceIdAndChildIdAndObjectTypeAndObjectNameAndObjectInstanceIdAndStatusAndAcknowledgedAtIsNotNullAndUpdatedAtGreaterThanEqualOrderByUpdatedAtDesc(
+							deviceId, input.childId(), objectType, objectName, objectInstanceId, HazardStatus.RESOLVED,
+							now.minus(LIVING_REDETECTION_GAP)).orElse(null) : hazardRepository
 					.findFirstByDeviceIdAndChildIdAndObjectTypeAndObjectNameAndStatusAndAcknowledgedAtIsNotNullAndUpdatedAtGreaterThanEqualOrderByUpdatedAtDesc(
 							deviceId, input.childId(), objectType, objectName, HazardStatus.RESOLVED,
 							now.minus(LIVING_REDETECTION_GAP))
@@ -180,7 +206,11 @@ public class HazardService {
 	}
 
 	private HazardDetailResult toDetail(Hazard hazard) {
-		return new HazardDetailResult(hazard.getId(), hazard.getDeviceId(), hazard.getStatus().name(),
+		// Existing UI treats RESOLVED as handled. Keep ACTIVE in storage for demo reset,
+		// but project a successful relocation as handled until a newer observation arrives.
+		String visibleStatus = treatments != null && treatments.relocated(hazard.getId())
+				? "RESOLVED" : hazard.getStatus().name();
+		return new HazardDetailResult(hazard.getId(), hazard.getDeviceId(), visibleStatus,
 				new DetectedObject(hazard.getObjectType(), hazard.getObjectName()), hazard.getRiskLevel().name(),
 				hazard.getRiskReason(), hazard.getDetectedAt(),
 				new LocationDetail(hazard.getLocationLabel(), hazard.getMapImageUrl(), marker(hazard)), hazard.getAcknowledgedAt(),

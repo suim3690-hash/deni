@@ -57,6 +57,7 @@ class ScriptedCamera:
         self.lock = threading.Lock()
         self.labels, self.fill, self.sequence, self.processing = [], 0.05, 0, False
         self.suppressed = set()
+        self.reset_alerts = set()
 
     def set_processing(self, enabled):
         with self.lock:
@@ -66,6 +67,10 @@ class ScriptedCamera:
         with self.lock:
             self.suppressed = set(labels)
 
+    def reset_alert_labels(self, labels):
+        with self.lock:
+            self.reset_alerts.update(labels)
+
     def show(self, labels, fill=0.05):
         with self.lock:
             self.labels, self.fill = list(labels), fill
@@ -73,7 +78,8 @@ class ScriptedCamera:
     def state(self):
         with self.lock:
             self.sequence += 1
-            hazards = [dict(label=name, bbox=[300, 200, 340, 240]) for name in self.labels] if self.processing else []
+            # Scripted objects stand for detections the stabilizer has already confirmed.
+            hazards = [dict(label=name, bbox=[300, 200, 340, 240], stable=True) for name in self.labels] if self.processing else []
             return dict(status='ok', frame_stamp=time.monotonic(), sequence=self.sequence, hazards=hazards,
                         markers=[dict(id=0, fill=self.fill, bearing=0.0, skew=0.1, centre=[320, 220])],
                         frame_width=640, frame_height=480)
@@ -124,7 +130,7 @@ def main():
     reporter = None
     try:
         threading.Thread(target=runtime.run, daemon=True).start()
-        reporter = start_state_reporter(stop, runtime.state, runtime.command)
+        reporter = start_state_reporter(stop, runtime.state, runtime.command, runtime.backend_contacted)
         wait_for(lambda: any('WS RECEIVED' in line for line in log), 'first state report')
         check('boot is powered off with detection and motor stopped',
               runtime.state()['taskState'] == 'OFF' and not camera.processing

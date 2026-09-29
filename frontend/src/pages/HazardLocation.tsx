@@ -3,10 +3,11 @@ import { ArrowLeft, CheckCircle2, Loader2, ShieldCheck } from 'lucide-react'
 import floorPlanPreview from '../assets/figma/safety-profile/floor-plan-clean.png'
 import capturePreview from '../assets/figma/hazard/capture.png'
 import robotIcon from '../assets/figma/home/imgVector5.svg'
-import { resolveLivingHazard, sendDeviceCommand, type DashboardHazard, type HazardDetail, type HazardMarker } from '../services/dashboard'
+import { getDeviceSettings, getRobotState, resolveLivingHazard, sendDeviceCommand, setAutoRelocation, type DashboardHazard, type HazardDetail, type HazardMarker, type RobotState } from '../services/dashboard'
+import { treatmentReadinessMessage } from '../lib/treatmentReadiness'
 import { apiErrorMessage } from '../services/apiError'
 import { getSafetyAction, requestRelocation, requestRemovalCheck } from '../services/operations'
-import { categoryLabels, classifyHazard, describeHazard, riskLabels, riskStyles, withTopicParticle, type HazardCategory } from '../lib/hazardRisk'
+import { categoryLabels, classifyHazard, describeHazard, riskLabels, riskStyles, withTopicParticle, type CompletedDirectRemoval, type HazardCategory } from '../lib/hazardRisk'
 import HazardAlertBox from '../components/HazardAlertBox'
 import type { Stage } from '../lib/stages'
 
@@ -42,14 +43,17 @@ interface Props {
   deviceId: string
   stage: Stage | null
   operationState: string
+  robotState?: RobotState | null
   detail: HazardDetail | null
   error: string
   errorStatus: number | null
   isMock: boolean
+  redetected: boolean
   onBack: () => void
   onRetry: () => void
   onSelect: (hazard: DashboardHazard) => void
   onLivingResolved: (detail: HazardDetail) => void
+  onRemovalCompleted: (removal: CompletedDirectRemoval) => void
 }
 
 const statusBoxClass = 'flex min-h-[54px] flex-1 items-center justify-center gap-2 rounded-[20px] px-2 text-center'
@@ -84,36 +88,40 @@ function HazardMapMarker({ category, relocated }: { category: HazardCategory | n
   )
 }
 
-export default function HazardLocation({ hazard, hazards, deviceId, stage, operationState, detail, error, errorStatus, isMock, onBack, onRetry, onSelect, onLivingResolved }: Props) {
+export default function HazardLocation({ hazard, hazards, deviceId, stage, operationState, robotState, detail, error, errorStatus, isMock, redetected: initiallyRedetected, onBack, onRetry, onSelect, onLivingResolved, onRemovalCompleted }: Props) {
   // 대시보드가 새 감지 시각을 받았는데 상세 응답은 이전 것이라면 예전 사진을 잠시 숨긴다.
   const currentDetail = !isMock && detail && hazard &&
-    new Date(detail.detectedAt).getTime() < new Date(hazard.detectedAt).getTime() ? null : detail
+    (detail.hazardId !== hazard.hazardId || new Date(detail.detectedAt).getTime() < new Date(hazard.detectedAt).getTime()) ? null : detail
   const name = currentDetail?.objectName ?? hazard?.objectName ?? ''
   const detectedAt = currentDetail?.detectedAt ?? hazard?.detectedAt
   const displayTime = detectedAt ? new Intl.DateTimeFormat('ko-KR', {
     hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Seoul',
   }).format(new Date(detectedAt)) : ''
   const [actionMessage, setActionMessage] = useState('')
+  const [showRedetection, setShowRedetection] = useState(false)
   const [autoTransport, setAutoTransport] = useState(false)
   const [flow, setFlow] = useState<Flow>('idle')
-  const [redetected, setRedetected] = useState(false)
+  const [mockRedetected, setRedetected] = useState(false)
+  const redetected = mockRedetected || (!isMock && initiallyRedetected)
   const [failedCaptureUrl, setFailedCaptureUrl] = useState<string | null>(null)
   const [relocationState, setRelocationState] = useState<RealActionState>('idle')
   const [relocationActionId, setRelocationActionId] = useState<string | null>(null)
+  const [relocationCompletedAt, setRelocationCompletedAt] = useState<string | null>(null)
   const [removalState, setRemovalState] = useState<RealActionState>('idle')
   const [removalActionId, setRemovalActionId] = useState<string | null>(null)
   const [resuming, setResuming] = useState(false)
   const [acknowledgingLiving, setAcknowledgingLiving] = useState(false)
   const [locallyResolvedLiving, setLocallyResolvedLiving] = useState(false)
   const autoResumeStarted = useRef(false)
-  const removalBaseline = useRef<{ hazardId: string; detectedAt: string; captureImageUrl: string | null } | null>(null)
   // ?mockRedetect=1 : 목업에서 첫 번째 제거 확인 때 위험 물체가 다시 감지되는 상황을 보여준다.
   const redetectOnce = useRef(new URLSearchParams(window.location.search).get('mockRedetect') === '1')
   const restricted = errorStatus === 403 || errorStatus === 404
 
   // 목업에서는 조치가 끝나면(running) 위험 물체가 해결된 것으로 본다.
   const category = classifyHazard(name)
-  const selectedResolved = locallyResolvedLiving || (!isMock && (detail?.status === 'RESOLVED' || removalState === 'done' || relocationState === 'done'))
+  const relocationHandled = relocationState === 'done' && relocationCompletedAt !== null
+    && Date.parse(detectedAt ?? '') <= Date.parse(relocationCompletedAt)
+  const selectedResolved = locallyResolvedLiving || (!isMock && (currentDetail?.status === 'RESOLVED' || removalState === 'done' || relocationHandled))
   const selectedHandled = selectedResolved
   const activeHazard = flow === 'running' || selectedHandled ? null : hazard
   const remainingHazards = selectedHandled ? hazards.filter((item) => item.hazardId !== hazard?.hazardId) : []
@@ -163,17 +171,6 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
     return () => clearTimeout(timer)
   }, [flow, isMock])
 
-  // 직접 제거 확인을 요청한 뒤 같은 위험 건에 더 최신 탐지 사진이 저장되면
-  // 물체가 아직 남아 있는 재감지로 보고 기존 사진 대신 새 사진을 보여준다.
-  useEffect(() => {
-    if (isMock || removalState !== 'pending' || !hazard || !currentDetail) return
-    const baseline = removalBaseline.current
-    if (!baseline || baseline.hazardId !== hazard.hazardId || currentDetail.hazardId !== hazard.hazardId) return
-    const newerDetection = Date.parse(currentDetail.detectedAt) > Date.parse(baseline.detectedAt)
-    const newCapture = Boolean(currentDetail.captureImageUrl) && currentDetail.captureImageUrl !== baseline.captureImageUrl
-    if (newerDetection && newCapture) setRedetected(true)
-  }, [currentDetail, hazard, isMock, removalState])
-
   useEffect(() => {
     // 실제 기기는 재확인/이송 완료 결과에 따라 스스로 재개하거나 다른 위험 앞에 멈춘다.
     // 별도 RESUME을 보내면 다른 미처리 물체와 충돌할 수 있어 목업에서만 사용한다.
@@ -205,10 +202,23 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
   }, [deviceId, isMock, treatmentDone])
 
   // 실제 모드에서 접수 대기 중인 처리 요청. 이송과 직접 제거 재확인은 같은 조회 API를 쓴다.
+  useEffect(() => {
+    if (isMock || relocationState !== 'done' || !relocationCompletedAt || !detectedAt) return
+    if (Date.parse(detectedAt) > Date.parse(relocationCompletedAt)) {
+      setRelocationState('idle')
+      setRelocationActionId(null)
+      setRelocationCompletedAt(null)
+    }
+  }, [detectedAt, isMock, relocationCompletedAt, relocationState])
+
   const pendingKind: 'relocation' | 'removal' | null = relocationState === 'pending' && relocationActionId
     ? 'relocation'
     : removalState === 'pending' && removalActionId ? 'removal' : null
   const pendingActionId = pendingKind === 'relocation' ? relocationActionId : pendingKind === 'removal' ? removalActionId : null
+  const completionContext = useRef({ name, detectedAt, hazards, onRemovalCompleted })
+  useEffect(() => {
+    completionContext.current = { name, detectedAt, hazards, onRemovalCompleted }
+  }, [name, detectedAt, hazards, onRemovalCompleted])
 
   // 실제 모드: 요청 접수 후 처리 결과를 주기적으로 조회한다. 서버가 완료를 알려줄 때만 완료로 표시한다.
   // 전달 결과가 UNKNOWN인 동안에는 기기가 늦게 보고할 수 있으므로 조회를 멈추지 않는다.
@@ -219,21 +229,47 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
     const setActionId = relocation ? setRelocationActionId : setRemovalActionId
     const completed = relocation ? 'TEMPORARY_COMPLETED' : 'COMPLETED'
     let active = true
+    let checking = false
     async function check(actionId: string) {
+      if (checking) return
+      checking = true
       try {
         const result = await getSafetyAction(actionId)
         if (!active) return
         if (result.treatmentStatus === completed) {
           setState('done')
+          if (relocation) setRelocationCompletedAt(result.completedAt)
+          if (!relocation && result.completedAt) {
+            const { name, detectedAt, hazards, onRemovalCompleted } = completionContext.current
+            onRemovalCompleted({
+              hazardId: result.hazardId,
+              objectName: name,
+              completedAt: result.completedAt,
+              lastDetectedAt: detectedAt ?? result.completedAt,
+              knownHazardIds: hazards.map(item => item.hazardId),
+            })
+          }
         } else if (result.status === 'FAILED' || result.status === 'EXPIRED') {
           setState('idle')
           setActionId(null)
+          if (!relocation && result.hazardPresent === true) {
+            setRedetected(true)
+            setShowRedetection(true)
+            setFlow('idle')
+            setActionMessage('')
+            return
+          }
           setActionMessage(relocation
             ? '위험 물체 이송에 실패했어요. 위험 물체를 직접 치워 주세요.'
             : '기기가 위험 물체 제거를 확인하지 못했어요. 남아 있는지 확인한 뒤 다시 시도해 주세요.')
         }
+        else if (result.status === 'UNKNOWN') {
+          setActionMessage('기기 응답이 지연되고 있어요. 로봇 연결을 확인해 주세요. 결과를 계속 확인하고 있어요.')
+        }
       } catch {
-        // 조회에 실패해도 처리 결과를 알 수 없을 뿐이므로 다음 주기에 다시 조회한다.
+        if (active) setActionMessage('처리 결과를 불러오지 못했어요. 연결을 확인해 주세요. 자동으로 다시 확인합니다.')
+      } finally {
+        checking = false
       }
     }
     void check(pendingActionId)
@@ -244,12 +280,33 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
     }
   }, [isMock, pendingActionId, pendingKind])
 
-  function toggleAutoTransport() {
+  // 실제 모드의 자동 이송은 서버가 기기에 요청을 발행한다. 화면은 토글만 저장한다.
+  useEffect(() => {
+    if (isMock || !deviceId) return
+    let active = true
+    getDeviceSettings(deviceId)
+      .then((settings) => { if (active) setAutoTransport(settings.autoRelocation) })
+      .catch(() => { if (active) setActionMessage('자동 이송 설정을 불러오지 못했어요. 연결을 확인해 주세요.') })
+    return () => { active = false }
+  }, [deviceId, isMock])
+
+  async function toggleAutoTransport() {
+    const enabled = !autoTransport
     if (!isMock) {
-      setActionMessage('자동 이송 모드는 아직 지원되지 않아요. 위험 물체 안전 이송 또는 직접 제거를 이용해 주세요.')
+      if (!deviceId) return
+      setAutoTransport(enabled)
+      try {
+        const settings = await setAutoRelocation(deviceId, enabled)
+        setAutoTransport(settings.autoRelocation)
+        setActionMessage(settings.autoRelocation
+          ? '자동 이송을 켰어요. 로봇이 정지한 상태에서 남은 삼킴 위험물을 하나씩 이송해요.'
+          : '자동 이송을 껐어요.')
+      } catch (error) {
+        setAutoTransport(!enabled)
+        setActionMessage(apiErrorMessage(error, '자동 이송 설정을 바꾸지 못했어요.'))
+      }
       return
     }
-    const enabled = !autoTransport
     setAutoTransport(enabled)
     if (enabled && flow === 'idle') {
       setRedetected(false)
@@ -265,7 +322,10 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
     }
     if (relocationState !== 'idle') return
     setRelocationState('submitting')
+    setActionMessage('')
     try {
+      const readiness = treatmentReadinessMessage(await getRobotState(deviceId))
+      if (readiness) throw new Error(readiness)
       const receipt = await requestRelocation(hazard?.hazardId ?? '')
       setRelocationActionId(receipt.actionId)
       setRelocationState('pending')
@@ -281,21 +341,17 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
   }
 
   async function confirmRemoval() {
+    setActionMessage('')
     if (isMock) {
       setFlow('checking')
       return
     }
     if (removalState !== 'idle') return
-    if (hazard) {
-      removalBaseline.current = {
-        hazardId: hazard.hazardId,
-        detectedAt: currentDetail?.detectedAt ?? hazard.detectedAt,
-        captureImageUrl: currentDetail?.captureImageUrl ?? null,
-      }
-    }
     setRedetected(false)
     setRemovalState('submitting')
     try {
+      const readiness = treatmentReadinessMessage(await getRobotState(deviceId))
+      if (readiness) throw new Error(readiness)
       const receipt = await requestRemovalCheck(hazard?.hazardId ?? '')
       setRemovalActionId(receipt.actionId)
       setRemovalState('pending')
@@ -348,6 +404,8 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
     if (flow === 'relocating') return <div role="status" className={greenBox}><Loader2 size={18} className="animate-spin" aria-hidden="true" /><strong className="text-[15px] font-bold">위험 물체 이송 중</strong></div>
     if (flow === 'checking') return <div role="status" className={greenBox}><Loader2 size={18} className="animate-spin" aria-hidden="true" /><strong className="text-[15px] font-bold">위험 물체 확인 중</strong></div>
     if (flow === 'checked') return <div role="status" className={greenBox}><CheckCircle2 size={18} aria-hidden="true" /><strong className="text-[15px] font-bold">위험 물체 확인 완료</strong></div>
+    const readiness = isMock || isLiving ? '' : treatmentReadinessMessage(robotState)
+    if (readiness) return <div role="status" className={`${grayBox} px-3 text-[12px] leading-5`}>{readiness}</div>
     if (flow === 'removal-guide') return <button type="button" onClick={() => void confirmRemoval()} className={primaryButton}>위험 물체 제거 완료</button>
 
     if (isLiving) return <button type="button" disabled={acknowledgingLiving} onClick={() => void confirmLivingHazard()} className={primaryButton}>{acknowledgingLiving ? '처리 중' : '위험 요소 확인 완료'}</button>
@@ -370,9 +428,9 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
 
         {restricted ? <main className="px-4 pt-6"><div role="alert" className="rounded-[16px] border border-[#f2c5cb] bg-white p-5 text-[14px] text-[#9d1237]">{error}</div></main> : <main className="space-y-[17px] px-4 pt-3">
           {redetected && activeHazard && (
-            <HazardAlertBox role="alert" ariaLabel="위험 물체 재감지 알림" badge="재감지" urgent title="위험 물체가 다시 감지되었어요" subtitle={`확인 중 ${name}이(가) 남아 있어요. 다시 조치해 주세요.`} />
+            <HazardAlertBox role="alert" ariaLabel="위험 물체 재감지 알림" badge="재감지" urgent title="위험 물체가 다시 감지되었어요" subtitle="제거했던 위험 물체가 다시 보여요. 다시 치워 주세요." />
           )}
-          {activeHazard && alert && (
+          {activeHazard && alert && !redetected && (
             <HazardAlertBox ariaLabel="위험 물체 감지 알림" badge={alert.urgencyLabel} urgent={alert.urgent} riskLabel={alert.risk ? riskLabel : null} title={alert.title} subtitle={displayTime ? `감지 시간 ${displayTime}` : undefined} />
           )}
 
@@ -472,6 +530,15 @@ export default function HazardLocation({ hazard, hazards, deviceId, stage, opera
         </footer>
       )}
       {actionMessage && <div role="alert" className="fixed bottom-[85px] left-1/2 z-20 w-[calc(100%-32px)] max-w-[370px] -translate-x-1/2 rounded-xl bg-[#25252b] p-3 text-[12px] text-white shadow-lg" onClick={() => setActionMessage('')}>{actionMessage}</div>}
+      {showRedetection && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 px-6">
+          <section role="alertdialog" aria-modal="true" aria-labelledby="redetection-title" aria-describedby="redetection-description" className="w-full max-w-[350px] rounded-2xl bg-white p-6 shadow-xl">
+            <h2 id="redetection-title" className="text-lg font-bold text-[#b9003d]">위험 물체가 다시 감지되었어요</h2>
+            <p id="redetection-description" className="mt-3 text-sm">{name}이 아직 보여요. 물체를 치운 뒤 다시 제거 확인을 진행해 주세요. 로봇은 정지 상태를 유지합니다.</p>
+            <button autoFocus type="button" className={`${primaryButton} mt-5 w-full`} onClick={() => setShowRedetection(false)}>확인</button>
+          </section>
+        </div>
+      )}
     </div>
   )
 }

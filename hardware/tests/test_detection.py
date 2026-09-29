@@ -39,6 +39,24 @@ def delayed_worker(mailbox, output, stop):
 
 
 class Tests(unittest.TestCase):
+    def test_same_label_objects_keep_distinct_ids_across_frames(self):
+        engine = RiskEngine()
+        first, second = obj('battery', track=1), obj('battery', track=2)
+        second['bbox'] = [60, 10, 90, 40]
+        initial, _ = engine.evaluate([first, second], 0)
+        ids = [d['object_instance_id'] for d in initial['hazards']]
+        self.assertEqual(len(set(ids)), 2)
+        later, _ = engine.evaluate([second, first], .1)
+        self.assertEqual([d['object_instance_id'] for d in later['hazards']], ids[::-1])
+        restarted, _ = RiskEngine().evaluate([first], .2)
+        self.assertNotEqual(restarted['hazards'][0]['object_instance_id'], ids[0])
+
+    def test_raw_detection_identity_survives_tracker_assignment(self):
+        engine = RiskEngine()
+        raw, _ = engine.evaluate([obj('battery', track=None)], 0)
+        tracked, _ = engine.evaluate([obj('battery', track=7)], .1)
+        self.assertEqual(raw['hazards'][0]['object_instance_id'], tracked['hazards'][0]['object_instance_id'])
+
     def test_relocation_target_alert_is_filtered_without_hiding_other_hazards(self):
         events = [obj('battery'), obj('coin'), obj('die')]
         filtered = unsuppressed_events(events, C.alert_label_mask({'battery'}))
@@ -51,6 +69,8 @@ class Tests(unittest.TestCase):
         self.assertEqual(service.state()['suppressed_alert_labels'], ['battery'])
         with self.assertRaises(ValueError):
             service.set_suppressed_alert_labels({'unknown'})
+        with self.assertRaises(ValueError):
+            service.reset_alert_labels({'unknown'})
 
     def test_backend_images_are_cropped_per_detection(self):
         from uploader import crop_detection_images
@@ -77,6 +97,19 @@ class Tests(unittest.TestCase):
         self.assertEqual(risk['level'],3);self.assertEqual(len(events),1)
         self.assertEqual(e.evaluate([d,obj('person',model='coco')],1.2)[1],[])
         self.assertEqual(len(e.evaluate([d],12)[1]),1)
+
+    def test_direct_removal_reset_allows_only_that_label_to_alert_again(self):
+        e=RiskEngine(); coin=obj(); battery=obj('battery',track=2)
+        events=[]
+        for n in range(10):
+            _,events=e.evaluate([coin,battery],n*.1)
+        self.assertEqual({event['label'] for event in events},{'coin','battery'})
+        e.reset_alert_labels({'battery'})
+        _,events=e.evaluate([coin,battery],1.0)
+        self.assertEqual(events, [])
+        for n in range(1, 10):
+            _,events=e.evaluate([coin,battery],1.0+n*.1)
+        self.assertEqual([event['label'] for event in events],['battery'])
 
     def test_urgent_without_id_or_votes(self):
         e=RiskEngine();d=obj(track=None);person=obj('person',model='coco')

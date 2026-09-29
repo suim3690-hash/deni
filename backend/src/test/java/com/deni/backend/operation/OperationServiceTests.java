@@ -29,14 +29,12 @@ class OperationServiceTests {
 	private final UUID key = UUID.randomUUID();
 
 	@Test
-	void pauseStoresReceiptButDoesNotConfirmOrMutateDeviceState() {
+	void pauseWithoutDeliveryDoesNotLeaveAnOrphanReceipt() {
 		online("RUNNING");
-		when(repository.saveAndFlush(any())).thenAnswer(call -> call.getArgument(0));
-		var receipt = service.requestCommand(" robot-1 ", "pause", key);
-		assertEquals("REQUESTED", receipt.status());
-		assertEquals("NOT_CONNECTED", receipt.deliveryState());
+		assertEquals("DEVICE_NOT_CONTROLLABLE", assertThrows(ApiException.class,
+				() -> service.requestCommand(" robot-1 ", "pause", key)).getCode());
 		verify(guard).lock("device", "robot-1");
-		verify(repository).saveAndFlush(any());
+		verify(repository, never()).saveAndFlush(any());
 		verify(devices, never()).recordStatus(any());
 	}
 
@@ -115,14 +113,13 @@ class OperationServiceTests {
 	}
 
 	@Test
-	void removalReceiptStaysUnknownAndDoesNotResolveHazardOrResumeDevice() {
+	void removalWithoutDeliveryIsRejectedAndLegacyLookupNeverClaimsCompletion() {
 		UUID hazard = swallowHazard();
 		online("PAUSED");
 		when(devices.getLinkedChildId("robot-1")).thenReturn(child);
-		when(repository.saveAndFlush(any())).thenAnswer(call -> call.getArgument(0));
-		var receipt = service.requestRemovalCheck(hazard, key);
-		assertEquals("UNKNOWN", receipt.status());
-		assertEquals("NOT_CONNECTED", receipt.deliveryState());
+		assertEquals("DEVICE_NOT_CONTROLLABLE", assertThrows(ApiException.class,
+				() -> service.requestRemovalCheck(hazard, key)).getCode());
+		verify(repository, never()).saveAndFlush(any());
 		verify(hazards).requireActiveAssociation(hazard, child, "robot-1");
 		verify(devices, never()).recordStatus(any());
 		var stored = new OperationRequest("robot-1", hazard, key, "DIRECT_REMOVAL_CHECK", OffsetDateTime.now());

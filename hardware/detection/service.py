@@ -54,7 +54,7 @@ def offer(channel, state):
 
 
 class DetectionService:
-    def __init__(self, feed, enabled=True, mode='object', processing=True):
+    def __init__(self, feed, enabled=True, mode='object', processing=True, safe_zone=(0, .45)):
         if mode not in C.MODES:
             raise ValueError('Choose object or hazard')
         self.mode = mode
@@ -63,6 +63,7 @@ class DetectionService:
         self.enabled = enabled
         self.processing = processing
         self.suppressed_alert_labels = frozenset()
+        self.safe_zone = safe_zone
         self.state_lock = threading.Lock()
         self.latest = dict(status='loading' if enabled else 'disabled', level=0, mode=mode, generation=self.generation)
         self.local_stop = threading.Event()
@@ -80,9 +81,12 @@ class DetectionService:
         self.mode_code = self.ctx.Value('q', self.generation)
         self.processing_event = self.ctx.Event()
         self.suppressed_alert_mask = self.ctx.Value('Q', 0)
+        self.alert_reset_mask = self.ctx.Value('Q', 0)
+        self.relocated_mask = self.ctx.Value('Q', 0)
         if self.processing: self.processing_event.set()
         self.process = self.ctx.Process(target=run, args=(self.mailbox,self.results,self.stop_event,
-            self.mode_code,self.processing_event,self.suppressed_alert_mask), daemon=True)
+            self.mode_code,self.processing_event,self.suppressed_alert_mask,self.alert_reset_mask,
+            self.relocated_mask,self.safe_zone), daemon=True)
         try:
             self.process.start()
         except Exception as exc:
@@ -145,6 +149,17 @@ class DetectionService:
             if hasattr(self, 'suppressed_alert_mask'):
                 with self.suppressed_alert_mask.get_lock():
                     self.suppressed_alert_mask.value = mask
+
+    def reset_alert_labels(self, labels):
+        mask = C.alert_label_mask(set(labels))
+        if hasattr(self, 'alert_reset_mask'):
+            with self.alert_reset_mask.get_lock():
+                self.alert_reset_mask.value |= mask
+
+    def set_relocated_labels(self, labels):
+        if hasattr(self, 'relocated_mask'):
+            with self.relocated_mask.get_lock():
+                self.relocated_mask.value = C.alert_label_mask(labels)
 
     def state(self):
         with self.state_lock:

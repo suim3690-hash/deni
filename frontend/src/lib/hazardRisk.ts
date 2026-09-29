@@ -56,6 +56,46 @@ export function orderHazardsForAttention<T extends { objectName: string; detecte
     || Date.parse(b.detectedAt) - Date.parse(a.detectedAt))
 }
 
+export interface CompletedDirectRemoval {
+  hazardId: string
+  objectName: string
+  completedAt: string
+  lastDetectedAt: string
+  knownHazardIds?: string[]
+}
+
+// 직접 제거가 완료된 뒤 같은 라벨이 새 위험 건으로 들어오면 재감지로 본다.
+// 완료 이전 탐지와 기존 위험 ID는 제외해 과거 알림을 재감지로 잘못 표시하지 않는다.
+export function findRedetectedHazard<T extends { hazardId: string; objectName: string; detectedAt: string }>(
+  items: T[],
+  removal: CompletedDirectRemoval | null,
+): T | null {
+  if (!removal) return null
+  const completedAt = Date.parse(removal.completedAt)
+  const lastDetectedAt = Date.parse(removal.lastDetectedAt)
+  if (!Number.isFinite(completedAt) || !Number.isFinite(lastDetectedAt)) return null
+  const baseline = Math.max(completedAt, lastDetectedAt)
+  return items
+    .filter((item) => item.hazardId !== removal.hazardId
+      && !removal.knownHazardIds?.includes(item.hazardId)
+      && item.objectName === removal.objectName
+      && Date.parse(item.detectedAt) > baseline)
+    .sort((a, b) => Date.parse(b.detectedAt) - Date.parse(a.detectedAt))[0] ?? null
+}
+
+export function powerOnSafetyNotice(
+  taskState: string | null,
+  hazards: { objectName: string }[],
+): string {
+  if (taskState !== 'HAZARD_PAUSED') return ''
+  const names = [...new Set(hazards
+    .filter((hazard) => classifyHazard(hazard.objectName) === 'SWALLOW')
+    .map((hazard) => hazard.objectName))]
+  return names.length > 0
+    ? `삼킴 위험물(${names.join('·')}) 감지로 정지했어요. 스마트 안심 케어 맵에서 감지 사진을 확인해 주세요.`
+    : '삼킴 위험물 감지로 정지했어요. 위험을 감지했던 아이 프로필의 스마트 안심 케어 맵에서 감지 내역을 확인해 주세요.'
+}
+
 function serverRisk(riskLevel: string): RiskLevel | null {
   if (riskLevel === 'VERY_HIGH' || riskLevel === 'HIGH' || riskLevel === 'MEDIUM') return riskLevel
   if (riskLevel === 'LOW') return 'MEDIUM'

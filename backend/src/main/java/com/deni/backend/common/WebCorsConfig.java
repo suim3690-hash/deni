@@ -22,7 +22,7 @@ public class WebCorsConfig implements WebMvcConfigurer {
 	public void addCorsMappings(CorsRegistry registry) {
 		registry.addMapping("/api/**")
 				.allowedOrigins(allowedOrigins)
-				.allowedMethods("GET", "POST", "PATCH", "OPTIONS")
+				.allowedMethods("GET", "POST", "PUT", "PATCH", "OPTIONS")
 				.allowedHeaders("Content-Type", "Idempotency-Key", "Authorization", "X-Device-Id")
 				.exposedHeaders("Location")
 				.maxAge(3600);

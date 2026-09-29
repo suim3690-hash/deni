@@ -4,7 +4,7 @@ from care_controller import CareController, Settings
 
 def obj(label, bearing=0.0):
     centre = (bearing + 1) * 50
-    return dict(label=label, bbox=[centre-5, 30, centre+5, 60])
+    return dict(label=label, bbox=[centre-5, 30, centre+5, 60], stable=True)
 
 
 def drop_marker(fill=.01, bearing=0, skew=0, centre=(50,45)):
@@ -18,13 +18,18 @@ class CareTests(unittest.TestCase):
         self.seq = 0
         self.ack = 'S'
 
-    def tick(self, labels=(), *, gap=.1, valid=True, marker=None, connected=True, generation=1, bearing=0.0):
+    def tick(self, labels=(), *, gap=.1, valid=True, marker=None, connected=True, generation=1, bearing=0.0,
+             backend=True, lag=0.0, instance_ids=None):
         self.now += gap
         self.seq += 1
-        obs = dict(status='ok' if valid else 'blur', frame_stamp=self.now, sequence=self.seq,
+        obs = dict(status='ok' if valid else 'blur', frame_stamp=self.now-lag, sequence=self.seq,
                    hazards=[obj(label, bearing) for label in labels], frame_width=100, frame_height=100,
                    markers=[] if marker is None else [marker])
-        result = self.c.step(obs, dict(ready=connected, ack=self.ack, generation=generation, acknowledged_at=self.now), self.now)
+        if instance_ids is not None:
+            for hazard, identity in zip(obs['hazards'], instance_ids):
+                hazard['object_instance_id'] = identity
+        result = self.c.step(obs, dict(ready=connected, ack=self.ack, generation=generation, acknowledged_at=self.now),
+                             self.now, backend)
         self.ack = result
         return result
 
@@ -34,6 +39,54 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.c.results['on']['status'],'SUCCEEDED')
         self.assertEqual(self.c.phase,'RUNNING')
 
+    def test_selected_instance_removal_leaves_same_label_other_instance_paused(self):
+        for label, korean in [('battery', '배터리'), ('coin', '동전'), ('marble', '구슬'), ('dice', '주사위')]:
+            with self.subTest(label=label):
+                self.setUp(); self.start()
+                self.tick([label, label], instance_ids=['a', 'b'])
+                self.c.request('RECHECK_HAZARD', 'remove-a', dict(hazardId='ha', objectLabel=korean, objectInstanceId='a'), self.now)
+                for _ in range(30):
+                    self.assertEqual(self.tick([label], instance_ids=['b']), 'S')
+                self.assertEqual(self.c.results['remove-a']['status'], 'SUCCEEDED')
+                self.assertFalse(self.c.results['remove-a']['hazardPresent'])
+                self.assertEqual(self.c.results['remove-a']['operationState'], 'PAUSED')
+                self.assertEqual(self.c.blocked_instances, {'b': label})
+                self.c.request('RECHECK_HAZARD', 'remove-b', dict(hazardId='hb', objectLabel=korean, objectInstanceId='b'), self.now)
+                for _ in range(30): self.tick()
+                self.assertEqual(self.c.results['remove-b']['status'], 'SUCCEEDED')
+                self.assertEqual(self.c.blocked_instances, {})
+                self.assertEqual(self.c.phase, 'RUNNING')
+
+    def test_selected_instance_remaining_or_unidentified_never_counts_as_removed(self):
+        for identity in ['a', None]:
+            with self.subTest(identity=identity):
+                self.setUp(); self.start()
+                self.tick(['battery', 'battery'], instance_ids=['a', 'b'])
+                self.c.request('RECHECK_HAZARD', 'remove', dict(hazardId='h', objectLabel='배터리', objectInstanceId='a'), self.now)
+                for _ in range(30): self.tick(['battery'], instance_ids=[identity])
+                self.assertEqual(self.c.results['remove']['status'], 'FAILED')
+                self.assertTrue(self.c.results['remove']['hazardPresent'])
+
+    def test_absent_same_label_other_object_stays_blocked_until_its_own_check(self):
+        self.start(); self.tick(['coin', 'coin'], instance_ids=['a', 'b'])
+        self.c.request('RECHECK_HAZARD', 'remove', dict(hazardId='h', objectLabel='동전', objectInstanceId='a'), self.now)
+        for _ in range(30): self.assertEqual(self.tick(), 'S')
+        self.assertEqual(self.c.results['remove']['status'], 'SUCCEEDED')
+        self.assertEqual(self.c.blocked_instances, {'b': 'coin'})
+        self.assertEqual(self.c.phase, 'HAZARD_PAUSED')
+
+    def test_removal_and_control_deadlines_survive_motor_disconnect(self):
+        self.start()
+        self.tick(['coin'])
+        self.c.request('RECHECK_HAZARD', 'remove', dict(hazardId='h1', objectLabel='동전'), self.now)
+        self.assertEqual(self.tick(connected=False, gap=121), 'S')
+        self.assertEqual(self.c.results['remove']['errorCode'], 'ACTION_TIMEOUT')
+        self.assertEqual(self.c.blocked, {'coin'})
+        self.c.request('PAUSE', 'pause', {}, self.now)
+        self.assertEqual(self.tick(connected=False, gap=9), 'S')
+        self.assertEqual(self.c.results['pause']['errorCode'], 'STATE_NOT_CONFIRMED')
+        self.assertIsNone(self.c.control)
+
     def test_power_on_warmup_does_not_cancel_driving_intent_after_eight_seconds(self):
         self.c.request('POWER_ON','on',{},self.now)
         for _ in range(100): self.assertEqual(self.tick(valid=False),'S')
@@ -42,7 +95,7 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.c.phase,'RUNNING')
         self.assertEqual(self.tick(),'F')
 
-    def test_hazard_pause_waits_for_explicit_removal_check(self):
+    def test_hazard_pause_clears_itself_once_detection_stops_seeing_the_object(self):
         self.start()
         self.tick(['coin'])
         self.assertEqual(self.c.phase,'HAZARD_PAUSED')
@@ -52,20 +105,131 @@ class CareTests(unittest.TestCase):
         for _ in range(40): self.assertEqual(self.tick(['coin']),'S')
         self.assertEqual(self.c.phase,'HAZARD_PAUSED')
 
-        # 물체가 사라져도 사용자 요청 없이 재개하거나 차단 이력을 지우지 않는다.
-        deadline = self.now + Settings().removal_absence_seconds * 3
-        while self.now < deadline: self.tick()
-        self.assertEqual(self.c.phase,'HAZARD_PAUSED')
+        # 사라진 직후에는 유지한다. 순간적인 가림으로 목록이 비면 안 된다.
+        for _ in range(int(Settings().absent_clear_seconds / .1) - 5):
+            self.assertEqual(self.tick(),'S')
         self.assertEqual(self.c.blocked,{'coin'})
-        self.assertEqual(self.tick(),'S')
+        self.assertEqual(self.c.phase,'HAZARD_PAUSED')
 
-        self.c.request('RECHECK_HAZARD','remove',dict(hazardId='h1',objectLabel='동전'),self.now)
-        for _ in range(30): self.tick()
-        self.assertEqual(self.c.results['remove']['status'],'SUCCEEDED')
-        self.assertEqual(self.c.phase,'RUNNING')
+        # 실시간 인식이 계속 못 보면 사용자 확인 없이 차단과 목록에서 스스로 빠진다.
+        for _ in range(10): self.tick()
         self.assertEqual(self.c.blocked,set())
+        self.assertEqual(self.c.phase,'RUNNING')
+        self.assertEqual(self.tick(),'F')
 
-    def test_pending_treatment_waits_while_target_is_visible(self):
+    def test_relocation_picks_the_selected_instance_among_same_label_objects(self):
+        self.start(); self.tick(['battery','battery'], instance_ids=['a','b'])
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='배터리',objectInstanceId='b'),self.now)
+        # 같은 종류가 둘이어도 선택한 개체가 있으면 대상이 모호하지 않다.
+        self.assertEqual(self.tick(['battery','battery'], instance_ids=['a','b']),'F')
+        self.assertEqual(self.c.phase,'CAPTURING')
+        self.assertNotEqual(self.c.reason,'MULTIPLE TARGETS OF SAME CLASS')
+
+    def test_relocation_proceeds_when_several_of_the_kind_are_visible(self):
+        self.start(); self.tick(['battery','battery'], instance_ids=['a','b'])
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='배터리'),self.now)
+        # 여럿이어도 멈추지 않는다. 자동 이송은 사람이 다시 골라 줄 수 없다.
+        self.assertEqual(self.tick(['battery','battery'], instance_ids=['a','b']),'F')
+        self.assertEqual(self.c.phase,'CAPTURING')
+
+    def test_alignment_steers_at_the_nearest_of_several_same_kind_objects(self):
+        self.start(); self.tick(['battery'])
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='배터리'),self.now)
+        far = obj('battery'); far['bbox'] = [10, 30, 20, 45]
+        near = obj('battery'); near['bbox'] = [70, 20, 95, 70]
+        self.now += .1; self.seq += 1
+        observation = dict(status='ok', frame_stamp=self.now, sequence=self.seq,
+                           hazards=[far, near], frame_width=100, frame_height=100, markers=[])
+        motor = dict(ready=True, ack=self.ack, generation=1, acknowledged_at=self.now)
+        # 가까운(크게 보이는) 쪽이 오른쪽에 있으므로 그쪽으로 돈다.
+        self.assertEqual(self.c.step(observation, motor, self.now), 'R')
+
+    def test_relocation_falls_back_to_kind_when_the_chosen_id_is_from_an_earlier_run(self):
+        self.start(); self.tick(['battery'], instance_ids=['fresh'])
+        # 재시작 전에 고른 위험의 추적 번호는 지금 세션에 존재하지 않는다.
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='배터리',objectInstanceId='stale'),self.now)
+        self.assertEqual(self.tick(['battery'], instance_ids=['fresh']),'F')
+        self.assertEqual(self.c.phase,'CAPTURING')
+        self.assertNotEqual(self.c.reason,'TARGET NOT VISIBLE')
+
+    def test_an_unidentified_object_stays_a_candidate_without_blocking_the_push(self):
+        self.start(); self.tick(['battery','battery'], instance_ids=['b',None])
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='배터리',objectInstanceId='b'),self.now)
+        # 번호를 받지 못한 물체도 대상 후보로 남지만, 그 때문에 멈추지는 않는다.
+        self.assertEqual(self.tick(['battery','battery'], instance_ids=['b',None]),'F')
+        self.assertEqual(self.c.phase,'CAPTURING')
+
+    def test_absent_instance_clears_itself_while_the_visible_one_stays_blocked(self):
+        self.start()
+        self.tick(['coin','coin'], instance_ids=['a','b'])
+        self.assertEqual(self.c.blocked_instances,{'a':'coin','b':'coin'})
+        for _ in range(int(Settings().absent_clear_seconds / .1) + 5):
+            self.assertEqual(self.tick(['coin'], instance_ids=['b']),'S')
+        self.assertEqual(self.c.blocked_instances,{'b':'coin'})
+        # 보고에는 사라진 개체가 빠지고 보이는 개체만 남는다.
+        self.assertEqual((self.c.visible_instances,self.c.visible_labels),(['b'],['coin']))
+        self.assertTrue(self.c.detection_live(self.now))
+        # 같은 종류가 아직 보이므로 라벨 차단과 정지는 유지한다.
+        self.assertEqual(self.c.blocked,{'coin'})
+        self.assertEqual(self.c.phase,'HAZARD_PAUSED')
+
+    def test_observation_gap_is_not_evidence_of_absence(self):
+        self.start()
+        self.tick(['coin'])
+        for _ in range(int(Settings().absent_clear_seconds / .1) + 5):
+            self.assertEqual(self.tick(valid=False),'S')
+        self.assertEqual(self.c.blocked,{'coin'})
+        # 탐지가 멈춘 동안의 빈 목록은 "전부 사라짐"으로 보고되지 않는다.
+        self.assertFalse(self.c.detection_live(self.now))
+        # 공백 뒤 첫 유효 프레임은 그동안 못 본 시간을 미검출로 세지 않는다.
+        self.tick()
+        self.assertEqual(self.c.blocked,{'coin'})
+        self.assertEqual(self.c.phase,'HAZARD_PAUSED')
+
+    def test_power_off_never_reports_an_empty_scene_as_live(self):
+        self.start()
+        self.tick(['coin'])
+        self.assertTrue(self.c.detection_live(self.now))
+        self.c.request('POWER_OFF','off',{},self.now)
+        for _ in range(5): self.tick()
+        self.assertFalse(self.c.detection_live(self.now))
+
+    def test_relocated_object_is_exempt_only_while_marker_proves_its_safe_position(self):
+        self.start()
+        self.c.relocated_labels.add('coin')
+        self.assertEqual(self.tick(['coin'], marker=drop_marker()), 'F')
+        self.assertEqual(self.c.blocked, set())
+        self.assertEqual(self.tick(['coin']), 'S')
+        self.assertEqual(self.c.blocked, {'coin'})
+
+    def test_same_class_outside_drop_zone_is_not_ignored(self):
+        self.start()
+        self.c.relocated_labels.add('coin')
+        self.assertEqual(self.tick(['coin'], marker=drop_marker(centre=(0, 0))), 'S')
+        self.assertEqual(self.c.blocked, {'coin'})
+
+    def test_unconfirmed_candidate_stops_without_leaving_an_unremovable_block(self):
+        self.start()
+        self.now += .1
+        candidate = dict(obj('coin'), stable=False)
+        output = self.c.step(dict(status='ok', frame_stamp=self.now, sequence=100,
+                                 hazards=[candidate]),
+                             dict(ready=True, ack='F', generation=1, acknowledged_at=self.now), self.now)
+        self.assertEqual(output, 'S')
+        self.assertEqual(self.c.blocked, set())
+        self.assertEqual(self.tick(), 'F')
+
+    def test_urgent_candidate_latches_without_waiting_for_votes(self):
+        self.start()
+        self.now += .1
+        candidate = dict(obj('coin'), stable=False, reason='person_and_object')
+        output = self.c.step(dict(status='ok', frame_stamp=self.now, sequence=100,
+                                 hazards=[candidate]),
+                             dict(ready=True, ack='F', generation=1, acknowledged_at=self.now), self.now)
+        self.assertEqual(output, 'S')
+        self.assertEqual(self.c.blocked, {'coin'})
+
+    def test_recheck_reports_present_instead_of_waiting_for_action_timeout(self):
         self.start()
         self.tick(['coin'])
         self.c.request('RECHECK_HAZARD','r1',{'hazardId':'h1','objectLabel':'동전'},self.now)
@@ -73,8 +237,24 @@ class CareTests(unittest.TestCase):
         deadline = self.now + Settings().removal_absence_seconds * 3
         while self.now < deadline: self.tick(['coin'])
         # 요청 중에도 물체가 보이면 제거 성공으로 처리하지 않는다.
-        self.assertEqual(self.c.phase,'RECHECKING')
+        self.assertEqual(self.c.phase,'HAZARD_PAUSED')
+        self.assertEqual(self.c.results['r1']['status'], 'FAILED')
+        self.assertTrue(self.c.results['r1']['hazardPresent'])
+        self.assertEqual(self.c.results['r1']['errorCode'], 'HAZARD_STILL_PRESENT')
+        self.assertEqual(self.c.blocked, {'coin'})
+
+    def test_recheck_presence_window_resets_after_blur_and_absence(self):
+        self.start(); self.tick(['coin'])
+        self.c.request('RECHECK_HAZARD', 'r1', dict(hazardId='h1', objectLabel='동전'), self.now)
+        for _ in range(15): self.tick(['coin'])
+        self.tick(valid=False)
+        for _ in range(15): self.tick(['coin'])
         self.assertNotIn('r1', self.c.results)
+        self.tick()
+        for _ in range(15): self.tick(['coin'])
+        self.assertNotIn('r1', self.c.results)
+        for _ in range(10): self.tick(['coin'])
+        self.assertTrue(self.c.results['r1']['hazardPresent'])
 
     def test_removal_redetection_before_completion_keeps_request_pending(self):
         self.start(); self.tick(['battery'])
@@ -126,6 +306,51 @@ class CareTests(unittest.TestCase):
         self.assertNotIn('remove',self.c.results)
         for _ in range(8): self.tick(generation=2)
         self.assertEqual(self.c.results['remove']['status'],'SUCCEEDED')
+
+    def resume(self, identity, **tick):
+        self.c.request('RESUME', identity, {}, self.now)
+        for _ in range(3): self.tick(**tick)
+        return self.c.results[identity]
+
+    def test_motor_reconnect_does_not_restart_driving_without_resume(self):
+        self.start()
+        self.assertEqual(self.tick(), 'F')
+        self.assertEqual(self.tick(connected=False), 'S')
+        for _ in range(20): self.assertEqual(self.tick(generation=2), 'S')
+        self.assertEqual(self.c.phase, 'PAUSED')
+        self.assertEqual(self.resume('go', generation=2)['status'], 'SUCCEEDED')
+        self.assertEqual(self.tick(generation=2), 'F')
+
+    def test_motor_reconnect_fails_relocation_and_keeps_hazard_blocked(self):
+        self.start(); self.tick(['dice'])
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='주사위'),self.now)
+        self.tick(['dice'])
+        self.tick(connected=False)
+        self.assertEqual(self.tick(['dice'], generation=2), 'S')
+        self.assertEqual(self.c.results['move']['errorCode'], 'MOTOR_RECONNECTED')
+        self.assertEqual(self.c.phase, 'HAZARD_PAUSED')
+        self.assertEqual(self.c.blocked, {'dice'})
+
+    def test_backend_loss_stops_and_reconnect_waits_for_resume(self):
+        self.start()
+        self.assertEqual(self.tick(), 'F')
+        for _ in range(20): self.assertEqual(self.tick(backend=False), 'S')
+        self.assertEqual(self.c.reason, 'BACKEND DISCONNECTED')
+        for _ in range(20): self.assertEqual(self.tick(), 'S')
+        self.assertEqual(self.c.phase, 'PAUSED')
+        self.assertEqual(self.resume('go')['status'], 'SUCCEEDED')
+        self.assertEqual(self.tick(), 'F')
+
+    def test_backend_loss_fails_removal_check_and_keeps_hazard_blocked(self):
+        self.start(); self.tick(['coin'])
+        self.c.request('RECHECK_HAZARD','remove',dict(hazardId='h1',objectLabel='동전'),self.now)
+        for _ in range(5): self.tick()
+        self.assertEqual(self.tick(backend=False), 'S')
+        self.assertEqual(self.c.results['remove']['errorCode'], 'BACKEND_DISCONNECTED')
+        # 물체가 없어도 재연결만으로는 제거 성공이나 재주행으로 이어지지 않는다.
+        for _ in range(40): self.assertEqual(self.tick(), 'S')
+        self.assertEqual(self.c.phase, 'HAZARD_PAUSED')
+        self.assertEqual(self.c.blocked, {'coin'})
 
     def test_power_off_interrupts_treatment_and_stays_off_after_reconnect(self):
         self.start(); self.tick(['dice'])
@@ -183,7 +408,7 @@ class CareTests(unittest.TestCase):
             self.tick(['dice'],marker=drop_marker(fill=.08))
             if self.c.phase == 'TURNING_AROUND': break
         self.assertEqual(self.c.phase,'TURNING_AROUND')
-        for _ in range(40):
+        for _ in range(int(self.c.settings.turnaround_seconds / .1) + 20):
             self.tick()
             if 'move' in self.c.results: break
         self.assertEqual(self.c.results['move']['status'],'SUCCEEDED')
@@ -202,7 +427,7 @@ class CareTests(unittest.TestCase):
         for _ in range(20):
             commands.append(self.tick(['dice','coin'],marker=drop_marker(fill=.08)))
             if self.c.phase == 'TURNING_AROUND': break
-        for _ in range(40):
+        for _ in range(int(self.c.settings.turnaround_seconds / .1) + 20):
             commands.append(self.tick(['coin']))
             if 'move' in self.c.results: break
         self.assertIn('B',commands)
@@ -212,15 +437,12 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.c.blocked,{'coin'})
         self.assertEqual(self.tick(['coin']),'S')
 
-    def test_relocation_requires_one_target_before_capture_and_at_drop(self):
+    def test_relocation_requires_a_visible_target_before_capture_and_at_drop(self):
         self.start(); self.tick(['dice'])
         self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='주사위'),self.now)
         self.assertEqual(self.tick([],marker=drop_marker()),'S')
         self.assertEqual(self.c.phase,'ALIGNING_TARGET')
         self.assertEqual(self.c.reason,'TARGET NOT VISIBLE')
-        self.assertEqual(self.tick(['dice','dice'],marker=drop_marker()),'S')
-        self.assertEqual(self.c.phase,'ALIGNING_TARGET')
-        self.assertEqual(self.c.reason,'MULTIPLE TARGETS OF SAME CLASS')
         self.assertEqual(self.tick(['dice']),'F')
         while self.c.phase == 'CAPTURING': self.tick([])
         self.tick([],marker=drop_marker())
@@ -234,33 +456,127 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.c.results['move']['errorCode'],'DROP_NOT_VERIFIED')
         self.assertEqual(self.c.phase,'HAZARD_PAUSED')
 
-    def test_relocation_searches_without_forward_motion_and_fails_without_marker(self):
-        self.start(); self.tick(['coin'])
-        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='동전'),self.now)
-        self.tick(['coin'])
+    def test_sighting_while_backing_verifies_but_the_reverse_still_finishes(self):
+        self.capture('battery', '배터리')
+        self.tick([], marker=drop_marker())
+        self.tick([], marker=drop_marker(fill=.14))
+        self.assertEqual(self.c.phase, 'BACKING')
+        ticks = 0
+        for _ in range(60):
+            self.tick(['battery'])
+            ticks += 1
+            if self.c.phase != 'BACKING': break
+        # 후진 중에 확인되므로 별도 확인 단계 없이 바로 회전한다.
+        self.assertEqual(self.c.phase, 'TURNING_AROUND')
+        self.assertTrue(self.c.drop_seen)
+        # 물체 옆에서 돌지 않도록 후진은 끝까지 마친다.
+        self.assertGreaterEqual(ticks, int(self.c.settings.reverse_seconds / .1))
+
+    def test_a_sighting_before_the_minimum_reverse_does_not_count(self):
+        self.capture('battery', '배터리')
+        self.tick([], marker=drop_marker())
+        self.tick([], marker=drop_marker(fill=.14))
+        # 팔 안에 걸친 물체가 잠깐 보인 것은 하역으로 치지 않는다.
+        for _ in range(int(self.c.settings.min_reverse_seconds / .1) - 3):
+            self.tick(['battery'])
+        self.assertFalse(self.c.drop_seen)
+        while self.c.phase == 'BACKING': self.tick([])
+        self.assertEqual(self.c.phase, 'VERIFYING_DROP')
+
+    def test_backing_runs_to_the_limit_while_the_object_stays_hidden(self):
+        self.capture('battery', '배터리')
+        self.tick([], marker=drop_marker())
+        self.tick([], marker=drop_marker(fill=.14))
+        ticks = 0
+        for _ in range(60):
+            self.tick([])
+            ticks += 1
+            if self.c.phase != 'BACKING': break
+        self.assertEqual(self.c.phase, 'VERIFYING_DROP')
+        self.assertGreaterEqual(ticks, int(self.c.settings.reverse_seconds / .1))
+
+    def test_drop_accepts_same_label_with_changed_ids_and_multiple_candidates(self):
+        self.capture('battery', '배터리')
+        self.c.action[2]['objectInstanceId'] = 'original'
+        self.tick([], marker=drop_marker())
+        self.tick([], marker=drop_marker(fill=.14))
+        while self.c.phase == 'BACKING': self.tick([])
+        # 다른 종류만 보이면 확인되지 않는다.
+        self.tick(['coin'], marker=drop_marker(), instance_ids=['original'])
+        self.assertEqual(self.c.reason, 'DROP TARGET NOT VISIBLE')
+        # 마커가 보이지 않아도, 번호가 바뀌어도, 여러 개여도 같은 종류면 확인된다.
+        for _ in range(20):
+            self.tick(['battery', 'battery'], instance_ids=['new-a', 'new-b'])
+            if self.c.phase == 'TURNING_AROUND': break
+        self.assertEqual(self.c.phase, 'TURNING_AROUND')
+        self.assertNotIn('move', self.c.results)
+        for _ in range(int(self.c.settings.turnaround_seconds / .1) + 20):
+            self.tick()
+            if 'move' in self.c.results: break
+        self.assertEqual(self.c.results['move']['status'], 'SUCCEEDED')
+
+    def capture(self, label='coin', korean='동전'):
+        self.start(); self.tick([label])
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel=korean),self.now)
+        self.tick([label])
         while self.c.phase == 'CAPTURING': self.tick([])
+
+    def test_relocation_sweeps_both_ways_and_fails_only_after_turn_budget(self):
+        self.capture()
+        started = self.now
         commands=[]
-        for _ in range(130):
+        for _ in range(1000):
             commands.append(self.tick([]))
             if 'move' in self.c.results: break
         self.assertNotIn('F',commands)
-        self.assertIn('R',commands)
-        self.assertEqual(self.c.results['move']['status'],'FAILED')
+        # Right first by default, then the other way round to cover the circle.
+        self.assertLess(commands.index('R'), commands.index('L'))
         self.assertEqual(self.c.results['move']['errorCode'],'MARKER_NOT_FOUND')
         self.assertEqual(self.c.phase,'HAZARD_PAUSED')
+        # Wall time is not the limit: the old 12 s cut-off is well exceeded.
+        self.assertGreater(self.now-started, 20)
+        cfg = Settings()
+        self.assertGreaterEqual(self.c.search_turned, cfg.search_turns*cfg.full_turn_seconds)
+
+    def test_lost_marker_is_searched_toward_the_side_it_was_last_seen(self):
+        self.capture()
+        self.assertEqual(self.tick([],marker=drop_marker(bearing=-.5)),'L')
+        commands = [self.tick([]) for _ in range(120)]
+        turns = [command for command in commands if command in 'LR']
+        self.assertEqual(turns[0],'L')
+        self.assertIn('R',turns)
+
+    def test_one_missed_frame_while_pushing_does_not_turn_away(self):
+        self.capture()
+        self.assertEqual(self.tick([],marker=drop_marker()),'F')
+        self.assertEqual(self.c.phase,'PUSHING_TO_MARKER')
+        self.assertEqual(self.tick([]),'S')
+        self.assertEqual(self.tick([],marker=drop_marker()),'F')
+        self.assertEqual(self.c.phase,'PUSHING_TO_MARKER')
+
+    def test_search_turns_again_only_after_a_frame_taken_while_stopped(self):
+        self.capture()
+        commands = [self.tick([], lag=.5) for _ in range(40)]
+        first_stop = commands.index('R') + commands[commands.index('R'):].index('S')
+        waited = commands[first_stop:].index('R')
+        # settle 0.35 s plus 0.5 s result latency at 0.1 s per tick.
+        self.assertGreaterEqual(waited, 8)
 
     def test_configuration_validation(self):
         with self.assertRaises(ValueError): Settings(removal_absence_seconds=1)
         with self.assertRaises(ValueError): Settings(turnaround_seconds=float('nan'))
+        with self.assertRaises(ValueError): Settings(search_sweep_degrees=180)
+        with self.assertRaises(ValueError): Settings(search_turns=.5)
 
     def test_measured_drop_layout_passes_updated_radius(self):
+        # 하역 확인은 더 이상 거리를 보지 않지만, 이송 완료 뒤 안전 구역 면제가 같은
+        # 반경을 쓴다. 실측 배치가 그 안에 들어와야 이송한 물체를 다시 차단하지 않는다.
+        from detection.safe_zone import safe_labels
         target = obj('battery')
         target['bbox'] = [459.46, 341.55, 570.26, 705.18]
         marker = drop_marker(centre=(639.2, 230.5))
-        observation = dict(frame_width=1280, frame_height=720)
-        self.assertFalse(CareController(Settings(drop_verify_radius_ratio=.3))
-                         ._drop_is_verified([target], marker, observation))
-        self.assertTrue(self.c._drop_is_verified([target], marker, observation))
+        self.assertEqual(safe_labels([target], [marker], {'battery'}, 1280, 720, 0, .45), {'battery'})
+        self.assertEqual(safe_labels([target], [marker], {'battery'}, 1280, 720, 0, .3), set())
 
 
 if __name__=='__main__': unittest.main()

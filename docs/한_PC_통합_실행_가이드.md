@@ -67,3 +67,7 @@ Invoke-RestMethod 'http://localhost:8080/api/v1/devices/robot-001/robot-state' |
 | 모델·사진 | 감지 후 `GET /api/v1/devices/robot-001/detections`에서 최근 이벤트 조회 |
 
 연결·전원 상태를 확인하기 전에는 주행을 시작하지 않는다. 실물 시험은 [통합 테스트 시나리오](통합_테스트_시나리오.md) 순서로 진행한다. 백엔드 재시작 시 Flyway V12·V13이 공유 DB에 적용되므로 로그의 마이그레이션 성공/실패를 확인한다. 다른 브라우저의 선택 아이는 `sessionStorage`에서 자동 공유되지 않으며, 프로필을 열면 기기의 활성 아이가 바뀐다.
+
+## 휴대폰에서 개발 화면 접속
+
+PC와 같은 Wi-Fi에서 http://<PC IPv4>:5173 으로 접속한다. frontend/.env.local의 VITE_API_BASE_URL도 같은 주소로 설정한다. Vite는 /api 요청을 PC의 127.0.0.1:8080으로 전달하므로 백엔드는 로컬 바인딩을 유지할 수 있다. PC IP가 바뀌면 환경설정 주소도 갱신한다. 이 프록시는 개발 서버 전용이다.
