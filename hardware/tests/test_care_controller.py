@@ -446,6 +446,20 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.c.results['move']['errorCode'],'DROP_NOT_VERIFIED')
         self.assertEqual(self.c.phase,'HAZARD_PAUSED')
 
+    def test_backing_stops_as_soon_as_the_pushed_object_is_visible_again(self):
+        self.capture('battery', '배터리')
+        self.tick([], marker=drop_marker())
+        self.tick([], marker=drop_marker(fill=.14))
+        self.assertEqual(self.c.phase, 'BACKING')
+        # 팔에 가려 보이지 않는 동안에는 계속 물러난다.
+        for _ in range(5): self.tick([])
+        self.assertEqual(self.c.phase, 'BACKING')
+        remaining = self.c.timed_remaining
+        self.assertGreater(remaining, 0)
+        # 다시 보이면 남은 시간을 버리고 그 자리에서 확인에 들어간다.
+        self.tick(['battery'])
+        self.assertEqual(self.c.phase, 'VERIFYING_DROP')
+
     def test_drop_accepts_same_label_with_changed_ids_and_multiple_candidates(self):
         self.capture('battery', '배터리')
         self.c.action[2]['objectInstanceId'] = 'original'

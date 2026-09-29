@@ -536,6 +536,12 @@ class CareController:
             # Count only periods with fresh ACKs, not disconnected wall time.
             if self.last_output == desired and ack == desired and now-motor.get('acknowledged_at', 0)<.25:
                 self.timed_remaining -= dt
+            # 후진은 밀어 둔 물체가 팔에서 벗어나 다시 보이는 순간 멈춘다. reverse_seconds는
+            # 이제 상한일 뿐이다. 끝까지 물러나면 물체가 너무 작아져 검출되지 않고, 그러면
+            # 제자리에 옮겨 놓고도 하역 확인에 실패한다.
+            if (self.phase == 'BACKING' and new_frame
+                    and any(obj['label'] == self.action[2]['label'] for obj in seen)):
+                self.timed_remaining = 0
             if self.timed_remaining <= 0:
                 if self.phase == 'BACKING':
                     self._start_phase('VERIFYING_DROP', now)
