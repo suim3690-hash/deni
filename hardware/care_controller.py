@@ -485,10 +485,13 @@ class CareController:
             targets = self._action_targets(seen)
             if not targets:
                 self.reason = 'TARGET NOT VISIBLE'
-            elif len(targets) != 1:
-                self.reason = 'MULTIPLE TARGETS OF SAME CLASS'
             else:
-                x1, _, x2, _ = targets[0]['bbox']
+                # 번호가 맞는 개체가 있으면 _action_targets가 그것만 돌려준다. 하나도 맞지
+                # 않아 종류로 되돌아갔고 같은 종류가 여럿이면, 가장 크게 보이는 것을 민다.
+                # 여기서 멈추면 사람이 다시 고를 수 없는 자동 이송은 영원히 서 있게 된다.
+                target = max(targets, key=lambda obj: (obj['bbox'][2]-obj['bbox'][0])
+                                                      * (obj['bbox'][3]-obj['bbox'][1]))
+                x1, _, x2, _ = target['bbox']
                 bearing = ((x1+x2)/2 / observation['frame_width'])*2-1
                 if abs(bearing) > cfg.bearing_deadband:
                     command = self._steer(bearing, now, False)

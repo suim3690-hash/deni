@@ -125,11 +125,24 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.c.phase,'CAPTURING')
         self.assertNotEqual(self.c.reason,'MULTIPLE TARGETS OF SAME CLASS')
 
-    def test_relocation_without_the_selected_instance_stays_ambiguous(self):
+    def test_relocation_proceeds_when_several_of_the_kind_are_visible(self):
         self.start(); self.tick(['battery','battery'], instance_ids=['a','b'])
         self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='배터리'),self.now)
-        self.assertEqual(self.tick(['battery','battery'], instance_ids=['a','b']),'S')
-        self.assertEqual(self.c.reason,'MULTIPLE TARGETS OF SAME CLASS')
+        # 여럿이어도 멈추지 않는다. 자동 이송은 사람이 다시 골라 줄 수 없다.
+        self.assertEqual(self.tick(['battery','battery'], instance_ids=['a','b']),'F')
+        self.assertEqual(self.c.phase,'CAPTURING')
+
+    def test_alignment_steers_at_the_nearest_of_several_same_kind_objects(self):
+        self.start(); self.tick(['battery'])
+        self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='배터리'),self.now)
+        far = obj('battery'); far['bbox'] = [10, 30, 20, 45]
+        near = obj('battery'); near['bbox'] = [70, 20, 95, 70]
+        self.now += .1; self.seq += 1
+        observation = dict(status='ok', frame_stamp=self.now, sequence=self.seq,
+                           hazards=[far, near], frame_width=100, frame_height=100, markers=[])
+        motor = dict(ready=True, ack=self.ack, generation=1, acknowledged_at=self.now)
+        # 가까운(크게 보이는) 쪽이 오른쪽에 있으므로 그쪽으로 돈다.
+        self.assertEqual(self.c.step(observation, motor, self.now), 'R')
 
     def test_relocation_falls_back_to_kind_when_the_chosen_id_is_from_an_earlier_run(self):
         self.start(); self.tick(['battery'], instance_ids=['fresh'])
@@ -139,12 +152,12 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.c.phase,'CAPTURING')
         self.assertNotEqual(self.c.reason,'TARGET NOT VISIBLE')
 
-    def test_relocation_stays_ambiguous_while_an_unidentified_object_could_be_the_target(self):
+    def test_an_unidentified_object_stays_a_candidate_without_blocking_the_push(self):
         self.start(); self.tick(['battery','battery'], instance_ids=['b',None])
         self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='배터리',objectInstanceId='b'),self.now)
-        # 추적이 번호를 주지 못한 물체는 선택한 개체일 수 있으므로 무시하지 않는다.
-        self.assertEqual(self.tick(['battery','battery'], instance_ids=['b',None]),'S')
-        self.assertEqual(self.c.reason,'MULTIPLE TARGETS OF SAME CLASS')
+        # 번호를 받지 못한 물체도 대상 후보로 남지만, 그 때문에 멈추지는 않는다.
+        self.assertEqual(self.tick(['battery','battery'], instance_ids=['b',None]),'F')
+        self.assertEqual(self.c.phase,'CAPTURING')
 
     def test_absent_instance_clears_itself_while_the_visible_one_stays_blocked(self):
         self.start()
@@ -424,15 +437,12 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.c.blocked,{'coin'})
         self.assertEqual(self.tick(['coin']),'S')
 
-    def test_relocation_requires_one_target_before_capture_and_visible_target_at_drop(self):
+    def test_relocation_requires_a_visible_target_before_capture_and_at_drop(self):
         self.start(); self.tick(['dice'])
         self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='주사위'),self.now)
         self.assertEqual(self.tick([],marker=drop_marker()),'S')
         self.assertEqual(self.c.phase,'ALIGNING_TARGET')
         self.assertEqual(self.c.reason,'TARGET NOT VISIBLE')
-        self.assertEqual(self.tick(['dice','dice'],marker=drop_marker()),'S')
-        self.assertEqual(self.c.phase,'ALIGNING_TARGET')
-        self.assertEqual(self.c.reason,'MULTIPLE TARGETS OF SAME CLASS')
         self.assertEqual(self.tick(['dice']),'F')
         while self.c.phase == 'CAPTURING': self.tick([])
         self.tick([],marker=drop_marker())
