@@ -424,7 +424,7 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.c.blocked,{'coin'})
         self.assertEqual(self.tick(['coin']),'S')
 
-    def test_relocation_requires_one_target_before_capture_and_at_drop(self):
+    def test_relocation_requires_one_target_before_capture_and_visible_target_at_drop(self):
         self.start(); self.tick(['dice'])
         self.c.request('RELOCATE','move',dict(hazardId='h1',objectLabel='주사위'),self.now)
         self.assertEqual(self.tick([],marker=drop_marker()),'S')
@@ -445,6 +445,26 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.c.results['move']['status'],'FAILED')
         self.assertEqual(self.c.results['move']['errorCode'],'DROP_NOT_VERIFIED')
         self.assertEqual(self.c.phase,'HAZARD_PAUSED')
+
+    def test_drop_accepts_same_label_with_changed_ids_and_multiple_candidates(self):
+        self.capture('battery', '배터리')
+        self.c.action[2]['objectInstanceId'] = 'original'
+        self.tick([], marker=drop_marker())
+        self.tick([], marker=drop_marker(fill=.14))
+        while self.c.phase == 'BACKING': self.tick([])
+        # 다른 종류만 보이면 확인되지 않는다.
+        self.tick(['coin'], marker=drop_marker(), instance_ids=['original'])
+        self.assertEqual(self.c.reason, 'DROP TARGET NOT VISIBLE')
+        # 마커가 보이지 않아도, 번호가 바뀌어도, 여러 개여도 같은 종류면 확인된다.
+        for _ in range(20):
+            self.tick(['battery', 'battery'], instance_ids=['new-a', 'new-b'])
+            if self.c.phase == 'TURNING_AROUND': break
+        self.assertEqual(self.c.phase, 'TURNING_AROUND')
+        self.assertNotIn('move', self.c.results)
+        for _ in range(int(self.c.settings.turnaround_seconds / .1) + 20):
+            self.tick()
+            if 'move' in self.c.results: break
+        self.assertEqual(self.c.results['move']['status'], 'SUCCEEDED')
 
     def capture(self, label='coin', korean='동전'):
         self.start(); self.tick([label])
@@ -500,13 +520,14 @@ class CareTests(unittest.TestCase):
         with self.assertRaises(ValueError): Settings(search_turns=.5)
 
     def test_measured_drop_layout_passes_updated_radius(self):
+        # 하역 확인은 더 이상 거리를 보지 않지만, 이송 완료 뒤 안전 구역 면제가 같은
+        # 반경을 쓴다. 실측 배치가 그 안에 들어와야 이송한 물체를 다시 차단하지 않는다.
+        from detection.safe_zone import safe_labels
         target = obj('battery')
         target['bbox'] = [459.46, 341.55, 570.26, 705.18]
         marker = drop_marker(centre=(639.2, 230.5))
-        observation = dict(frame_width=1280, frame_height=720)
-        self.assertFalse(CareController(Settings(drop_verify_radius_ratio=.3))
-                         ._drop_is_verified([target], marker, observation))
-        self.assertTrue(self.c._drop_is_verified([target], marker, observation))
+        self.assertEqual(safe_labels([target], [marker], {'battery'}, 1280, 720, 0, .45), {'battery'})
+        self.assertEqual(safe_labels([target], [marker], {'battery'}, 1280, 720, 0, .3), set())
 
 
 if __name__=='__main__': unittest.main()

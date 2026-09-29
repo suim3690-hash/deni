@@ -1,4 +1,4 @@
-param([string]$PiHost = '172.30.1.10', [switch]$CheckConfig)
+param([string]$PiHost = '172.30.1.39', [switch]$CheckConfig)
 $ErrorActionPreference = 'Stop'
 $configPath = Join-Path $env:LOCALAPPDATA 'Deni\robot-001-runtime.json'
 if (-not (Test-Path -LiteralPath $configPath)) {

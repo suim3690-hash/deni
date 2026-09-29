@@ -15,7 +15,7 @@ import type { RegisteredChild } from '../services/children'
 import { ApiRequestError, apiErrorMessage } from '../services/apiError'
 import { activateChildOnDevice, getDashboard, getHazardDetail, getRobotState, sendDeviceCommand, type DashboardHazard, type DashboardSnapshot, type HazardDetail } from '../services/dashboard'
 import { stageBannerSubtitles, stageTitles } from '../lib/stages'
-import { describeHazard, findRedetectedHazard, orderHazardsForAttention, powerOnSafetyNotice, riskLabels, type CompletedDirectRemoval } from '../lib/hazardRisk'
+import { describeHazard, findRedetectedHazard, orderHazardsForAttention, riskLabels, type CompletedDirectRemoval } from '../lib/hazardRisk'
 import HazardAlertBox from '../components/HazardAlertBox'
 import { apiBaseUrl, isMockMode } from '../lib/runtime'
 
@@ -205,9 +205,6 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
     ? powered ? mockPaused ? 'PAUSED' : 'RUNNING' : 'UNKNOWN'
     : robotState && !robotState.stale ? robotState.operationState : device?.operationState ?? 'UNKNOWN'
   const paused = powered && operationState === 'PAUSED'
-  const safetyStopNotice = powered
-    ? powerOnSafetyNotice(liveRobotState?.taskState ?? null, prioritizedHazards)
-    : ''
   // 실제 모드에서는 서버가 주지 않은 배터리 값을 목업 숫자로 채우지 않는다.
   const batteryPercent = connected ? device?.batteryPercent ?? null : null
   const safetyModeEnabled = connected && device?.safetyModeEnabled === true
@@ -489,7 +486,6 @@ export default function RegisteredHome({ child, onUpdateChild, onChildUnavailabl
               </div>
 
               {!connected && <p className="mt-2 text-[12px] leading-[1.5] text-[#64748b]">기기 통신 상태를 확인해 주세요.</p>}
-              {safetyStopNotice && <p role="status" className="mt-2 rounded-[10px] bg-[#fff7ed] px-3 py-2 text-[12px] leading-[1.5] text-[#9a3412]">{safetyStopNotice}</p>}
               {connectError && <p role="alert" className="mt-2 text-[12px] text-[#a50034]">{connectError}</p>}
               <div className="mt-3 flex justify-center">
                 <button

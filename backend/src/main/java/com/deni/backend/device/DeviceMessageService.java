@@ -91,9 +91,11 @@ public class DeviceMessageService {
             if(task!=null && task.length()>40) throw new IllegalArgumentException();
             retireUnseen(id,payload);
             devices.recordStatus(new DeviceService.StatusInput(id,"ONLINE",operation.equals("RELOCATING")?"UNKNOWN":operation,battery,sampled));
+            // The database has its own clock. Clamp only future samples at write
+            // time; old samples must retain their age for freshness checks.
             jdbc.update("""
                 INSERT INTO robot_live_state(device_id,operation_state,movement_state,sampled_at,movement_duration_ms,movement_distance_m,power_enabled,task_state)
-                VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET
+                VALUES (?,?,?,LEAST(CAST(? AS timestamptz),clock_timestamp()),?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET
                 operation_state=EXCLUDED.operation_state,movement_state=EXCLUDED.movement_state,
                 sampled_at=EXCLUDED.sampled_at,movement_duration_ms=EXCLUDED.movement_duration_ms,
                 movement_distance_m=EXCLUDED.movement_distance_m,power_enabled=EXCLUDED.power_enabled,task_state=EXCLUDED.task_state

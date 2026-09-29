@@ -185,19 +185,6 @@ class CareController:
         self.settle_until = now + cfg.settle_seconds
         return 'S'
 
-    def _drop_is_verified(self, targets, marker, observation):
-        if len(targets) != 1 or marker is None or marker.get('skew', 1) > .5:
-            return False
-        try:
-            width, height = float(observation['frame_width']), float(observation['frame_height'])
-            x1, y1, x2, y2 = (float(value) for value in targets[0]['bbox'])
-            marker_x, marker_y = (float(value) for value in marker['centre'])
-            object_x, object_y = (x1+x2)/2, (y1+y2)/2
-            distance = math.hypot((object_x-marker_x)/width, (object_y-marker_y)/height)
-            return distance <= self.settings.drop_verify_radius_ratio
-        except (KeyError, TypeError, ValueError, ZeroDivisionError):
-            return False
-
     def _clear_absent(self, seen, stamp, cfg):
         """Drop hazards that live detection no longer sees, without a user's check.
 
@@ -561,9 +548,10 @@ class CareController:
             else:
                 command = desired
         elif self.phase == 'VERIFYING_DROP' and new_frame:
-            targets = self._action_targets(seen)
-            marker = next((m for m in observation.get('markers', []) if m['id']==cfg.marker_id), None)
-            verified = self._drop_is_verified(targets, marker, observation)
+            # 후진을 마친 뒤 같은 종류가 다시 보이면 내려놓은 것으로 본다. 개체 번호도,
+            # 마커와의 거리도 묻지 않는다. 밀린 물체는 굴러서 추적 번호가 바뀌고 마커에서
+            # 벗어나기도 하는데, 그 둘을 요구하면 실제로 옮겨 놓고도 확인에 실패한다.
+            verified = any(obj['label'] == self.action[2]['label'] for obj in seen)
             if verified:
                 if self.last_observation is None or stamp-self.last_observation > cfg.max_observation_gap:
                     self.verified_since = stamp
@@ -574,9 +562,7 @@ class CareController:
                     self._start_phase('TURNING_AROUND', now, cfg.turnaround_seconds)
             else:
                 self.verified_since = None
-                self.reason = ('DROP TARGET NOT VISIBLE' if not targets else
-                               'MULTIPLE DROP TARGETS' if len(targets) != 1 else
-                               'DROP MARKER NOT VISIBLE' if marker is None else 'DROP TARGET OUTSIDE SAFE ZONE')
+                self.reason = 'DROP TARGET NOT VISIBLE'
             self.last_observation = stamp
             if self.phase == 'VERIFYING_DROP' and now-self.phase_started >= cfg.drop_verify_timeout_seconds:
                 self._complete_action('FAILED', 'DROP_NOT_VERIFIED')
