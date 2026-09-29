@@ -18,6 +18,8 @@ public class DeviceMessageService {
     public DeviceMessageService(JdbcTemplate jdbc, DeviceService devices) { this.jdbc=jdbc; this.devices=devices; }
     private static final int VISIBLE_LIMIT=64;
     private static final long ABSENT_MILLIS=5000;
+    /** 처리가 실패로 끝난 위험을 자동 정리에서 잠시 빼 두는 시간. */
+    private static final int FAILURE_GRACE_SECONDS=30;
     /** hazardId -> 마지막으로 로봇이 보고 있다고 확인한 시각. 보고가 끊기면 다시 0부터 센다. */
     private final Map<UUID,Long> lastSeen=new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -59,11 +61,17 @@ public class DeviceMessageService {
         if(retire.isEmpty()) return;
         guard.lock("device",id);
         var arguments=new java.util.ArrayList<Object>(); arguments.add(id); arguments.addAll(retire);
-        // 아직 결과가 오지 않은 처리 요청의 대상은 그 요청이 끝낸다.
+        arguments.add(FAILURE_GRACE_SECONDS);
+        // 아직 결과가 오지 않은 처리 요청의 대상은 그 요청이 끝낸다. 방금 실패한 요청의 대상도
+        // 잠시 남겨 둔다. 실패는 물체가 아직 그 자리에 있다는 뜻이고, 실패 직후는 로봇이 물러나
+        // 있어 안 보이기 쉽다. 여기서 바로 지우면 화면이 "직접 치워 주세요"라고 안내하면서 그
+        // 항목을 목록에서 없애 버린다.
         jdbc.update("UPDATE hazards h SET status='RESOLVED',updated_at=clock_timestamp(),version=h.version+1"
             +" WHERE h.device_id=? AND h.status='ACTIVE' AND h.id IN ("+placeholders(retire.size())+")"
             +" AND NOT EXISTS (SELECT 1 FROM operation_requests r JOIN device_command_delivery d"
-            +" ON d.command_id=r.id WHERE r.hazard_id=h.id AND d.status IN ('QUEUED','SENT','DELIVERED','UNKNOWN'))",
+            +" ON d.command_id=r.id WHERE r.hazard_id=h.id"
+            +" AND (d.status IN ('QUEUED','SENT','DELIVERED','UNKNOWN')"
+            +"      OR (d.status='FAILED' AND d.completed_at > clock_timestamp() - ? * interval '1 second')))",
             arguments.toArray());
         lastSeen.keySet().removeAll(retire);
     }

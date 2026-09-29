@@ -17,13 +17,16 @@ import org.springframework.stereotype.Component;
  *
  * <p>무인으로 반복하므로 멈출 규칙을 둔다. 같은 위험이 {@code SKIP_AFTER}번 실패하면 그 건은
  * 건너뛰고, 한 기기에서 {@code DISABLE_AFTER}번 연속 실패하면 토글을 꺼서 사람을 기다린다.
+     *
+     * <p>순서는 최초 발견 시각으로 정한다. 마지막 관측 시각은 같은 물체를 다시 볼 때마다
+     * 갱신되어, 계속 보이는 물체일수록 뒤로 밀리며 순서가 실시간으로 뒤집힌다.
  */
 @Component
 public class AutoRelocationDispatcher {
     /** 이송 순서. 목록에 없는 종류는 맨 뒤로 가며, 같은 순위면 오래된 것이 먼저다. */
     static final java.util.List<String> PRIORITY = java.util.List.of("배터리", "구슬", "동전", "주사위");
-    static final int SKIP_AFTER = 2;
-    static final int DISABLE_AFTER = 3;
+    static final int SKIP_AFTER = 1;
+    static final int DISABLE_AFTER = 2;
 
     private static final Logger LOG = LoggerFactory.getLogger(AutoRelocationDispatcher.class);
     private final Map<String, String> lastSkip = new java.util.concurrent.ConcurrentHashMap<>();
@@ -104,7 +107,7 @@ public class AutoRelocationDispatcher {
               AND NOT EXISTS (SELECT 1 FROM operation_requests r JOIN device_command_delivery d
                 ON d.command_id=r.id WHERE r.hazard_id=h.id
                   AND d.status IN ('QUEUED','SENT','DELIVERED','UNKNOWN'))
-            ORDER BY\s""" + order + ", h.detected_at", UUID.class, arguments.toArray());
+            ORDER BY\s""" + order + ", h.created_at", UUID.class, arguments.toArray());
         for (UUID hazard : candidates) {
             if (hazardFailures.getOrDefault(hazard, 0) < SKIP_AFTER) return hazard;
         }
