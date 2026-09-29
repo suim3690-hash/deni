@@ -446,20 +446,32 @@ class CareTests(unittest.TestCase):
         self.assertEqual(self.c.results['move']['errorCode'],'DROP_NOT_VERIFIED')
         self.assertEqual(self.c.phase,'HAZARD_PAUSED')
 
-    def test_backing_holds_a_minimum_then_stops_when_the_object_reappears(self):
+    def test_sighting_while_backing_verifies_but_the_reverse_still_finishes(self):
         self.capture('battery', '배터리')
         self.tick([], marker=drop_marker())
         self.tick([], marker=drop_marker(fill=.14))
         self.assertEqual(self.c.phase, 'BACKING')
         ticks = 0
-        for _ in range(40):
+        for _ in range(60):
             self.tick(['battery'])
             ticks += 1
             if self.c.phase != 'BACKING': break
+        # 후진 중에 확인되므로 별도 확인 단계 없이 바로 회전한다.
+        self.assertEqual(self.c.phase, 'TURNING_AROUND')
+        self.assertTrue(self.c.drop_seen)
+        # 물체 옆에서 돌지 않도록 후진은 끝까지 마친다.
+        self.assertGreaterEqual(ticks, int(self.c.settings.reverse_seconds / .1))
+
+    def test_a_sighting_before_the_minimum_reverse_does_not_count(self):
+        self.capture('battery', '배터리')
+        self.tick([], marker=drop_marker())
+        self.tick([], marker=drop_marker(fill=.14))
+        # 팔 안에 걸친 물체가 잠깐 보인 것은 하역으로 치지 않는다.
+        for _ in range(int(self.c.settings.min_reverse_seconds / .1) - 3):
+            self.tick(['battery'])
+        self.assertFalse(self.c.drop_seen)
+        while self.c.phase == 'BACKING': self.tick([])
         self.assertEqual(self.c.phase, 'VERIFYING_DROP')
-        # 물체가 내내 보여도 최소 후진은 채우고, 상한은 다 쓰지 않는다.
-        self.assertGreaterEqual(ticks, int(self.c.settings.min_reverse_seconds / .1))
-        self.assertLess(ticks, int(self.c.settings.reverse_seconds / .1))
 
     def test_backing_runs_to_the_limit_while_the_object_stays_hidden(self):
         self.capture('battery', '배터리')

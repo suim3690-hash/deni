@@ -92,6 +92,7 @@ class CareController:
         self.pulse_until = self.settle_until = 0
         self.phase_started = 0
         self.verified_since = None
+        self.drop_seen = False
         self.searching = False
         self.search_dir = 1
         self.search_position = self.search_turned = 0.0
@@ -527,6 +528,7 @@ class CareController:
             elif marker.get('skew', 1) > .5:
                 self.reason = 'MARKER TOO SKEWED'
             elif marker['fill'] >= cfg.marker_stop_fill:
+                self.drop_seen = False
                 self._start_phase('BACKING', now, cfg.reverse_seconds)
                 command = 'S'
             elif self.phase == 'SEEKING_MARKER':
@@ -541,15 +543,20 @@ class CareController:
             # Count only periods with fresh ACKs, not disconnected wall time.
             if self.last_output == desired and ack == desired and now-motor.get('acknowledged_at', 0)<.25:
                 self.timed_remaining -= dt
-            # 후진은 밀어 둔 물체가 팔에서 벗어나 다시 보이는 순간 멈춘다. reverse_seconds는
-            # 이제 상한일 뿐이다. 끝까지 물러나면 물체가 너무 작아져 검출되지 않고, 그러면
-            # 제자리에 옮겨 놓고도 하역 확인에 실패한다.
-            if (self.phase == 'BACKING' and new_frame
+            # 하역은 후진하는 동안 확인한다. 물체는 팔에서 벗어난 직후가 가장 가까워 잘
+            # 보이고, 끝까지 물러난 자리에서는 너무 작아 검출되지 않는다. 그렇다고 본 자리에서
+            # 멈추면 안 된다. 물체 옆에서 제자리 회전하면 방금 내려놓은 것을 다시 건드린다.
+            # 그래서 확인만 미리 해 두고 후진은 끝까지 마친 뒤 돈다. 팔 끝에 걸친 물체가
+            # 보이기 시작하는 min_reverse_seconds 이전의 목격은 세지 않는다.
+            if (self.phase == 'BACKING' and new_frame and not self.drop_seen
                     and cfg.reverse_seconds-self.timed_remaining >= cfg.min_reverse_seconds
                     and any(obj['label'] == self.action[2]['label'] for obj in seen)):
-                self.timed_remaining = 0
+                self.drop_seen = True
+                self.reason = 'DROP TARGET VERIFIED'
             if self.timed_remaining <= 0:
-                if self.phase == 'BACKING':
+                if self.phase == 'BACKING' and self.drop_seen:
+                    self._start_phase('TURNING_AROUND', now, cfg.turnaround_seconds)
+                elif self.phase == 'BACKING':
                     self._start_phase('VERIFYING_DROP', now)
                     self.require_frame_after = now
                     self.verified_since = None
